@@ -1,13 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 import { scanExtension } from "./index.js";
 
+const ZOO_ROOT = join(import.meta.dirname, "..", "..", "zoo");
+
 describe("scanExtension", () => {
+  const defaultOptions = {
+    output: "text" as const,
+    severity: "low" as const,
+    network: true,
+  };
+
   it("returns a valid scan result structure", async () => {
-    const result = await scanExtension("test.extension", {
-      output: "text",
-      severity: "low",
-      network: true,
-    });
+    const result = await scanExtension("test.extension", defaultOptions);
 
     expect(result).toHaveProperty("extension");
     expect(result).toHaveProperty("findings");
@@ -18,13 +23,84 @@ describe("scanExtension", () => {
   });
 
   it("records scan duration in metadata", async () => {
-    const result = await scanExtension("test.extension", {
-      output: "text",
-      severity: "low",
-      network: true,
-    });
+    const result = await scanExtension("test.extension", defaultOptions);
 
     expect(typeof result.metadata.scanDuration).toBe("number");
     expect(result.metadata.scanDuration).toBeGreaterThanOrEqual(0);
+  });
+
+  describe("zoo sample detection", () => {
+    it("detects Discord webhook in apollyon sample", async () => {
+      const result = await scanExtension(join(ZOO_ROOT, "samples/apollyon"), defaultOptions);
+
+      expect(result.extension.publisher).toBeUndefined();
+      expect(result.extension.name).toBe("mal-vscode-poc");
+
+      const discordFinding = result.findings.find((f) => f.id === "DISCORD_WEBHOOK");
+      expect(discordFinding).toBeDefined();
+      expect(discordFinding?.severity).toBe("high");
+      expect(discordFinding?.location?.file).toBe("extension.js");
+    });
+
+    it("detects C2 domain in kagema sample", async () => {
+      const result = await scanExtension(
+        join(ZOO_ROOT, "samples/kagema/ShowSnowcrypto.SnowShoNo/showsnowcrypto.snowshono-0.6.0"),
+        defaultOptions,
+      );
+
+      expect(result.extension.publisher).toBe("ShowSnowcrypto");
+
+      const c2Finding = result.findings.find((f) => f.id === "KNOWN_C2_DOMAIN");
+      expect(c2Finding).toBeDefined();
+      expect(c2Finding?.severity).toBe("critical");
+      expect(c2Finding?.metadata?.["domain"]).toBe("niggboo.com");
+    });
+
+    it("detects SSH theft in Extension-Attack-Suite", async () => {
+      const result = await scanExtension(
+        join(ZOO_ROOT, "samples/ecm3401/Extension-Attack-Suite"),
+        defaultOptions,
+      );
+
+      expect(result.extension.publisher).toBe("ecm3401");
+
+      const sshFinding = result.findings.find((f) => f.id === "SSH_KEY_ACCESS");
+      expect(sshFinding).toBeDefined();
+      expect(sshFinding?.severity).toBe("high");
+      expect(sshFinding?.location?.file).toBe("src/func_steal_ssh.ts");
+
+      const hashFinding = result.findings.find((f) => f.id === "KNOWN_MALWARE_HASH");
+      expect(hashFinding).toBeDefined();
+      expect(hashFinding?.severity).toBe("critical");
+    });
+
+    it("detects hidden PowerShell in Extension-Attack-Suite", async () => {
+      const result = await scanExtension(
+        join(ZOO_ROOT, "samples/ecm3401/Extension-Attack-Suite"),
+        defaultOptions,
+      );
+
+      const psFinding = result.findings.find((f) => f.id === "POWERSHELL_HIDDEN");
+      expect(psFinding).toBeDefined();
+      expect(psFinding?.severity).toBe("critical");
+    });
+  });
+
+  describe("severity filtering", () => {
+    it("filters findings by minimum severity", async () => {
+      const lowResult = await scanExtension(join(ZOO_ROOT, "samples/apollyon"), {
+        ...defaultOptions,
+        severity: "low",
+      });
+
+      const highResult = await scanExtension(join(ZOO_ROOT, "samples/apollyon"), {
+        ...defaultOptions,
+        severity: "high",
+      });
+
+      expect(highResult.findings.length).toBeLessThanOrEqual(lowResult.findings.length);
+      expect(highResult.findings.every((f) => f.severity === "high" || f.severity === "critical"))
+        .toBe(true);
+    });
   });
 });

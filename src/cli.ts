@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import pc from "picocolors";
+import { downloadExtension } from "./scanner/download.js";
 import { scanExtension } from "./scanner/index.js";
 
 export const cli = new Command()
@@ -25,6 +26,33 @@ cli
         printTextReport(result);
       }
       process.exit(result.findings.length > 0 ? 1 : 0);
+    } catch (error) {
+      console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
+      process.exit(2);
+    }
+  });
+
+cli
+  .command("download")
+  .description("Download a VS Code extension from the marketplace")
+  .argument("<extension-id>", "Extension ID (e.g., ms-python.python or ms-python.python@2024.1.0)")
+  .option("-o, --output <dir>", "Output directory", process.cwd())
+  .action(async (extensionId: string, options: { output: string }) => {
+    try {
+      console.log(pc.cyan("Downloading:"), extensionId);
+
+      const result = await downloadExtension(extensionId, { destDir: options.output });
+
+      console.log();
+      console.log(pc.green("✓ Downloaded successfully"));
+      console.log(pc.dim("─".repeat(50)));
+      console.log(`${pc.cyan("Name:")} ${result.metadata.displayName ?? result.metadata.name}`);
+      console.log(`${pc.cyan("Publisher:")} ${result.metadata.publisher}`);
+      console.log(`${pc.cyan("Version:")} ${result.metadata.version}`);
+      if (result.metadata.installCount) {
+        console.log(`${pc.cyan("Installs:")} ${result.metadata.installCount.toLocaleString()}`);
+      }
+      console.log(`${pc.cyan("Path:")} ${result.path}`);
     } catch (error) {
       console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
       process.exit(2);

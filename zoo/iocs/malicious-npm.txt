@@ -1,0 +1,85 @@
+# Known Malicious npm Packages
+# Format: package-name  # Campaign - Notes
+# Submit new packages via PR or issue
+
+# FAMOUS CHOLLIMA (North Korea - Contagious Interview Campaign)
+# These packages target developers via fake job interviews
+tailwindcss-forms-kit          # FAMOUS CHOLLIMA - typosquat tailwindcss-forms
+tailwindcss-kit                # FAMOUS CHOLLIMA - typosquat
+postcss-transform-classes      # FAMOUS CHOLLIMA - typosquat postcss-modules
+sass-extract                   # FAMOUS CHOLLIMA - bundled malware
+@nicol-dev/my-vite-package     # FAMOUS CHOLLIMA - malicious vite plugin
+
+# Historical Supply Chain Attacks
+event-stream                   # 2018 - flatmap-stream backdoor targeting Copay wallet
+ua-parser-js                   # 2021 - cryptominer injection
+coa                            # 2021 - compromised maintainer
+rc                             # 2021 - compromised maintainer
+colors                         # 2022 - sabotage by maintainer
+faker                          # 2022 - sabotage by maintainer
+node-ipc                       # 2022 - protestware with data corruption
+
+# Typosquatting Attacks
+crossenv                       # Typosquat of cross-env
+cross-env.js                   # Typosquat of cross-env
+d3.js                          # Typosquat of d3
+fabric.js                      # Typosquat of fabric
+ffmepg                         # Typosquat of ffmpeg
+gruntcli                       # Typosquat of grunt-cli
+http-proxy.js                  # Typosquat of http-proxy
+jquery.js                      # Typosquat of jquery
+mariadb                        # Typosquat of mariasql
+mongose                        # Typosquat of mongoose
+mssql.js                       # Typosquat of mssql
+mssql-node                     # Typosquat of mssql
+mysqljs                        # Typosquat of mysql
+node-fabric                    # Typosquat of fabric
+node-opencv                    # Typosquat of opencv
+node-opensl                    # Typosquat of openssl
+node-openssl                   # Typosquat of openssl
+node-sqlite                    # Typosquat of sqlite3
+node-tkinter                   # Typosquat of tkinter
+nodecaffe                      # Typosquat of caffe
+nodefabric                     # Typosquat of fabric
+nodeffmpeg                     # Typosquat of ffmpeg
+nodemailer-js                  # Typosquat of nodemailer
+nodemssql                      # Typosquat of mssql
+noderequest                    # Typosquat of request
+nodesass                       # Typosquat of node-sass
+nodesqlite                     # Typosquat of sqlite3
+opencv.js                      # Typosquat of opencv
+openssl.js                     # Typosquat of openssl
+proxy.js                       # Typosquat of http-proxy
+shadowsock                     # Typosquat of shadowsocks
+smb                            # Typosquat of samba
+sqlite.js                      # Typosquat of sqlite3
+sqliter                        # Typosquat of sqlite3
+sqlserver                      # Typosquat of mssql
+tkinter                        # Typosquat of python tkinter wrapper
+lodahs                         # Typosquat of lodash
+lodashs                        # Typosquat of lodash
+loadsh                         # Typosquat of lodash
+lodaash                        # Typosquat of lodash
+
+# Socket.dev Tracked Malware
+express-cookie                 # 2024 - credential harvester
+express-session-parser         # 2024 - credential harvester
+node-hide-console-windows      # 2024 - spyware
+axios-retry-enhanced           # 2024 - data exfiltration
+react-native-scrollpageviewtest # 2024 - crypto stealer
+lottie-rn                      # 2024 - data exfiltration
+
+# VS Code Extension Related
+vscode-darcula                 # Discord token stealer (npm dependency used by malicious extension)
+@nicol-dev/vscode-theme        # FAMOUS CHOLLIMA - malicious VS Code theme dependency
+
+# Electron/Desktop App Targeting
+electron-chromedriver-test     # 2023 - reverse shell
+electron-native-notify-test    # 2023 - data exfiltration
+
+# AI/LLM Tool Typosquats (emerging trend 2025)
+openai-api                     # Typosquat of openai
+chatgpt-api                    # Typosquat - not official
+gpt-3-encoder                  # Typosquat
+langchain-core                 # Typosquat - not official
+anthropic-api                  # Typosquat - not official
