@@ -42,7 +42,7 @@
     "@types/node": "22.10.10",
     "oxlint": "0.16.6",
     "typescript": "5.9.3",
-    "vitest": "4.0.8"
+    "vitest": "4.0.17"
   },
   "engines": {
     "node": ">=22"
