@@ -1,4 +1,4 @@
-import type { Finding, VsixContents, VsixManifest } from "../types.js";
+import type { Finding, VsixManifest } from "../types.js";
 
 export function checkActivationEvents(manifest: VsixManifest): Finding[] {
   const findings: Finding[] = [];
@@ -42,7 +42,7 @@ export function checkActivationEvents(manifest: VsixManifest): Finding[] {
   return findings;
 }
 
-export function checkThemeAbuse(manifest: VsixManifest, _contents: VsixContents): Finding[] {
+export function checkThemeAbuse(manifest: VsixManifest): Finding[] {
   const findings: Finding[] = [];
   const hasMain = Boolean(manifest.main || manifest.browser);
   const hasThemes =
@@ -103,10 +103,10 @@ export function checkSuspiciousPermissions(manifest: VsixManifest): Finding[] {
   return findings;
 }
 
-export function checkManifest(manifest: VsixManifest, contents: VsixContents): Finding[] {
+export function checkManifest(manifest: VsixManifest): Finding[] {
   return [
     ...checkActivationEvents(manifest),
-    ...checkThemeAbuse(manifest, contents),
+    ...checkThemeAbuse(manifest),
     ...checkSuspiciousPermissions(manifest),
   ];
 }

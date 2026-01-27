@@ -14,75 +14,33 @@ function defangDomain(domain: string): string {
   return domain.replace(/\[\.\]/g, ".");
 }
 
-function parseHashesFile(content: string): Set<string> {
-  const hashes = new Set<string>();
+/**
+ * Generic IOC file parser.
+ * @param content - Raw file content
+ * @param extractor - Function to extract and validate a value from each line's first field
+ * @returns Set of extracted values
+ */
+function parseIOCFile(
+  content: string,
+  extractor: (field: string) => string | null,
+): Set<string> {
+  const result = new Set<string>();
 
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) {
       continue;
     }
-    const hash = trimmed.split(/\s+/)[0];
-    if (hash && /^[a-f0-9]{64}$/i.test(hash)) {
-      hashes.add(hash.toLowerCase());
-    }
-  }
-
-  return hashes;
-}
-
-function parseDomainsFile(content: string): Set<string> {
-  const domains = new Set<string>();
-
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-    const domain = trimmed.split(/\s+/)[0];
-    if (domain) {
-      domains.add(defangDomain(domain).toLowerCase());
-    }
-  }
-
-  return domains;
-}
-
-function parseIpsFile(content: string): Set<string> {
-  const ips = new Set<string>();
-
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-    const ipWithPort = trimmed.split(/\s+/)[0];
-    if (ipWithPort) {
-      const ip = ipWithPort.split(":")[0];
-      if (ip) {
-        ips.add(ip);
+    const field = trimmed.split(/\s+/)[0];
+    if (field) {
+      const value = extractor(field);
+      if (value) {
+        result.add(value);
       }
     }
   }
 
-  return ips;
-}
-
-function parsePackagesFile(content: string): Set<string> {
-  const packages = new Set<string>();
-
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-    const pkg = trimmed.split(/\s+/)[0];
-    if (pkg) {
-      packages.add(pkg.toLowerCase());
-    }
-  }
-
-  return packages;
+  return result;
 }
 
 let cachedZooData: ZooData | undefined;
@@ -104,15 +62,15 @@ export async function loadZooData(): Promise<ZooData> {
 
   cachedZooData = {
     blocklist: blocklistFile.extensions,
-    hashes: parseHashesFile(hashesContent),
-    domains: parseDomainsFile(domainsContent),
-    ips: parseIpsFile(ipsContent),
-    maliciousNpmPackages: parsePackagesFile(npmContent),
+    hashes: parseIOCFile(hashesContent, (hash) =>
+      /^[a-f0-9]{64}$/i.test(hash) ? hash.toLowerCase() : null,
+    ),
+    domains: parseIOCFile(domainsContent, (domain) =>
+      defangDomain(domain).toLowerCase(),
+    ),
+    ips: parseIOCFile(ipsContent, (ipWithPort) => ipWithPort.split(":")[0] ?? null),
+    maliciousNpmPackages: parseIOCFile(npmContent, (pkg) => pkg.toLowerCase()),
   };
 
   return cachedZooData;
-}
-
-export function clearZooCache(): void {
-  cachedZooData = undefined;
 }

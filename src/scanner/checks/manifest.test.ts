@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { VsixContents, VsixManifest } from "../types.js";
+import type { VsixManifest } from "../types.js";
 import { checkActivationEvents, checkManifest, checkThemeAbuse } from "./manifest.js";
-
-function makeContents(manifest: VsixManifest): VsixContents {
-  return {
-    manifest,
-    files: new Map([["package.json", Buffer.from(JSON.stringify(manifest))]]),
-    basePath: "/test",
-  };
-}
 
 describe("checkActivationEvents", () => {
   it("flags wildcard activation event", () => {
@@ -62,7 +54,7 @@ describe("checkThemeAbuse", () => {
       },
     };
 
-    const findings = checkThemeAbuse(manifest, makeContents(manifest));
+    const findings = checkThemeAbuse(manifest);
     expect(findings.some((f) => f.id === "THEME_WITH_CODE")).toBe(true);
     expect(findings[0]?.severity).toBe("high");
   });
@@ -78,7 +70,7 @@ describe("checkThemeAbuse", () => {
       },
     };
 
-    const findings = checkThemeAbuse(manifest, makeContents(manifest));
+    const findings = checkThemeAbuse(manifest);
     expect(findings.some((f) => f.id === "THEME_WITH_CODE")).toBe(true);
   });
 
@@ -92,7 +84,7 @@ describe("checkThemeAbuse", () => {
       },
     };
 
-    const findings = checkThemeAbuse(manifest, makeContents(manifest));
+    const findings = checkThemeAbuse(manifest);
     expect(findings).toHaveLength(0);
   });
 
@@ -107,7 +99,7 @@ describe("checkThemeAbuse", () => {
       },
     };
 
-    const findings = checkThemeAbuse(manifest, makeContents(manifest));
+    const findings = checkThemeAbuse(manifest);
     expect(findings).toHaveLength(0);
   });
 });
@@ -125,7 +117,7 @@ describe("checkManifest", () => {
       },
     };
 
-    const findings = checkManifest(manifest, makeContents(manifest));
+    const findings = checkManifest(manifest);
     expect(findings.some((f) => f.id === "ACTIVATION_WILDCARD")).toBe(true);
     expect(findings.some((f) => f.id === "THEME_WITH_CODE")).toBe(true);
   });

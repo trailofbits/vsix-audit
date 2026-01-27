@@ -77,7 +77,7 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
   // Core security checks
   findings.push(...checkBlocklist(manifest, zooData.blocklist));
   findings.push(...checkIocs(contents, zooData));
-  findings.push(...checkManifest(manifest, contents));
+  findings.push(...checkManifest(manifest));
   findings.push(...checkAllPatterns(contents));
 
   // v2 checks

@@ -2,6 +2,8 @@ import { Command } from "commander";
 import pc from "picocolors";
 import { downloadExtension } from "./scanner/download.js";
 import { scanExtension } from "./scanner/index.js";
+import type { ScanOptions, ScanResult } from "./scanner/types.js";
+import { loadExtension } from "./scanner/vsix.js";
 
 export const cli = new Command()
   .name("vsix-audit")
@@ -62,42 +64,66 @@ cli
 cli
   .command("info")
   .description("Display metadata about a VS Code extension")
-  .argument("<target>", "Path to .vsix file or extension ID")
+  .argument("<target>", "Path to .vsix file or directory")
   .action(async (target: string) => {
-    console.log(pc.cyan("Extension info for:"), target);
-    console.log(pc.dim("(Not yet implemented)"));
+    try {
+      const contents = await loadExtension(target);
+      const manifest = contents.manifest;
+
+      console.log();
+      console.log(pc.bold("Extension Info"));
+      console.log(pc.dim("─".repeat(50)));
+      console.log();
+      console.log(`${pc.cyan("Name:")} ${manifest.displayName ?? manifest.name}`);
+      console.log(`${pc.cyan("Publisher:")} ${manifest.publisher}`);
+      console.log(`${pc.cyan("Version:")} ${manifest.version}`);
+      if (manifest.description) {
+        console.log(`${pc.cyan("Description:")} ${manifest.description}`);
+      }
+      console.log();
+
+      // Activation events
+      const events = manifest.activationEvents ?? [];
+      console.log(`${pc.cyan("Activation Events:")} ${events.length > 0 ? events.join(", ") : pc.dim("(none)")}`);
+
+      // Entry points
+      if (manifest.main) {
+        console.log(`${pc.cyan("Main Entry:")} ${manifest.main}`);
+      }
+      if (manifest.browser) {
+        console.log(`${pc.cyan("Browser Entry:")} ${manifest.browser}`);
+      }
+
+      // Contributions summary
+      const contributes = manifest.contributes ?? {};
+      const contributionTypes = Object.keys(contributes).filter((k) => {
+        const val = contributes[k];
+        return Array.isArray(val) ? val.length > 0 : val !== undefined;
+      });
+      if (contributionTypes.length > 0) {
+        console.log(`${pc.cyan("Contributes:")} ${contributionTypes.join(", ")}`);
+      }
+
+      // Dependencies
+      const deps = manifest["extensionDependencies"] as string[] | undefined;
+      if (deps && deps.length > 0) {
+        console.log(`${pc.cyan("Extension Dependencies:")} ${deps.join(", ")}`);
+      }
+
+      console.log();
+      console.log(`${pc.cyan("Files:")} ${contents.files.size}`);
+      const totalSize = [...contents.files.values()].reduce((sum, buf) => sum + buf.length, 0);
+      console.log(`${pc.cyan("Total Size:")} ${formatBytes(totalSize)}`);
+    } catch (error) {
+      console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
+      process.exit(2);
+    }
   });
 
-interface ScanOptions {
-  output: "text" | "json" | "sarif";
-  severity: "low" | "medium" | "high" | "critical";
-  network: boolean;
-}
-
-interface ScanResult {
-  extension: {
-    id: string;
-    name: string;
-    version: string;
-    publisher: string;
-  };
-  findings: Finding[];
-  metadata: {
-    scannedAt: string;
-    scanDuration: number;
-  };
-}
-
-interface Finding {
-  id: string;
-  title: string;
-  description: string;
-  severity: "low" | "medium" | "high" | "critical";
-  category: string;
-  location?: {
-    file: string;
-    line?: number;
-  };
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function printTextReport(result: ScanResult): void {

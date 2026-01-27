@@ -1,3 +1,4 @@
+import { isScannable, SCANNABLE_EXTENSIONS_UNICODE } from "../constants.js";
 import type { Finding, Severity, VsixContents } from "../types.js";
 
 interface UnicodeRule {
@@ -13,23 +14,6 @@ interface UnicodeMatch {
   column: number;
   matched: string;
   context: string;
-}
-
-const SCANNABLE_EXTENSIONS = new Set([
-  ".js",
-  ".ts",
-  ".mjs",
-  ".cjs",
-  ".jsx",
-  ".tsx",
-  ".json",
-  ".md",
-  ".txt",
-]);
-
-function isScannable(filename: string): boolean {
-  const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
-  return SCANNABLE_EXTENSIONS.has(ext);
 }
 
 function findLineAndColumn(
@@ -193,7 +177,7 @@ export function checkUnicode(contents: VsixContents): Finding[] {
   const seenFindings = new Set<string>();
 
   for (const [filename, buffer] of contents.files) {
-    if (!isScannable(filename)) continue;
+    if (!isScannable(filename, SCANNABLE_EXTENSIONS_UNICODE)) continue;
 
     const content = buffer.toString("utf8");
 

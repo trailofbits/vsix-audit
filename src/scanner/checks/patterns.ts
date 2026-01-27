@@ -1,4 +1,6 @@
+import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "../constants.js";
 import type { Finding, Severity, VsixContents } from "../types.js";
+import { findLineNumberByIndex } from "../utils.js";
 
 interface PatternRule {
   id: string;
@@ -171,36 +173,12 @@ const PATTERNS: PatternRule[] = [
   },
 ];
 
-const SCANNABLE_EXTENSIONS = new Set([
-  ".js",
-  ".ts",
-  ".mjs",
-  ".cjs",
-  ".jsx",
-  ".tsx",
-  ".ps1",
-  ".sh",
-  ".bat",
-  ".cmd",
-  ".py",
-]);
-
-function isScannable(filename: string): boolean {
-  const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
-  return SCANNABLE_EXTENSIONS.has(ext);
-}
-
-function findLineNumber(content: string, match: RegExpExecArray): number {
-  const beforeMatch = content.slice(0, match.index);
-  return beforeMatch.split("\n").length;
-}
-
 export function checkPatterns(contents: VsixContents): Finding[] {
   const findings: Finding[] = [];
   const seenFindings = new Set<string>();
 
   for (const [filename, buffer] of contents.files) {
-    if (!isScannable(filename)) continue;
+    if (!isScannable(filename, SCANNABLE_EXTENSIONS_PATTERN)) continue;
 
     const content = buffer.toString("utf8");
 
@@ -221,7 +199,7 @@ export function checkPatterns(contents: VsixContents): Finding[] {
           category: "pattern",
           location: {
             file: filename,
-            line: findLineNumber(content, match),
+            line: findLineNumberByIndex(content, match.index),
           },
           metadata: {
             matched: match[0].slice(0, 100),

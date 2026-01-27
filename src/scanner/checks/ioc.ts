@@ -1,25 +1,7 @@
+import { isScannable, SCANNABLE_EXTENSIONS_IOC } from "../constants.js";
 import type { Finding, VsixContents, ZooData } from "../types.js";
+import { findLineNumberByString } from "../utils.js";
 import { computeSha256 } from "../vsix.js";
-
-const SCANNABLE_EXTENSIONS = new Set([
-  ".js",
-  ".ts",
-  ".mjs",
-  ".cjs",
-  ".jsx",
-  ".tsx",
-  ".json",
-  ".ps1",
-  ".sh",
-  ".bat",
-  ".cmd",
-  ".py",
-]);
-
-function isScannable(filename: string): boolean {
-  const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
-  return SCANNABLE_EXTENSIONS.has(ext);
-}
 
 function extractDomains(content: string): string[] {
   const domainPattern = /(?:https?:\/\/)?([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)+)/g;
@@ -65,16 +47,6 @@ function isValidIp(ip: string): boolean {
   return true;
 }
 
-function findLineNumber(content: string, searchStr: string): number | undefined {
-  const lines = content.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i]?.includes(searchStr)) {
-      return i + 1;
-    }
-  }
-  return undefined;
-}
-
 export function checkHashes(contents: VsixContents, knownHashes: Set<string>): Finding[] {
   const findings: Finding[] = [];
 
@@ -105,14 +77,14 @@ export function checkDomains(contents: VsixContents, knownDomains: Set<string>):
   const findings: Finding[] = [];
 
   for (const [filename, buffer] of contents.files) {
-    if (!isScannable(filename)) continue;
+    if (!isScannable(filename, SCANNABLE_EXTENSIONS_IOC)) continue;
 
     const content = buffer.toString("utf8");
     const foundDomains = extractDomains(content);
 
     for (const domain of foundDomains) {
       if (knownDomains.has(domain)) {
-        const line = findLineNumber(content, domain);
+        const line = findLineNumberByString(content, domain);
         findings.push({
           id: "KNOWN_C2_DOMAIN",
           title: "Known C2 domain detected",
@@ -135,14 +107,14 @@ export function checkIps(contents: VsixContents, knownIps: Set<string>): Finding
   const findings: Finding[] = [];
 
   for (const [filename, buffer] of contents.files) {
-    if (!isScannable(filename)) continue;
+    if (!isScannable(filename, SCANNABLE_EXTENSIONS_IOC)) continue;
 
     const content = buffer.toString("utf8");
     const foundIps = extractIps(content);
 
     for (const ip of foundIps) {
       if (knownIps.has(ip)) {
-        const line = findLineNumber(content, ip);
+        const line = findLineNumberByString(content, ip);
         findings.push({
           id: "KNOWN_C2_IP",
           title: "Known C2 IP address detected",
