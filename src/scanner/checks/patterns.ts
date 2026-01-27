@@ -6,6 +6,8 @@ interface PatternRule {
   description: string;
   pattern: RegExp;
   severity: Severity;
+  legitimateUses?: string[];
+  redFlags?: string[];
 }
 
 const PATTERNS: PatternRule[] = [
@@ -45,17 +47,21 @@ const PATTERNS: PatternRule[] = [
     id: "SSH_KEY_ACCESS",
     title: "SSH private key access",
     description:
-      "Code accesses SSH private key files. This could indicate credential theft.",
+      "Code accesses SSH private key files. This could indicate credential theft, but is expected in SSH client extensions and remote development tools.",
     pattern: /\.ssh\/id_(?:rsa|ed25519|ecdsa|dsa)/g,
     severity: "high",
+    legitimateUses: ["SSH client extensions", "Remote development tools", "Git SSH authentication"],
+    redFlags: ["Combined with network exfiltration", "Obfuscated file access", "Unexpected in theme/formatter"],
   },
   {
     id: "SSH_KEY_GENERIC",
     title: "SSH key file reference",
     description:
-      "Code references .ssh directory. Could indicate SSH credential access.",
+      "Code references .ssh directory. Could indicate SSH credential access, but is common in SSH extensions, remote development tools, and documentation.",
     pattern: /\.ssh\//g,
     severity: "medium",
+    legitimateUses: ["Remote SSH extensions", "SSH config editors", "Git SSH operations", "Documentation"],
+    redFlags: ["Combined with exfiltration patterns", "Obfuscated access"],
   },
   {
     id: "EVAL_ATOB",
@@ -77,25 +83,31 @@ const PATTERNS: PatternRule[] = [
     id: "CHILD_PROCESS_EXEC",
     title: "Command execution via child_process",
     description:
-      "Code uses child_process.exec or execSync. While legitimate for some extensions, this can be used to run arbitrary system commands.",
+      "Code uses child_process.exec or execSync. Common in extensions that run CLI tools (git, compilers, linters, debuggers). Review the commands being executed.",
     pattern: /(?:child_process|cp)['"]?\s*\)?\s*\.?\s*(?:exec|execSync|spawn|spawnSync)\s*\(/g,
     severity: "medium",
+    legitimateUses: ["Git operations", "Build tools", "Linters", "Debuggers", "Language servers"],
+    redFlags: ["PowerShell with hidden window", "Downloading remote scripts", "Obfuscated commands"],
   },
   {
     id: "REQUIRE_CHILD_PROCESS",
     title: "child_process module import",
     description:
-      "Code imports child_process module which enables command execution.",
+      "Code imports child_process module which enables command execution. This is common in extensions that integrate with CLI tools.",
     pattern: /require\s*\(\s*["'`]child_process["'`]\s*\)/g,
     severity: "low",
+    legitimateUses: ["Git integration", "Build systems", "Formatters", "Debuggers", "Terminal tools"],
+    redFlags: ["No obvious CLI tool integration", "Combined with obfuscation"],
   },
   {
     id: "NATIVE_NODE_FILE",
     title: "Native .node binary",
     description:
-      "Extension contains native .node binary. These are compiled native addons that can execute arbitrary code outside the Node.js sandbox.",
+      "Extension contains native .node binary reference. Native addons can execute code outside the Node.js sandbox. Common in debuggers, language servers, and performance-critical tools.",
     pattern: /\.node['"`]/g,
     severity: "medium",
+    legitimateUses: ["Debugger extensions", "Language servers (LSP)", "Performance tools", "Native code integration"],
+    redFlags: ["Unknown/obfuscated binary", "No clear native functionality needed", "Binary from untrusted source"],
   },
   {
     id: "BROWSER_STORAGE",
@@ -110,10 +122,12 @@ const PATTERNS: PatternRule[] = [
     id: "CRYPTO_WALLET",
     title: "Cryptocurrency wallet access",
     description:
-      "Code references cryptocurrency wallet paths or extensions. This could indicate crypto theft.",
+      "Code references cryptocurrency wallet paths or extensions. Could indicate crypto theft, but is expected in blockchain/Solidity development tools and security audit extensions.",
     pattern:
       /(?:metamask|phantom|solflare|exodus|atomic|trust.*wallet|\.wallet|wallet\.dat)/gi,
     severity: "high",
+    legitimateUses: ["Solidity development tools", "Blockchain debuggers", "Security audit extensions", "Web3 development"],
+    redFlags: ["File read operations on wallet paths", "Network exfiltration of wallet data", "Unexpected in non-blockchain extension"],
   },
   {
     id: "KEYLOGGER_PATTERN",
@@ -211,6 +225,8 @@ export function checkPatterns(contents: VsixContents): Finding[] {
           },
           metadata: {
             matched: match[0].slice(0, 100),
+            ...(rule.legitimateUses && { legitimateUses: rule.legitimateUses }),
+            ...(rule.redFlags && { redFlags: rule.redFlags }),
           },
         });
       }
@@ -230,7 +246,7 @@ export function checkNativeFiles(contents: VsixContents): Finding[] {
       findings.push({
         id: "NATIVE_BINARY",
         title: "Native binary file in extension",
-        description: `Extension contains native binary "${filename}". Native code can execute outside the Node.js sandbox and perform arbitrary system operations.`,
+        description: `Extension contains native binary "${filename}". Native code can execute outside the Node.js sandbox. Common in debuggers, language servers, and performance-critical tools.`,
         severity: "high",
         category: "pattern",
         location: {
@@ -238,6 +254,8 @@ export function checkNativeFiles(contents: VsixContents): Finding[] {
         },
         metadata: {
           extension: ext,
+          legitimateUses: ["Debugger extensions (LLDB, GDB)", "Language servers", "Performance tools", "Syntax highlighting with tree-sitter"],
+          redFlags: ["Unknown/obfuscated binary", "No clear native functionality needed", "Binary fetched from network"],
         },
       });
     }

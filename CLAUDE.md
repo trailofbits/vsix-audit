@@ -4,6 +4,49 @@
 
 A security scanner for VS Code extensions. Detects malicious extensions before installation.
 
+## Scanner Design Philosophy
+
+**Core principle:** Flag suspicious patterns for human/agent review with rich context, rather than trying to eliminate false positives.
+
+### Design Decisions
+
+1. **Prefer sensitivity over specificity**
+   - Better to flag a legitimate extension for review than miss a malicious one
+   - The cost of a false negative (missed malware) far exceeds a false positive (extra review)
+
+2. **Findings must facilitate triage**
+   - Every finding needs enough context for a reviewer to quickly determine: real threat or expected behavior?
+   - Include: matched text, file location, line number when possible
+   - Describe legitimate uses alongside the risk
+
+3. **Finding structure**
+   ```typescript
+   {
+     id: "CHILD_PROCESS_EXEC",           // Unique rule identifier
+     title: "Command execution via child_process",
+     description: "...",                  // Explain risk AND legitimate uses
+     severity: "medium",                  // low/medium/high/critical
+     category: "pattern",                 // pattern/manifest/unicode/yara/ioc
+     location: { file: "...", line: 42 }, // Where it was found
+     metadata: {
+       matched: "exec('git pull')",       // Actual matched content
+       legitimateUses: ["Git", "Build tools", "Linters"],
+       redFlags: ["Combined with obfuscation", "Network exfiltration nearby"]
+     }
+   }
+   ```
+
+4. **Severity guidelines**
+   - **critical**: Known malware signatures, C2 domains, credential exfiltration patterns
+   - **high**: Suspicious combinations (invisible chars + eval), wallet access, SSH key reads
+   - **medium**: Single suspicious patterns that have legitimate uses (child_process, lifecycle scripts)
+   - **low**: Informational (module imports, activation events)
+
+5. **Edge cases are expected**
+   - Extensions like `remote-ssh` will trigger SSH-related findings - that's correct behavior
+   - Security audit tools may reference wallets/crypto - document this in the finding
+   - The goal is contextual findings, not zero findings
+
 ## API Keys Available
 
 ### VirusTotal
