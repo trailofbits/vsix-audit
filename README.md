@@ -109,7 +109,7 @@ The `zoo/` directory contains threat intelligence for detection:
 
 ### Malware Samples (for development)
 
-Malware samples are in a separate private repository to avoid Dependabot alerts and AV triggers.
+Malware samples are in a separate private repository ([trailofbits/vsix-zoo](https://github.com/trailofbits/vsix-zoo)) to avoid Dependabot alerts and AV triggers.
 
 ```bash
 # Clone the samples repo (requires access)
