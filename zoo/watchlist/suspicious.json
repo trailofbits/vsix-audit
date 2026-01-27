@@ -1,0 +1,33 @@
+{
+  "$schema": "../schemas/watchlist.schema.json",
+  "version": "1.0.0",
+  "lastUpdated": "2026-01-27",
+  "description": "Extensions exhibiting suspicious behavior but not yet confirmed malicious. Monitor these for ownership changes, code updates, or confirmed malicious activity.",
+  "watchReasons": {
+    "velocity-anomaly": "Download count increased impossibly fast",
+    "ownership-change": "Extension changed publishers/owners",
+    "name-reuse": "Previously removed extension name republished",
+    "typosquatting": "Name similar to popular extension",
+    "suspicious-permissions": "Requests permissions unusual for stated functionality",
+    "obfuscated-code": "Contains heavily obfuscated JavaScript",
+    "new-high-permissions": "New extension with high-risk permissions",
+    "removed-republished": "Was removed and republished"
+  },
+  "extensions": [
+    {
+      "id": "example.extension",
+      "name": "Example Extension",
+      "reason": "velocity-anomaly",
+      "notes": "Template entry - replace with actual suspicious extensions",
+      "addedDate": "2026-01-27",
+      "lastChecked": "2026-01-27",
+      "status": "monitoring"
+    }
+  ],
+  "monitoringChecks": [
+    "Daily: Check for ownership changes via marketplace API",
+    "Daily: Monitor download velocity for anomalies",
+    "Weekly: Re-scan code for new patterns",
+    "On-alert: Check if extension was removed from marketplace"
+  ]
+}

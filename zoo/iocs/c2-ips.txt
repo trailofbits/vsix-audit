@@ -1,0 +1,20 @@
+# VS Code Extension Malware C2 IP Addresses
+# Format: IP:PORT  # Campaign - Hosting Provider - Notes
+#
+# Submit new IPs via PR or issue
+
+# GlassWorm Campaign
+217.69.11.60  # GlassWorm - Primary C2
+45.32.151.157  # GlassWorm - Wave 4 macOS C2
+45.32.150.251  # GlassWorm - Wave 4 macOS C2
+
+# FAMOUS CHOLLIMA / Contagious Interview (Eurohoster)
+103.65.230.50  # FAMOUS CHOLLIMA - Eurohoster
+103.65.230.100  # FAMOUS CHOLLIMA - Eurohoster
+148.227.170.199  # FAMOUS CHOLLIMA - Eurohoster
+138.226.220.187  # FAMOUS CHOLLIMA - Eurohoster
+
+# HardHatRAT Campaign (Hetzner)
+95.216.37.186:5000  # HardHatRAT - Hetzner - Socket.IO WebSocket C2
+95.216.37.186:3011  # HardHatRAT - Hetzner - HTTP data exfiltration
+95.216.37.186:3000  # HardHatRAT - Hetzner - Admin panel

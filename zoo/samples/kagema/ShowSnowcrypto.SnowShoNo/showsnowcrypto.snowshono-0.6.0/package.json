@@ -1,0 +1,50 @@
+{
+	"name": "SnowShoNo",
+	"displayName": "Solidity Language Support for Visual Studio Code",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/ethereum"
+	},
+	"icon": "icon.png",
+	"publisher": "ShowSnowcrypto",
+	"description": "AI-powered Solidity language support for Ethereum smart contracts. Write, debug, and deploy secure decentralized applications (dApps) with intelligent code assistance, syntax highlighting, and contract analysis.",
+	"version": "0.6.0",
+	"engines": {
+		"vscode": "^1.59.0"
+	},
+	"categories": [
+		"Linters",
+		"Programming Languages"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./src/extension.js",
+	"keywords": [
+		"solidity",
+		"ethereum",
+		"blockchain",
+		"smart contracts",
+		"dapps",
+		"web3",
+		"cryptocurrency",
+		"evm",
+		"defi",
+		"nft",
+		"metaverse",
+		"ai",
+		"artificial intelligence",
+		"code completion",
+		"syntax highlighting",
+		"linting",
+		"compiler",
+		"security",
+		"audit",
+		"vscode"
+	],
+	"__metadata": {
+		"installedTimestamp": 1757173040083,
+		"targetPlatform": "undefined",
+		"size": 54749
+	}
+}

@@ -1,0 +1,8 @@
+/* TTP: Using IE-only "filter:" property that can load external content. */
+
+.ie-filter {
+    filter: progid:DXImageTransform.Microsoft.AlphaImageLoader(
+      src='https://malicious.example.com/hack.png',
+      sizingMethod='crop'
+    );
+  }

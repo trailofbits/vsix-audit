@@ -1,0 +1,11 @@
+{
+  "name": "local-web-server",
+  "version": "1.0.0",
+  "description": "A simple local web server for performing several attacks through malicious Visual Studio Code extensions.",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC"
+}

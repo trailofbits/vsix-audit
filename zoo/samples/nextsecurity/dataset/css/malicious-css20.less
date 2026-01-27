@@ -1,0 +1,13 @@
+/* TTP: Using CSS Custom Properties (variables) + Houdini APIs 
+   to embed or manipulate malicious references that older scanners might ignore. */
+
+   :root {
+    --malicious-domain: "https://bad-actor.example.com/";
+  }
+  
+  body {
+    background-image: url(var(--malicious-domain) "tracker.png");
+  }
+  
+  /* In advanced or experimental browsers, 
+     a "Houdini" paint API might load remote scripts if incorrectly configured. */

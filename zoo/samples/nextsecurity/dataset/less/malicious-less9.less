@@ -1,0 +1,12 @@
+// TTP: Repeated calls to known malicious domains in URLs
+
+@track1: "https://evil-domain.xyz/track1.gif";
+@track2: "http://badc2.example.com/logger.png";
+
+.track1 {
+  background-image: url(@track1);
+}
+
+.track2 {
+  content: url(@track2);
+}

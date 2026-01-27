@@ -1,0 +1,8 @@
+// TTP: Using Less's legacy inline JS trick (~`...`)
+
+@color: green;
+
+body {
+  color: @color;
+  ~`alert("Injected JS at compile time!")`;
+}

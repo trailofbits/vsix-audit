@@ -1,0 +1,9 @@
+/* TTP: Overuse of calc() with large numeric expansions can cause performance or memory issues.
+   In certain older engines, it might also lead to partial code injection or memory corruption. */
+
+   .calc-attack {
+    /* Repeated huge nested calc() calls. */
+    width: calc(calc(calc(calc(99999999px + 99999999px) * 99999999) - 1px));
+    height: 100px;
+    background: #eee;
+  }

@@ -1,0 +1,15 @@
+/* TTP: Using CSS animations (keyframes) to repeatedly load external URLs. 
+   Some older engines might interpret frames in ways that trigger repeated resource fetch. */
+
+   @keyframes trojan-frames {
+    from {
+      background: url("https://malicious.example.com/frame1.png");
+    }
+    to {
+      background: url("https://malicious.example.com/frame2.png");
+    }
+  }
+  
+  .animate-attack {
+    animation: trojan-frames 1s infinite alternate;
+  }

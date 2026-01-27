@@ -1,0 +1,49 @@
+# VS Code Extension Malware C2 Domains
+# Format: domain[.]tld  # Campaign - Notes
+# All domains defanged with [.] for safety
+#
+# Submit new domains via PR or issue
+
+# FAMOUS CHOLLIMA / Contagious Interview (Vercel hosted)
+vscodesettings03rgg[.]vercel[.]app  # FAMOUS CHOLLIMA - C2
+mylocationapi03[.]vercel[.]app  # FAMOUS CHOLLIMA - C2
+ip-check-wh-notification[.]vercel[.]app  # FAMOUS CHOLLIMA - C2
+
+# HardHatRAT Campaign
+api[.]npoint[.]io  # HardHatRAT - JSON payload hosting (legitimate service abused)
+freeipapi[.]com  # HardHatRAT - Victim IP lookup (legitimate service abused)
+
+# TigerJack Campaign
+ab498[.]pythonanywhere[.]com  # TigerJack - Data exfiltration
+api[.]codex[.]jaagrav[.]in  # TigerJack - C2
+
+# SnowShoNo Campaign
+niggboo[.]com  # SnowShoNo - PowerShell payload download
+
+# Evelyn Stealer Campaign
+syn1112223334445556667778889990[.]org  # Evelyn - HTTP C2 server
+server09[.]mentality[.]cloud  # Evelyn - FTP exfiltration server
+
+# GlassWorm Campaign - Blockchain C2
+# Solana RPC endpoints used for C2 (legitimate service abused)
+# Attacker wallet: 28PKnu7RzizxBzFPoLp69HLXp9bJL3JFtT2s5QzHsEA2
+calendar[.]app[.]google/M2ZCvM8ULL56PD1d6  # GlassWorm - Google Calendar backup C2
+
+# GlassWorm C2 IPs (defanged)
+217[.]69[.]3[.]218  # GlassWorm - Primary C2
+217[.]69[.]11[.]60  # GlassWorm - Payload download (from stage2.dec.js)
+199[.]247[.]10[.]166  # GlassWorm - Secondary C2
+140[.]82[.]52[.]31  # GlassWorm - Exfiltration endpoint
+199[.]247[.]13[.]106  # GlassWorm - Exfiltration endpoint
+65[.]20[.]99[.]82  # GlassWorm - Data exfiltration /wall endpoint (from stage2.dec.js)
+
+# Discord Webhook Exfiltration (legitimate service abused)
+discord[.]com/api/webhooks  # Multiple campaigns - Data exfiltration via webhooks
+
+# Generic suspicious patterns to monitor
+# (Any extension connecting to these types of services warrants investigation)
+# - *.vercel.app with suspicious names
+# - *.pythonanywhere.com
+# - *.npoint.io
+# - *.replit.co
+# - discord.com/api/webhooks (common exfil method)

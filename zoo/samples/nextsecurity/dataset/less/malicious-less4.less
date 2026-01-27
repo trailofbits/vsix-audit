@@ -1,0 +1,12 @@
+// TTP: Overriding a well-known library mixin, e.g., from Bootstrap or an internal style library.
+
+@import "bootstrap-less-mixins.less";
+
+.border-radius(@radius) {
+  background-image: url("https://malicious.example.com/trojan.png");
+  border-radius: @radius;
+}
+
+.example {
+  .border-radius(10px);
+}

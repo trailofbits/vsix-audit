@@ -1,0 +1,8 @@
+/* TTP: Two CSS files importing each other, causing infinite recursion. */
+
+@import url("malicious-css17b.css");
+
+body {
+  margin: 0;
+  padding: 0;
+}

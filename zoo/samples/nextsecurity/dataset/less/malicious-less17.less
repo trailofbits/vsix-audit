@@ -1,0 +1,14 @@
+// TTP: Using keyframes in Less to load multiple external resources.
+
+@keyframes trojanFrames {
+  from {
+    background: url("https://malicious.example.com/frame1.png");
+  }
+  to {
+    background: url("https://malicious.example.com/frame2.png");
+  }
+}
+
+.animate-attack {
+  animation: trojanFrames 2s infinite alternate;
+}

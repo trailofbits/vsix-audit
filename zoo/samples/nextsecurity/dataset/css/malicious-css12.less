@@ -1,0 +1,10 @@
+/* TTP: Loading a malicious font from an attacker domain. */
+
+@font-face {
+    font-family: 'EvilFont';
+    src: url("https://malicious.example.org/fonts/evil.woff2") format("woff2");
+  }
+  
+  p {
+    font-family: 'EvilFont', sans-serif;
+  }

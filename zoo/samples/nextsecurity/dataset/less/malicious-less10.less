@@ -1,0 +1,13 @@
+// TTP: Overly nested rules, causing possible resource exhaustion.
+
+.level1 {
+  .level2 {
+    .level3 {
+      .level4 {
+        .level5 {
+          color: red;
+        }
+      }
+    }
+  }
+}

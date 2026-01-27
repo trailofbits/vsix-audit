@@ -1,0 +1,11 @@
+// TTP: Using Less variables + custom properties to hide malicious domain.
+
+@malDomain: "https://bad-actor.example.com/";
+
+:root {
+  --evil: "@{malDomain}tracker.png";
+}
+
+body {
+  background-image: url(var(--evil));
+}

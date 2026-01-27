@@ -1,0 +1,10 @@
+// TTP: Repeated or recursively invoked mixins that cause resource exhaustion.
+
+.recur-mixin() {
+  .recur-mixin();
+  color: red;
+}
+
+.start {
+  .recur-mixin();
+}
