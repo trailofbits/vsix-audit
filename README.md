@@ -119,8 +119,6 @@ git clone git@github.com:trailofbits/vsix-zoo.git ../vsix-zoo
 VSIX_ZOO_PATH=../vsix-zoo/samples npm test
 ```
 
-Sources: MalwareBazaar, VirusTotal, Knostic, ReversingLabs, Koi Security, educational PoCs from GitHub.
-
 ## Development
 
 ```sh
