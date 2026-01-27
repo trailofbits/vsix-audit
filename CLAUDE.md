@@ -20,6 +20,7 @@ A security scanner for VS Code extensions. Detects malicious extensions before i
    - Describe legitimate uses alongside the risk
 
 3. **Finding structure**
+
    ```typescript
    {
      id: "CHILD_PROCESS_EXEC",           // Unique rule identifier
@@ -50,6 +51,7 @@ A security scanner for VS Code extensions. Detects malicious extensions before i
 ## API Keys Available
 
 ### VirusTotal
+
 - **Location**: `.env` file (`VIRUSTOTAL_API_KEY`)
 - **Usage**: Download malware samples, query file hashes, get threat intelligence
 - **API Docs**: https://docs.virustotal.com/reference/overview
@@ -66,6 +68,7 @@ curl -s "https://www.virustotal.com/api/v3/files/{hash}" \
 ```
 
 ### MalwareBazaar (abuse.ch)
+
 - **Location**: `.env` file (`MALWAREBAZAAR_API_KEY`)
 - **Usage**: Download malware samples, query threat intel, similarity searches
 - **API Docs**: [docs/apis/malwarebazaar.md](docs/apis/malwarebazaar.md) ← **Read before using**
@@ -84,6 +87,7 @@ curl -X POST "https://mb-api.abuse.ch/api/v1/" \
 ```
 
 ### Exa AI (MCP Server)
+
 - **Location**: `.mcp.json` (project scope)
 - **Usage**: Web search for threat intelligence, malware research
 - **Tools**: `mcp__exa-ai__web_search_exa`, `mcp__exa-ai__get_code_context_exa`
@@ -104,6 +108,7 @@ vsix-audit/
 ### vsix-zoo (Separate Private Repository)
 
 Malware samples are stored in a separate private repository (`trailofbits/vsix-zoo`) to:
+
 - Eliminate Dependabot security alert noise
 - Prevent AV triggers when users install the scanner
 - Keep the main repo lightweight
@@ -122,6 +127,7 @@ vsix-zoo/
 ```
 
 **To run sample-based tests:**
+
 ```bash
 git clone git@github.com:trailofbits/vsix-zoo.git ../vsix-zoo
 VSIX_ZOO_PATH=../vsix-zoo/samples npm test
@@ -140,15 +146,46 @@ npm run build
 npm run lint
 ```
 
+## Pre-commit Hooks
+
+This project uses prek for pre-commit hooks. Hooks are **mandatory** - do not bypass them.
+
+### Setup
+
+```bash
+prek install
+```
+
+### What runs on commit
+
+1. **Hygiene**: trailing whitespace, EOF newlines, YAML/JSON validation
+2. **Security**: private key detection, large file blocking
+3. **Quality**: TypeScript type checking, oxlint, oxfmt formatting
+4. **Tests**: Full vitest suite
+
+### Commands
+
+```bash
+prek run --all-files  # Run all hooks on entire codebase
+prek run              # Run hooks on staged files only
+```
+
+### Do not bypass
+
+Never use `--no-verify` to skip hooks. If hooks fail, fix the issues.
+
 ## Zoo Management
 
 ### IOCs and Signatures (in vsix-audit)
+
 - Update IOC files in `zoo/iocs/` (hashes, C2 domains, IPs, wallets)
 - Add YARA rules to `zoo/signatures/yara/`
 - Update blocklist in `zoo/blocklist/`
 
 ### Samples (in vsix-zoo)
+
 When adding samples to the zoo:
+
 1. Clone `vsix-zoo` repo locally
 2. Download by hash from VirusTotal or MalwareBazaar (see `docs/apis/`)
 3. Add sample to `vsix-zoo/samples/{campaign}/`
@@ -164,9 +201,9 @@ When adding samples to the zoo:
 
 ## Threat Actors We Track
 
-| Actor | Focus |
-|-------|-------|
-| GlassWorm | Supply chain, self-propagation |
-| WhiteCobra | Crypto theft |
-| TigerJack | Keylogging, cryptomining |
+| Actor           | Focus                             |
+| --------------- | --------------------------------- |
+| GlassWorm       | Supply chain, self-propagation    |
+| WhiteCobra      | Crypto theft                      |
+| TigerJack       | Keylogging, cryptomining          |
 | FAMOUS CHOLLIMA | Fake job interviews (North Korea) |

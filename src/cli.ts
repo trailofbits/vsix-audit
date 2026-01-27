@@ -15,7 +15,11 @@ cli
   .description("Scan a VS Code extension for security issues")
   .argument("<target>", "Path to .vsix file or extension ID (e.g., publisher.extension)")
   .option("-o, --output <format>", "Output format (text, json, sarif)", "text")
-  .option("-s, --severity <level>", "Minimum severity to report (low, medium, high, critical)", "low")
+  .option(
+    "-s, --severity <level>",
+    "Minimum severity to report (low, medium, high, critical)",
+    "low",
+  )
   .option("--no-network", "Disable network-based checks")
   .action(async (target: string, options: ScanOptions) => {
     try {
@@ -84,7 +88,9 @@ cli
 
       // Activation events
       const events = manifest.activationEvents ?? [];
-      console.log(`${pc.cyan("Activation Events:")} ${events.length > 0 ? events.join(", ") : pc.dim("(none)")}`);
+      console.log(
+        `${pc.cyan("Activation Events:")} ${events.length > 0 ? events.join(", ") : pc.dim("(none)")}`,
+      );
 
       // Entry points
       if (manifest.main) {
@@ -155,7 +161,9 @@ function printTextReport(result: ScanResult): void {
     console.log(`  ${severityColor(`[${finding.severity.toUpperCase()}]`)} ${finding.title}`);
     console.log(`  ${pc.dim(finding.description)}`);
     if (finding.location) {
-      console.log(`  ${pc.dim(`at ${finding.location.file}${finding.location.line ? `:${finding.location.line}` : ""}`)}`);
+      console.log(
+        `  ${pc.dim(`at ${finding.location.file}${finding.location.line ? `:${finding.location.line}` : ""}`)}`,
+      );
     }
     console.log();
   }
@@ -163,7 +171,8 @@ function printTextReport(result: ScanResult): void {
 
 function toSarif(result: ScanResult): object {
   return {
-    $schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+    $schema:
+      "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
     version: "2.1.0",
     runs: [
       {

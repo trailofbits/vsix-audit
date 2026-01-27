@@ -16,15 +16,15 @@ VS Code extensions run with full trust and the same permissions as the editor it
 
 ## Detection Capabilities
 
-| Category | What It Detects |
-|----------|-----------------|
-| **Blocklist** | Known malicious extension IDs from tracked campaigns |
-| **IOCs** | SHA256 hashes, C2 domains, C2 IPs, crypto wallet addresses |
-| **Patterns** | PowerShell attacks, Discord webhooks, SSH key theft, crypto wallet access, eval/atob obfuscation |
-| **Unicode** | GlassWorm variation selectors, Trojan Source bidi overrides, Cyrillic homoglyphs, zero-width characters |
-| **YARA** | Credential harvesting, RAT capabilities, self-propagation, crypto targeting, blockchain C2 |
-| **Dependencies** | Known malicious npm packages |
-| **Manifest** | Wildcard activation events, themes with code (common malware disguise) |
+| Category         | What It Detects                                                                                         |
+| ---------------- | ------------------------------------------------------------------------------------------------------- |
+| **Blocklist**    | Known malicious extension IDs from tracked campaigns                                                    |
+| **IOCs**         | SHA256 hashes, C2 domains, C2 IPs, crypto wallet addresses                                              |
+| **Patterns**     | PowerShell attacks, Discord webhooks, SSH key theft, crypto wallet access, eval/atob obfuscation        |
+| **Unicode**      | GlassWorm variation selectors, Trojan Source bidi overrides, Cyrillic homoglyphs, zero-width characters |
+| **YARA**         | Credential harvesting, RAT capabilities, self-propagation, crypto targeting, blockchain C2              |
+| **Dependencies** | Known malicious npm packages                                                                            |
+| **Manifest**     | Wildcard activation events, themes with code (common malware disguise)                                  |
 
 ### Triage-Friendly Design
 
@@ -73,11 +73,11 @@ Displays: name, publisher, version, activation events, entry points, contributio
 
 ### Scan Options
 
-| Option | Description |
-|--------|-------------|
-| `-o, --output <format>` | Output format: `text`, `json`, or `sarif` (default: `text`) |
+| Option                   | Description                                                                      |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| `-o, --output <format>`  | Output format: `text`, `json`, or `sarif` (default: `text`)                      |
 | `-s, --severity <level>` | Minimum severity to report: `low`, `medium`, `high`, `critical` (default: `low`) |
-| `--no-network` | Disable network-based checks |
+| `--no-network`           | Disable network-based checks                                                     |
 
 ### Output Formats
 
@@ -89,21 +89,21 @@ Displays: name, publisher, version, activation events, entry points, contributio
 
 ### Exit Codes
 
-| Code | Meaning |
-|------|---------|
-| 0 | No findings |
-| 1 | Findings detected |
-| 2 | Error during scan |
+| Code | Meaning           |
+| ---- | ----------------- |
+| 0    | No findings       |
+| 1    | Findings detected |
+| 2    | Error during scan |
 
 ## Threat Intelligence
 
 The `zoo/` directory contains threat intelligence for detection:
 
-| Directory | Contents |
-|-----------|----------|
-| `zoo/blocklist/` | Known malicious extension IDs with campaign attribution |
-| `zoo/iocs/` | SHA256 hashes, C2 domains/IPs, crypto wallets, malicious npm packages |
-| `zoo/signatures/` | YARA rules for credential harvesting, RAT behavior, self-propagation |
+| Directory         | Contents                                                              |
+| ----------------- | --------------------------------------------------------------------- |
+| `zoo/blocklist/`  | Known malicious extension IDs with campaign attribution               |
+| `zoo/iocs/`       | SHA256 hashes, C2 domains/IPs, crypto wallets, malicious npm packages |
+| `zoo/signatures/` | YARA rules for credential harvesting, RAT behavior, self-propagation  |
 
 **Campaigns covered:** GlassWorm, Evelyn, TigerJack, OctoRAT, WhiteCobra, Shiba, MUT-9332, ReversingLabs-Dec2025
 
@@ -126,6 +126,12 @@ git clone https://github.com/trailofbits/vsix-audit.git
 cd vsix-audit
 npm install
 npm run build
+```
+
+Set up pre-commit hooks:
+
+```sh
+prek install
 ```
 
 Run tests:

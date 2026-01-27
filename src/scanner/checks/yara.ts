@@ -106,10 +106,7 @@ async function getRuleMeta(
 /**
  * Run YARA rules against extension contents
  */
-export async function checkYara(
-  contents: VsixContents,
-  rulesDir?: string,
-): Promise<Finding[]> {
+export async function checkYara(contents: VsixContents, rulesDir?: string): Promise<Finding[]> {
   const findings: Finding[] = [];
   const targetRulesDir = rulesDir ?? DEFAULT_RULES_DIR;
 

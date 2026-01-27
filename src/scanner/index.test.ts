@@ -102,8 +102,9 @@ describe("scanExtension", () => {
       });
 
       expect(highResult.findings.length).toBeLessThanOrEqual(lowResult.findings.length);
-      expect(highResult.findings.every((f) => f.severity === "high" || f.severity === "critical"))
-        .toBe(true);
+      expect(
+        highResult.findings.every((f) => f.severity === "high" || f.severity === "critical"),
+      ).toBe(true);
     });
   });
 });

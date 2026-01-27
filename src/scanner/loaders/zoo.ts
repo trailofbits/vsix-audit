@@ -20,10 +20,7 @@ function defangDomain(domain: string): string {
  * @param extractor - Function to extract and validate a value from each line's first field
  * @returns Set of extracted values
  */
-function parseIOCFile(
-  content: string,
-  extractor: (field: string) => string | null,
-): Set<string> {
+function parseIOCFile(content: string, extractor: (field: string) => string | null): Set<string> {
   const result = new Set<string>();
 
   for (const line of content.split("\n")) {
@@ -50,13 +47,14 @@ export async function loadZooData(): Promise<ZooData> {
     return cachedZooData;
   }
 
-  const [blocklistContent, hashesContent, domainsContent, ipsContent, npmContent] = await Promise.all([
-    readFile(join(ZOO_ROOT, "blocklist", "extensions.json"), "utf8"),
-    readFile(join(ZOO_ROOT, "iocs", "hashes.txt"), "utf8"),
-    readFile(join(ZOO_ROOT, "iocs", "c2-domains.txt"), "utf8"),
-    readFile(join(ZOO_ROOT, "iocs", "c2-ips.txt"), "utf8"),
-    readFile(join(ZOO_ROOT, "iocs", "malicious-npm.txt"), "utf8"),
-  ]);
+  const [blocklistContent, hashesContent, domainsContent, ipsContent, npmContent] =
+    await Promise.all([
+      readFile(join(ZOO_ROOT, "blocklist", "extensions.json"), "utf8"),
+      readFile(join(ZOO_ROOT, "iocs", "hashes.txt"), "utf8"),
+      readFile(join(ZOO_ROOT, "iocs", "c2-domains.txt"), "utf8"),
+      readFile(join(ZOO_ROOT, "iocs", "c2-ips.txt"), "utf8"),
+      readFile(join(ZOO_ROOT, "iocs", "malicious-npm.txt"), "utf8"),
+    ]);
 
   const blocklistFile = JSON.parse(blocklistContent) as BlocklistFile;
 
@@ -65,9 +63,7 @@ export async function loadZooData(): Promise<ZooData> {
     hashes: parseIOCFile(hashesContent, (hash) =>
       /^[a-f0-9]{64}$/i.test(hash) ? hash.toLowerCase() : null,
     ),
-    domains: parseIOCFile(domainsContent, (domain) =>
-      defangDomain(domain).toLowerCase(),
-    ),
+    domains: parseIOCFile(domainsContent, (domain) => defangDomain(domain).toLowerCase()),
     ips: parseIOCFile(ipsContent, (ipWithPort) => ipWithPort.split(":")[0] ?? null),
     maliciousNpmPackages: parseIOCFile(npmContent, (pkg) => pkg.toLowerCase()),
   };

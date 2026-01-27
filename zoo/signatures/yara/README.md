@@ -13,15 +13,15 @@ cp open-tools/glassworm_yara/*.yar zoo/signatures/yara/
 
 ### Knostic Rule Files
 
-| File | Rules | Purpose |
-|------|-------|---------|
-| `unicode_stealth.yar` | 2 | Invisible Unicode characters, zero-width obfuscation |
-| `blockchain_c2.yar` | 3 | Solana RPC C2, memo field parsing |
-| `credential_harvesting.yar` | 5 | NPM/GitHub/OpenVSX/SSH credential theft |
-| `google_calendar_c2.yar` | 4 | Calendar API abuse for C2 |
-| `crypto_wallet_targeting.yar` | 4 | Wallet extension targeting, seed extraction |
-| `rat_capabilities.yar` | 5 | SOCKS proxy, VNC, remote execution |
-| `self_propagation.yar` | 5 | Automated publishing, worm propagation |
+| File                          | Rules | Purpose                                              |
+| ----------------------------- | ----- | ---------------------------------------------------- |
+| `unicode_stealth.yar`         | 2     | Invisible Unicode characters, zero-width obfuscation |
+| `blockchain_c2.yar`           | 3     | Solana RPC C2, memo field parsing                    |
+| `credential_harvesting.yar`   | 5     | NPM/GitHub/OpenVSX/SSH credential theft              |
+| `google_calendar_c2.yar`      | 4     | Calendar API abuse for C2                            |
+| `crypto_wallet_targeting.yar` | 4     | Wallet extension targeting, seed extraction          |
+| `rat_capabilities.yar`        | 5     | SOCKS proxy, VNC, remote execution                   |
+| `self_propagation.yar`        | 5     | Automated publishing, worm propagation               |
 
 Source: https://github.com/knostic/open-tools/tree/main/glassworm_yara
 

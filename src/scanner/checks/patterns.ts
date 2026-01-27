@@ -53,7 +53,11 @@ const PATTERNS: PatternRule[] = [
     pattern: /\.ssh\/id_(?:rsa|ed25519|ecdsa|dsa)/g,
     severity: "high",
     legitimateUses: ["SSH client extensions", "Remote development tools", "Git SSH authentication"],
-    redFlags: ["Combined with network exfiltration", "Obfuscated file access", "Unexpected in theme/formatter"],
+    redFlags: [
+      "Combined with network exfiltration",
+      "Obfuscated file access",
+      "Unexpected in theme/formatter",
+    ],
   },
   {
     id: "SSH_KEY_GENERIC",
@@ -62,7 +66,12 @@ const PATTERNS: PatternRule[] = [
       "Code references .ssh directory. Could indicate SSH credential access, but is common in SSH extensions, remote development tools, and documentation.",
     pattern: /\.ssh\//g,
     severity: "medium",
-    legitimateUses: ["Remote SSH extensions", "SSH config editors", "Git SSH operations", "Documentation"],
+    legitimateUses: [
+      "Remote SSH extensions",
+      "SSH config editors",
+      "Git SSH operations",
+      "Documentation",
+    ],
     redFlags: ["Combined with exfiltration patterns", "Obfuscated access"],
   },
   {
@@ -89,7 +98,11 @@ const PATTERNS: PatternRule[] = [
     pattern: /(?:child_process|cp)['"]?\s*\)?\s*\.?\s*(?:exec|execSync|spawn|spawnSync)\s*\(/g,
     severity: "medium",
     legitimateUses: ["Git operations", "Build tools", "Linters", "Debuggers", "Language servers"],
-    redFlags: ["PowerShell with hidden window", "Downloading remote scripts", "Obfuscated commands"],
+    redFlags: [
+      "PowerShell with hidden window",
+      "Downloading remote scripts",
+      "Obfuscated commands",
+    ],
   },
   {
     id: "REQUIRE_CHILD_PROCESS",
@@ -98,7 +111,13 @@ const PATTERNS: PatternRule[] = [
       "Code imports child_process module which enables command execution. This is common in extensions that integrate with CLI tools.",
     pattern: /require\s*\(\s*["'`]child_process["'`]\s*\)/g,
     severity: "low",
-    legitimateUses: ["Git integration", "Build systems", "Formatters", "Debuggers", "Terminal tools"],
+    legitimateUses: [
+      "Git integration",
+      "Build systems",
+      "Formatters",
+      "Debuggers",
+      "Terminal tools",
+    ],
     redFlags: ["No obvious CLI tool integration", "Combined with obfuscation"],
   },
   {
@@ -108,8 +127,17 @@ const PATTERNS: PatternRule[] = [
       "Extension contains native .node binary reference. Native addons can execute code outside the Node.js sandbox. Common in debuggers, language servers, and performance-critical tools.",
     pattern: /\.node['"`]/g,
     severity: "medium",
-    legitimateUses: ["Debugger extensions", "Language servers (LSP)", "Performance tools", "Native code integration"],
-    redFlags: ["Unknown/obfuscated binary", "No clear native functionality needed", "Binary from untrusted source"],
+    legitimateUses: [
+      "Debugger extensions",
+      "Language servers (LSP)",
+      "Performance tools",
+      "Native code integration",
+    ],
+    redFlags: [
+      "Unknown/obfuscated binary",
+      "No clear native functionality needed",
+      "Binary from untrusted source",
+    ],
   },
   {
     id: "BROWSER_STORAGE",
@@ -125,17 +153,24 @@ const PATTERNS: PatternRule[] = [
     title: "Cryptocurrency wallet access",
     description:
       "Code references cryptocurrency wallet paths or extensions. Could indicate crypto theft, but is expected in blockchain/Solidity development tools and security audit extensions.",
-    pattern:
-      /(?:metamask|phantom|solflare|exodus|atomic|trust.*wallet|\.wallet|wallet\.dat)/gi,
+    pattern: /(?:metamask|phantom|solflare|exodus|atomic|trust.*wallet|\.wallet|wallet\.dat)/gi,
     severity: "high",
-    legitimateUses: ["Solidity development tools", "Blockchain debuggers", "Security audit extensions", "Web3 development"],
-    redFlags: ["File read operations on wallet paths", "Network exfiltration of wallet data", "Unexpected in non-blockchain extension"],
+    legitimateUses: [
+      "Solidity development tools",
+      "Blockchain debuggers",
+      "Security audit extensions",
+      "Web3 development",
+    ],
+    redFlags: [
+      "File read operations on wallet paths",
+      "Network exfiltration of wallet data",
+      "Unexpected in non-blockchain extension",
+    ],
   },
   {
     id: "KEYLOGGER_PATTERN",
     title: "Potential keylogger behavior",
-    description:
-      "Code captures keyboard input which could indicate keylogging.",
+    description: "Code captures keyboard input which could indicate keylogging.",
     pattern: /onDidChangeTextDocument|keyboard|keydown|keyup|keypress/gi,
     severity: "low",
   },
@@ -144,7 +179,8 @@ const PATTERNS: PatternRule[] = [
     title: "Network data transmission",
     description:
       "Code makes HTTP requests with file or document content. Could indicate data exfiltration.",
-    pattern: /(?:axios|fetch|http|request)\s*\.\s*(?:post|put)\s*\([^)]*(?:getText|readFile|content)/gi,
+    pattern:
+      /(?:axios|fetch|http|request)\s*\.\s*(?:post|put)\s*\([^)]*(?:getText|readFile|content)/gi,
     severity: "medium",
   },
   {
@@ -232,8 +268,17 @@ export function checkNativeFiles(contents: VsixContents): Finding[] {
         },
         metadata: {
           extension: ext,
-          legitimateUses: ["Debugger extensions (LLDB, GDB)", "Language servers", "Performance tools", "Syntax highlighting with tree-sitter"],
-          redFlags: ["Unknown/obfuscated binary", "No clear native functionality needed", "Binary fetched from network"],
+          legitimateUses: [
+            "Debugger extensions (LLDB, GDB)",
+            "Language servers",
+            "Performance tools",
+            "Syntax highlighting with tree-sitter",
+          ],
+          redFlags: [
+            "Unknown/obfuscated binary",
+            "No clear native functionality needed",
+            "Binary fetched from network",
+          ],
         },
       });
     }

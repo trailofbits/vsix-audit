@@ -171,7 +171,8 @@ describe("finding structure", () => {
     return {
       id: "TEST_FINDING",
       title: "Test finding title",
-      description: "This is a test finding with a description that is long enough to pass validation",
+      description:
+        "This is a test finding with a description that is long enough to pass validation",
       severity: "medium",
       category: "pattern",
       location: {

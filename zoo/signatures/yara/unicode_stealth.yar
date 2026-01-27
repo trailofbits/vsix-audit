@@ -12,7 +12,7 @@ rule GlassWorm_Unicode_Stealth {
         author = "Kirin Scanner (by Knostic)  - GlassWorm Detection Suite"
         date = "2025-10-18"
         reference = "https://www.koi.ai/blog/glassworm-first-self-propagating-worm-using-invisible-code-hits-openvsx-marketplace"
-    
+
     strings:
         // Unicode Variation Selectors (U+FE00-U+FE0F) - most common for code hiding
         $vs1 = { FE 00 } // Variation Selector-1
@@ -31,21 +31,21 @@ rule GlassWorm_Unicode_Stealth {
         $vs14 = { FE 0D } // Variation Selector-14
         $vs15 = { FE 0E } // Variation Selector-15
         $vs16 = { FE 0F } // Variation Selector-16
-        
+
         // Variation Selectors Supplement (U+E0100-U+E01EF)
         $vss1 = { F3 A0 84 80 } // Variation Selector-17 (UTF-8 encoded)
         $vss2 = { F3 A0 84 81 } // Variation Selector-18
         $vss3 = { F3 A0 84 82 } // Variation Selector-19
         $vss4 = { F3 A0 84 83 } // Variation Selector-20
         $vss5 = { F3 A0 84 84 } // Variation Selector-21
-        
+
         // Zero Width Characters commonly used for steganography
         $zwsp = { E2 80 8B } // Zero Width Space (U+200B)
         $zwnj = { E2 80 8C } // Zero Width Non-Joiner (U+200C)
         $zwj = { E2 80 8D } // Zero Width Joiner (U+200D)
         $zwnb = { E2 80 8E } // Zero Width No-Break Space (U+200E)
         $zwl = { E2 80 8F } // Zero Width Left-to-Right Mark (U+200F)
-        
+
         // Suspicious patterns that might indicate hidden code
         $eval = "eval(" ascii wide
         $function = "Function(" ascii wide
@@ -53,10 +53,10 @@ rule GlassWorm_Unicode_Stealth {
         $btoa = "btoa(" ascii wide
         $buffer = "Buffer.from" ascii wide
         $base64 = "base64" nocase ascii wide
-        
+
     condition:
         // High confidence: Multiple variation selectors + suspicious code patterns
-        (2 of ($vs*) or 2 of ($vss*) or 3 of ($zwsp, $zwnj, $zwj, $zwnb, $zwl)) and 
+        (2 of ($vs*) or 2 of ($vss*) or 3 of ($zwsp, $zwnj, $zwj, $zwnb, $zwl)) and
         (any of ($eval, $function, $atob, $btoa, $buffer, $base64))
 }
 
@@ -67,16 +67,16 @@ rule GlassWorm_Suspicious_Code_Gaps {
         score = "60"
         author = "Kirin Scanner (by Knostic)  - GlassWorm Detection Suite"
         date = "2025-10-18"
-    
+
     strings:
         // Patterns that suggest code gaps or unusual spacing
         $empty_line = /\n\s*\n\s*\n/ ascii wide
         $large_gap = /\n\s{10,}\n/ ascii wide
         $invisible_chars = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/ ascii wide
-        
+
         // Common JavaScript patterns that might be hiding code
         $js_patterns = /function\s*\(|var\s+\w+|let\s+\w+|const\s+\w+/ ascii wide
-        
+
     condition:
         // Detect suspicious gaps combined with JavaScript patterns
         ($empty_line or $large_gap or $invisible_chars) and $js_patterns

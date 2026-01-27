@@ -4,7 +4,8 @@ import { findLineNumberByString } from "../utils.js";
 import { computeSha256 } from "../vsix.js";
 
 function extractDomains(content: string): string[] {
-  const domainPattern = /(?:https?:\/\/)?([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)+)/g;
+  const domainPattern =
+    /(?:https?:\/\/)?([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)+)/g;
   const matches: string[] = [];
 
   for (const match of content.matchAll(domainPattern)) {

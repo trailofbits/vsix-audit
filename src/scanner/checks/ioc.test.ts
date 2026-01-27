@@ -50,7 +50,9 @@ describe("checkHashes", () => {
 
   it("does not flag unknown files", () => {
     const contents = makeContents({ "clean.js": "clean code" });
-    const knownHashes = new Set(["0000000000000000000000000000000000000000000000000000000000000000"]);
+    const knownHashes = new Set([
+      "0000000000000000000000000000000000000000000000000000000000000000",
+    ]);
 
     const findings = checkHashes(contents, knownHashes);
     expect(findings).toHaveLength(0);

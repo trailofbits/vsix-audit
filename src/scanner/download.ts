@@ -39,8 +39,7 @@ interface GalleryResponse {
   }>;
 }
 
-const GALLERY_API_URL =
-  "https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery";
+const GALLERY_API_URL = "https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery";
 
 const GALLERY_API_VERSION = "7.1-preview.1";
 

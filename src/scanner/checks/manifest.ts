@@ -16,7 +16,10 @@ export function checkActivationEvents(manifest: VsixManifest): Finding[] {
       },
       metadata: {
         legitimateUses: ["Extensions with many contribution points", "Global workspace tools"],
-        redFlags: ["Simple extension with wildcard activation", "Combined with suspicious patterns"],
+        redFlags: [
+          "Simple extension with wildcard activation",
+          "Combined with suspicious patterns",
+        ],
       },
     });
   }
@@ -33,8 +36,16 @@ export function checkActivationEvents(manifest: VsixManifest): Finding[] {
         file: "package.json",
       },
       metadata: {
-        legitimateUses: ["Git integration", "Status bar extensions", "Language servers", "Background services"],
-        redFlags: ["Combined with network activity on startup", "No obvious need for early activation"],
+        legitimateUses: [
+          "Git integration",
+          "Status bar extensions",
+          "Language servers",
+          "Background services",
+        ],
+        redFlags: [
+          "Combined with network activity on startup",
+          "No obvious need for early activation",
+        ],
       },
     });
   }
@@ -65,8 +76,16 @@ export function checkThemeAbuse(manifest: VsixManifest): Finding[] {
         browser: manifest.browser,
         themes: manifest.contributes?.themes?.length ?? 0,
         iconThemes: manifest.contributes?.iconThemes?.length ?? 0,
-        legitimateUses: ["Theme packs with additional commands", "Theme switchers", "Theme previews"],
-        redFlags: ["Theme-only description but runs code", "Network activity from theme extension", "Known malware pattern"],
+        legitimateUses: [
+          "Theme packs with additional commands",
+          "Theme switchers",
+          "Theme previews",
+        ],
+        redFlags: [
+          "Theme-only description but runs code",
+          "Network activity from theme extension",
+          "Known malware pattern",
+        ],
       },
     });
   }
@@ -92,8 +111,15 @@ export function checkSuspiciousPermissions(manifest: VsixManifest): Finding[] {
           },
           metadata: {
             dependency: dep,
-            legitimateUses: ["Remote development helpers", "SSH workflow tools", "Container development"],
-            redFlags: ["No clear remote development purpose", "Combined with credential access patterns"],
+            legitimateUses: [
+              "Remote development helpers",
+              "SSH workflow tools",
+              "Container development",
+            ],
+            redFlags: [
+              "No clear remote development purpose",
+              "Combined with credential access patterns",
+            ],
           },
         });
       }

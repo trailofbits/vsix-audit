@@ -16,10 +16,7 @@ interface UnicodeMatch {
   context: string;
 }
 
-function findLineAndColumn(
-  content: string,
-  index: number,
-): { line: number; column: number } {
+function findLineAndColumn(content: string, index: number): { line: number; column: number } {
   const beforeMatch = content.slice(0, index);
   const lines = beforeMatch.split("\n");
   const line = lines.length;
@@ -52,18 +49,16 @@ const UNICODE_ASCII_ESCAPE_REGEX = /\\u00[2-7][0-9a-fA-F]/g;
 // Cyrillic homoglyphs that look like Latin letters
 // а(U+0430)/a, с(U+0441)/c, е(U+0435)/e, о(U+043E)/o, р(U+0440)/p, х(U+0445)/x, у(U+0443)/y
 // Also uppercase: А(U+0410)/A, В(U+0412)/B, С(U+0421)/C, Е(U+0415)/E, Н(U+041D)/H, etc.
-const CYRILLIC_LOOKALIKE_REGEX = /[\u0430\u0441\u0435\u043E\u0440\u0445\u0443\u0410\u0412\u0421\u0415\u041D\u041A\u041C\u041E\u0420\u0422\u0425]/g;
+const CYRILLIC_LOOKALIKE_REGEX =
+  /[\u0430\u0441\u0435\u043E\u0440\u0445\u0443\u0410\u0412\u0421\u0415\u041D\u041A\u041C\u041E\u0420\u0422\u0425]/g;
 
 // Additional invisible/confusable characters
 // U+00AD Soft hyphen, U+034F Combining grapheme joiner, U+115F-1160 Hangul fillers
 // U+17B4-17B5 Khmer vowels, U+180E Mongolian vowel separator
-const OTHER_INVISIBLE_REGEX = /[\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180E\u2060-\u2064\u206A-\u206F]/g;
+const OTHER_INVISIBLE_REGEX =
+  /[\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180E\u2060-\u2064\u206A-\u206F]/g;
 
-function detectPattern(
-  content: string,
-  regex: RegExp,
-  minMatches = 1,
-): UnicodeMatch[] {
+function detectPattern(content: string, regex: RegExp, minMatches = 1): UnicodeMatch[] {
   const matches: UnicodeMatch[] = [];
   const r = new RegExp(regex.source, regex.flags);
   let match: RegExpExecArray | null;
@@ -211,7 +206,9 @@ export function checkUnicode(contents: VsixContents): Finding[] {
           codePoints: matches
             .slice(0, 5)
             .map((m) =>
-              [...m.matched].map((c) => `U+${c.codePointAt(0)?.toString(16).toUpperCase().padStart(4, "0")}`).join(", "),
+              [...m.matched]
+                .map((c) => `U+${c.codePointAt(0)?.toString(16).toUpperCase().padStart(4, "0")}`)
+                .join(", "),
             ),
         },
       });

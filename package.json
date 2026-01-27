@@ -2,15 +2,25 @@
   "name": "vsix-audit",
   "version": "0.1.0",
   "description": "Security scanner for VS Code extensions",
-  "type": "module",
+  "keywords": [
+    "audit",
+    "scanner",
+    "security",
+    "trail-of-bits",
+    "vscode",
+    "vsix"
+  ],
+  "license": "MIT",
+  "author": "Trail of Bits",
   "bin": {
     "vsix-audit": "./dist/index.js"
   },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "files": [
     "dist"
   ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
@@ -24,19 +34,6 @@
     "check": "npm run typecheck && npm run lint && npm run test",
     "prepublishOnly": "npm run check && npm run build"
   },
-  "keywords": [
-    "vscode",
-    "vsix",
-    "security",
-    "audit",
-    "scanner",
-    "trail-of-bits"
-  ],
-  "author": "Trail of Bits",
-  "license": "MIT",
-  "engines": {
-    "node": ">=22"
-  },
   "dependencies": {
     "commander": "14.0.2",
     "picocolors": "1.1.1"
@@ -46,5 +43,8 @@
     "oxlint": "0.16.6",
     "typescript": "5.9.3",
     "vitest": "4.0.8"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }
