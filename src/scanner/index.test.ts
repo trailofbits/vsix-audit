@@ -1,8 +1,11 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { scanExtension } from "./index.js";
 
 const ZOO_ROOT = join(import.meta.dirname, "..", "..", "zoo");
+const SAMPLES_DIR = process.env["VSIX_ZOO_PATH"] || join(ZOO_ROOT, "samples");
+const hasSamples = existsSync(join(SAMPLES_DIR, "apollyon"));
 
 describe("scanExtension", () => {
   const defaultOptions = {
@@ -29,9 +32,9 @@ describe("scanExtension", () => {
     expect(result.metadata.scanDuration).toBeGreaterThanOrEqual(0);
   });
 
-  describe("zoo sample detection", () => {
+  describe.skipIf(!hasSamples)("zoo sample detection", () => {
     it("detects Discord webhook in apollyon sample", async () => {
-      const result = await scanExtension(join(ZOO_ROOT, "samples/apollyon"), defaultOptions);
+      const result = await scanExtension(join(SAMPLES_DIR, "apollyon"), defaultOptions);
 
       expect(result.extension.publisher).toBeUndefined();
       expect(result.extension.name).toBe("mal-vscode-poc");
@@ -44,7 +47,7 @@ describe("scanExtension", () => {
 
     it("detects C2 domain in kagema sample", async () => {
       const result = await scanExtension(
-        join(ZOO_ROOT, "samples/kagema/ShowSnowcrypto.SnowShoNo/showsnowcrypto.snowshono-0.6.0"),
+        join(SAMPLES_DIR, "kagema/ShowSnowcrypto.SnowShoNo/showsnowcrypto.snowshono-0.6.0"),
         defaultOptions,
       );
 
@@ -58,7 +61,7 @@ describe("scanExtension", () => {
 
     it("detects SSH theft in Extension-Attack-Suite", async () => {
       const result = await scanExtension(
-        join(ZOO_ROOT, "samples/ecm3401/Extension-Attack-Suite"),
+        join(SAMPLES_DIR, "ecm3401/Extension-Attack-Suite"),
         defaultOptions,
       );
 
@@ -76,7 +79,7 @@ describe("scanExtension", () => {
 
     it("detects hidden PowerShell in Extension-Attack-Suite", async () => {
       const result = await scanExtension(
-        join(ZOO_ROOT, "samples/ecm3401/Extension-Attack-Suite"),
+        join(SAMPLES_DIR, "ecm3401/Extension-Attack-Suite"),
         defaultOptions,
       );
 
@@ -86,14 +89,14 @@ describe("scanExtension", () => {
     });
   });
 
-  describe("severity filtering", () => {
+  describe.skipIf(!hasSamples)("severity filtering", () => {
     it("filters findings by minimum severity", async () => {
-      const lowResult = await scanExtension(join(ZOO_ROOT, "samples/apollyon"), {
+      const lowResult = await scanExtension(join(SAMPLES_DIR, "apollyon"), {
         ...defaultOptions,
         severity: "low",
       });
 
-      const highResult = await scanExtension(join(ZOO_ROOT, "samples/apollyon"), {
+      const highResult = await scanExtension(join(SAMPLES_DIR, "apollyon"), {
         ...defaultOptions,
         severity: "high",
       });

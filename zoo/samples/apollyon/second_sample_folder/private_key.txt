@@ -1,5 +1,0 @@
-#PLACE HOLDER FOR A PRIVATE KEY
-
-<BEGIN RSA PRIVATE KEY>
-amogusskibidiohiorizzlergyattlowtaperfade
-<END RSA PRIVATE KEY>

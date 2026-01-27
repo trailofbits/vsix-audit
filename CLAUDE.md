@@ -93,18 +93,38 @@ curl -X POST "https://mb-api.abuse.ch/api/v1/" \
 ```
 vsix-audit/
 ├── src/                    # Scanner source code (TypeScript)
-├── zoo/                    # Malware sample collection
-│   ├── manifest.json       # Sample index
-│   ├── samples/            # Actual malware files
+├── zoo/                    # Threat intelligence (no samples)
 │   ├── iocs/               # Hashes, C2 domains, IPs, wallets
 │   ├── signatures/yara/    # Detection rules
-│   ├── blocklist/          # Extension IDs to block
-│   └── watchlist/          # Suspicious extensions to monitor
-├── docs/apis/              # API reference (read before using)
-│   └── malwarebazaar.md    # MalwareBazaar API usage
-└── docs/research/          # Threat intelligence notes
-    ├── vscode-extension-security.md    # Extension-specific threats
-    └── vscode-workspace-security.md    # tasks.json, npm attacks
+│   └── blocklist/          # Extension IDs to block
+└── docs/apis/              # API reference (read before using)
+    └── malwarebazaar.md    # MalwareBazaar API usage
+```
+
+### vsix-zoo (Separate Private Repository)
+
+Malware samples are stored in a separate private repository (`trailofbits/vsix-zoo`) to:
+- Eliminate Dependabot security alert noise
+- Prevent AV triggers when users install the scanner
+- Keep the main repo lightweight
+
+```
+vsix-zoo/
+├── samples/                # Malware samples (94MB+)
+│   ├── apollyon/           # Discord webhook exfil PoC
+│   ├── ecm3401/            # Educational attack suite
+│   ├── glassworm/          # Supply chain malware
+│   ├── kagema/             # SnowShoNo samples
+│   └── ...
+├── manifest.json           # Sample metadata/index
+├── watchlist/              # Suspicious extensions to monitor
+└── research/               # Threat intelligence notes
+```
+
+**To run sample-based tests:**
+```bash
+git clone git@github.com:trailofbits/vsix-zoo.git ../vsix-zoo
+VSIX_ZOO_PATH=../vsix-zoo/samples npm test
 ```
 
 ## Key Commands
@@ -122,11 +142,17 @@ npm run lint
 
 ## Zoo Management
 
+### IOCs and Signatures (in vsix-audit)
+- Update IOC files in `zoo/iocs/` (hashes, C2 domains, IPs, wallets)
+- Add YARA rules to `zoo/signatures/yara/`
+- Update blocklist in `zoo/blocklist/`
+
+### Samples (in vsix-zoo)
 When adding samples to the zoo:
-1. Download by hash from VirusTotal or MalwareBazaar (see `docs/apis/`)
-2. Add entry to `zoo/manifest.json`
-3. Update IOC files in `zoo/iocs/`
-4. Large files (.vsix, .node, .exe) are gitignored - samples stay local
+1. Clone `vsix-zoo` repo locally
+2. Download by hash from VirusTotal or MalwareBazaar (see `docs/apis/`)
+3. Add sample to `vsix-zoo/samples/{campaign}/`
+4. Update `vsix-zoo/manifest.json`
 
 ## Research Sources
 

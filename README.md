@@ -1,7 +1,5 @@
 # vsix-audit
 
-> **WARNING: This repository contains live malware samples in the `zoo/` directory for security research purposes. Do not execute, install, or open these files outside of an isolated analysis environment. Handle with extreme caution.**
-
 Security scanner for VS Code extensions. Analyze extensions before approving them for installation in your organization.
 
 ## Installation
@@ -81,18 +79,29 @@ Type check and lint:
 npm run check
 ```
 
-## Malware Zoo
+## Threat Intelligence
 
-The `zoo/` directory contains malware samples and threat intelligence for testing detection capabilities:
+The `zoo/` directory contains threat intelligence for detection:
 
 | Directory | Contents |
 |-----------|----------|
-| `zoo/samples/` | 833 files including .vsix extensions, native binaries, JS payloads |
-| `zoo/blocklist/` | 24 known malicious extension IDs |
+| `zoo/blocklist/` | Known malicious extension IDs |
 | `zoo/iocs/` | Hashes, C2 domains/IPs, crypto wallets |
-| `zoo/signatures/` | 7 YARA detection rules |
+| `zoo/signatures/` | YARA detection rules |
 
 **Campaigns covered:** GlassWorm, Evelyn, TigerJack, OctoRAT, WhiteCobra, SnowShoNo, Shiba, FAMOUS CHOLLIMA
+
+### Malware Samples (for development)
+
+Malware samples are in a separate private repository to avoid Dependabot alerts and AV triggers.
+
+```bash
+# Clone the samples repo (requires access)
+git clone git@github.com:trailofbits/vsix-zoo.git ../vsix-zoo
+
+# Run tests with samples
+VSIX_ZOO_PATH=../vsix-zoo/samples npm test
+```
 
 Sources: MalwareBazaar, VirusTotal, Knostic, ReversingLabs, Koi Security, educational PoCs from GitHub.
 
