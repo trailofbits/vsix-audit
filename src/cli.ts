@@ -142,6 +142,21 @@ function printTextReport(result: ScanResult): void {
   console.log(`${pc.cyan("Scanned:")} ${result.metadata.scannedAt}`);
   console.log();
 
+  // Print inventory of checks performed
+  if (result.inventory && result.inventory.length > 0) {
+    console.log(pc.cyan("Checks performed:"));
+    for (const check of result.inventory) {
+      if (check.enabled) {
+        console.log(`  ${pc.green("✓")} ${pc.bold(check.name.padEnd(14))}${check.description}`);
+      } else {
+        console.log(
+          `  ${pc.yellow("⚠")} ${pc.bold(check.name.padEnd(14))}${pc.dim(`Skipped (${check.skipReason})`)}`,
+        );
+      }
+    }
+    console.log();
+  }
+
   if (result.findings.length === 0) {
     console.log(pc.green("✓ No security issues found"));
     return;

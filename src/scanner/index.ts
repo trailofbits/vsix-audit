@@ -5,12 +5,29 @@ import { checkIocs } from "./checks/ioc.js";
 import { checkManifest } from "./checks/manifest.js";
 import { checkAllPatterns } from "./checks/patterns.js";
 import { checkUnicode } from "./checks/unicode.js";
-import { checkYara } from "./checks/yara.js";
+import {
+  checkYara,
+  DEFAULT_YARA_RULES_DIR,
+  isYaraAvailable,
+  listYaraRules,
+} from "./checks/yara.js";
+import {
+  isScannable,
+  SCANNABLE_EXTENSIONS_PATTERN,
+  SCANNABLE_EXTENSIONS_UNICODE,
+} from "./constants.js";
 import { loadZooData } from "./loaders/zoo.js";
-import type { Finding, ScanOptions, ScanResult, Severity } from "./types.js";
+import type {
+  CheckSummary,
+  Finding,
+  ScanOptions,
+  ScanResult,
+  Severity,
+  VsixContents,
+} from "./types.js";
 import { loadExtension } from "./vsix.js";
 
-export type { Finding, ScanOptions, ScanResult, Severity };
+export type { CheckSummary, Finding, ScanOptions, ScanResult, Severity };
 
 const SEVERITY_ORDER: Record<Severity, number> = {
   low: 0,
@@ -47,24 +64,22 @@ function sortFindings(findings: Finding[]): Finding[] {
   });
 }
 
+function countScannableFiles(contents: VsixContents, extensions: Set<string>): number {
+  let count = 0;
+  for (const filename of contents.files.keys()) {
+    if (isScannable(filename, extensions)) {
+      count++;
+    }
+  }
+  return count;
+}
+
 export async function scanExtension(target: string, options: ScanOptions): Promise<ScanResult> {
   const startTime = Date.now();
 
   const targetExists = await stat(target).catch(() => null);
   if (!targetExists) {
-    return {
-      extension: {
-        id: target,
-        name: target,
-        version: "0.0.0",
-        publisher: "unknown",
-      },
-      findings: [],
-      metadata: {
-        scannedAt: new Date().toISOString(),
-        scanDuration: Date.now() - startTime,
-      },
-    };
+    throw new Error(`Target not found: ${target}`);
   }
 
   const [contents, zooData] = await Promise.all([loadExtension(target), loadZooData()]);
@@ -73,17 +88,86 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
   const extensionId = `${manifest.publisher}.${manifest.name}`;
 
   let findings: Finding[] = [];
+  const inventory: CheckSummary[] = [];
 
-  // Core security checks
+  // Check YARA availability upfront
+  const yaraAvailable = await isYaraAvailable();
+  const yaraRules = yaraAvailable ? await listYaraRules(DEFAULT_YARA_RULES_DIR) : [];
+
+  // Count files by type for inventory
+  const codeFileCount = countScannableFiles(contents, SCANNABLE_EXTENSIONS_PATTERN);
+  const textFileCount = countScannableFiles(contents, SCANNABLE_EXTENSIONS_UNICODE);
+
+  // Blocklist check
   findings.push(...checkBlocklist(manifest, zooData.blocklist));
-  findings.push(...checkIocs(contents, zooData));
-  findings.push(...checkManifest(manifest));
-  findings.push(...checkAllPatterns(contents));
+  inventory.push({
+    name: "Blocklist",
+    enabled: true,
+    description: "Extension ID not in malware blocklist",
+  });
 
-  // v2 checks
+  // Manifest check
+  findings.push(...checkManifest(manifest));
+  inventory.push({
+    name: "Manifest",
+    enabled: true,
+    description: "Activation events, entry points, dependencies",
+  });
+
+  // Pattern check
+  findings.push(...checkAllPatterns(contents));
+  inventory.push({
+    name: "Patterns",
+    enabled: true,
+    description: `18 rules across ${codeFileCount} code files`,
+    rulesApplied: 18,
+    filesExamined: codeFileCount,
+  });
+
+  // Unicode check
   findings.push(...checkUnicode(contents));
+  inventory.push({
+    name: "Unicode",
+    enabled: true,
+    description: `7 rules across ${textFileCount} text files`,
+    rulesApplied: 7,
+    filesExamined: textFileCount,
+  });
+
+  // IOC check
+  findings.push(...checkIocs(contents, zooData));
+  inventory.push({
+    name: "IOC",
+    enabled: true,
+    description: "Hashes, domains, IPs against threat intel",
+  });
+
+  // Dependencies check
   findings.push(...checkDependencies(contents, zooData));
-  findings.push(...(await checkYara(contents)));
+  inventory.push({
+    name: "Dependencies",
+    enabled: true,
+    description: "package.json scripts and packages",
+  });
+
+  // YARA check
+  if (yaraAvailable) {
+    findings.push(...(await checkYara(contents)));
+    inventory.push({
+      name: "YARA",
+      enabled: true,
+      description: `${yaraRules.length} rules against all files`,
+      rulesApplied: yaraRules.length,
+      filesExamined: contents.files.size,
+    });
+  } else {
+    inventory.push({
+      name: "YARA",
+      enabled: false,
+      description: "Signature-based malware detection",
+      skipReason: "yara not installed",
+    });
+  }
 
   findings = deduplicateFindings(findings);
   findings = filterBySeverity(findings, options.severity);
@@ -97,6 +181,7 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
       publisher: manifest.publisher,
     },
     findings,
+    inventory,
     metadata: {
       scannedAt: new Date().toISOString(),
       scanDuration: Date.now() - startTime,

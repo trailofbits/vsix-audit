@@ -14,22 +14,10 @@ describe("scanExtension", () => {
     network: true,
   };
 
-  it("returns a valid scan result structure", async () => {
-    const result = await scanExtension("test.extension", defaultOptions);
-
-    expect(result).toHaveProperty("extension");
-    expect(result).toHaveProperty("findings");
-    expect(result).toHaveProperty("metadata");
-    expect(result.extension.id).toBe("test.extension");
-    expect(Array.isArray(result.findings)).toBe(true);
-    expect(result.metadata.scannedAt).toBeDefined();
-  });
-
-  it("records scan duration in metadata", async () => {
-    const result = await scanExtension("test.extension", defaultOptions);
-
-    expect(typeof result.metadata.scanDuration).toBe("number");
-    expect(result.metadata.scanDuration).toBeGreaterThanOrEqual(0);
+  it("throws error for non-existent target", async () => {
+    await expect(scanExtension("nonexistent.vsix", defaultOptions)).rejects.toThrow(
+      "Target not found: nonexistent.vsix",
+    );
   });
 
   describe.skipIf(!hasSamples)("zoo sample detection", () => {

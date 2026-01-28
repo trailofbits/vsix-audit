@@ -9,7 +9,15 @@ import type { Finding, VsixContents } from "../types.js";
 const execAsync = promisify(exec);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DEFAULT_RULES_DIR = join(__dirname, "..", "..", "..", "zoo", "signatures", "yara");
+export const DEFAULT_YARA_RULES_DIR = join(
+  __dirname,
+  "..",
+  "..",
+  "..",
+  "zoo",
+  "signatures",
+  "yara",
+);
 
 interface YaraMatch {
   rule: string;
@@ -108,7 +116,7 @@ async function getRuleMeta(
  */
 export async function checkYara(contents: VsixContents, rulesDir?: string): Promise<Finding[]> {
   const findings: Finding[] = [];
-  const targetRulesDir = rulesDir ?? DEFAULT_RULES_DIR;
+  const targetRulesDir = rulesDir ?? DEFAULT_YARA_RULES_DIR;
 
   // Check if YARA is available
   const available = await isYaraAvailable();

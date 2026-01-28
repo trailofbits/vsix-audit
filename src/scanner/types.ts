@@ -20,6 +20,15 @@ export interface Finding {
   metadata?: Record<string, unknown>;
 }
 
+export interface CheckSummary {
+  name: string;
+  enabled: boolean;
+  description: string;
+  filesExamined?: number;
+  rulesApplied?: number;
+  skipReason?: string;
+}
+
 export interface ScanResult {
   extension: {
     id: string;
@@ -28,6 +37,7 @@ export interface ScanResult {
     publisher: string;
   };
   findings: Finding[];
+  inventory: CheckSummary[];
   metadata: {
     scannedAt: string;
     scanDuration: number;
