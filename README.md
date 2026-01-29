@@ -12,7 +12,7 @@ VS Code extensions run with full trust and the same permissions as the editor it
 - **Cryptominers and RATs** - CoinIMP miners, ScreenConnect RATs, multi-stage loaders
 - **Self-propagation** - GlassWorm spread by modifying installed extensions
 
-**Real campaigns we track:** GlassWorm, TigerJack, Evelyn, WhiteCobra, OctoRAT, Shiba, MUT-9332
+**Real campaigns we track:** GlassWorm, TigerJack, Evelyn, WhiteCobra, OctoRAT, Shiba, MUT-9332, FAMOUS CHOLLIMA
 
 ## Detection Capabilities
 
@@ -21,9 +21,13 @@ VS Code extensions run with full trust and the same permissions as the editor it
 | **Blocklist**    | Known malicious extension IDs from tracked campaigns                                                    |
 | **IOCs**         | SHA256 hashes, C2 domains, C2 IPs, crypto wallet addresses                                              |
 | **Patterns**     | PowerShell attacks, Discord webhooks, SSH key theft, crypto wallet access, eval/atob obfuscation        |
+| **AST**          | Structural code analysis: dynamic require/import, eval with variables, suspicious call patterns         |
+| **Behavioral**   | Multi-stage attack patterns: data staging, exfiltration sequences, persistence mechanisms               |
+| **Obfuscation**  | Entropy analysis, hex variable names, string arrays, large byte arrays (javascript-obfuscator patterns) |
+| **DataFlow**     | Source-to-sink tracking: credentials flowing to network calls, sensitive data to external endpoints     |
 | **Unicode**      | GlassWorm variation selectors, Trojan Source bidi overrides, Cyrillic homoglyphs, zero-width characters |
 | **YARA**         | Credential harvesting, RAT capabilities, self-propagation, crypto targeting, blockchain C2              |
-| **Dependencies** | Known malicious npm packages                                                                            |
+| **Dependencies** | Known malicious npm packages, typosquatting, lifecycle script abuse                                     |
 | **Manifest**     | Wildcard activation events, themes with code (common malware disguise)                                  |
 
 ### Triage-Friendly Design
@@ -53,6 +57,7 @@ Requires Node.js 22 or later.
 ```sh
 vsix-audit scan ./extension.vsix
 vsix-audit scan publisher.extension-name
+vsix-audit scan openvsx:publisher.extension-name
 ```
 
 **Download an extension for offline analysis:**
@@ -60,6 +65,7 @@ vsix-audit scan publisher.extension-name
 ```sh
 vsix-audit download ms-python.python
 vsix-audit download ms-python.python@2024.1.0 -o ./downloads
+vsix-audit download openvsx:redhat.java
 ```
 
 **Show extension metadata:**
@@ -70,6 +76,14 @@ vsix-audit info ./extension-folder
 ```
 
 Displays: name, publisher, version, activation events, entry points, contributions, dependencies, file count, and size.
+
+### Registry Prefixes
+
+| Prefix         | Registry                              |
+| -------------- | ------------------------------------- |
+| (none)         | VS Code Marketplace (default)         |
+| `marketplace:` | VS Code Marketplace (explicit)        |
+| `openvsx:`     | Open VSX Registry                     |
 
 ### Scan Options
 
@@ -105,7 +119,7 @@ The `zoo/` directory contains threat intelligence for detection:
 | `zoo/iocs/`       | SHA256 hashes, C2 domains/IPs, crypto wallets, malicious npm packages |
 | `zoo/signatures/` | YARA rules for credential harvesting, RAT behavior, self-propagation  |
 
-**Campaigns covered:** GlassWorm, Evelyn, TigerJack, OctoRAT, WhiteCobra, Shiba, MUT-9332, ReversingLabs-Dec2025
+**Campaigns covered:** GlassWorm, Evelyn, TigerJack, OctoRAT, WhiteCobra, Shiba, MUT-9332, FAMOUS CHOLLIMA, ReversingLabs-Dec2025
 
 ### Malware Samples (for development)
 
