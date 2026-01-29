@@ -7,6 +7,7 @@ import type { VsixContents, VsixManifest } from "./types.js";
 const VSIX_EXTENSION_PREFIX = "extension/";
 const LOCAL_FILE_HEADER = 0x04034b50;
 const CENTRAL_DIR_HEADER = 0x02014b50;
+const END_OF_CENTRAL_DIR = 0x06054b50;
 
 interface ZipEntry {
   name: string;
@@ -16,38 +17,113 @@ interface ZipEntry {
   dataOffset: number;
 }
 
-function parseZipEntries(buffer: Buffer): ZipEntry[] {
-  const entries: ZipEntry[] = [];
-  let offset = 0;
+interface CentralDirEntry {
+  fileName: string;
+  compressedSize: number;
+  uncompressedSize: number;
+  compressionMethod: number;
+  localHeaderOffset: number;
+}
 
-  while (offset < buffer.length - 4) {
-    const signature = buffer.readUInt32LE(offset);
+/**
+ * Find the End of Central Directory record by searching backwards from end of file.
+ * The EOCD is at least 22 bytes and can have a variable-length comment.
+ */
+function findEndOfCentralDir(buffer: Buffer): number {
+  // EOCD is minimum 22 bytes, max comment is 65535 bytes
+  const minEocdOffset = Math.max(0, buffer.length - 22 - 65535);
 
-    if (signature === LOCAL_FILE_HEADER) {
-      const compressionMethod = buffer.readUInt16LE(offset + 8);
-      const compressedSize = buffer.readUInt32LE(offset + 18);
-      const uncompressedSize = buffer.readUInt32LE(offset + 22);
-      const fileNameLength = buffer.readUInt16LE(offset + 26);
-      const extraFieldLength = buffer.readUInt16LE(offset + 28);
-      const fileName = buffer.toString("utf8", offset + 30, offset + 30 + fileNameLength);
-      const dataOffset = offset + 30 + fileNameLength + extraFieldLength;
-
-      if (!fileName.endsWith("/")) {
-        entries.push({
-          name: fileName,
-          compressedSize,
-          uncompressedSize,
-          compressionMethod,
-          dataOffset,
-        });
-      }
-
-      offset = dataOffset + compressedSize;
-    } else if (signature === CENTRAL_DIR_HEADER) {
-      break;
-    } else {
-      offset++;
+  for (let i = buffer.length - 22; i >= minEocdOffset; i--) {
+    if (buffer.readUInt32LE(i) === END_OF_CENTRAL_DIR) {
+      return i;
     }
+  }
+
+  throw new Error("Invalid ZIP: End of central directory not found");
+}
+
+/**
+ * Parse the central directory to get accurate file sizes.
+ * Central directory always has correct sizes, even when local headers use data descriptors.
+ */
+function parseCentralDirectory(buffer: Buffer): Map<string, CentralDirEntry> {
+  const eocdOffset = findEndOfCentralDir(buffer);
+  const cdEntryCount = buffer.readUInt16LE(eocdOffset + 10);
+  const cdOffset = buffer.readUInt32LE(eocdOffset + 16);
+
+  const entries = new Map<string, CentralDirEntry>();
+  let offset = cdOffset;
+
+  for (let i = 0; i < cdEntryCount; i++) {
+    if (offset + 46 > buffer.length) {
+      throw new Error("Invalid ZIP: Central directory entry extends beyond file");
+    }
+
+    if (buffer.readUInt32LE(offset) !== CENTRAL_DIR_HEADER) {
+      throw new Error(`Invalid ZIP: Expected central directory header at offset ${offset}`);
+    }
+
+    const compressionMethod = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const uncompressedSize = buffer.readUInt32LE(offset + 24);
+    const fileNameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localHeaderOffset = buffer.readUInt32LE(offset + 42);
+
+    if (offset + 46 + fileNameLength > buffer.length) {
+      throw new Error("Invalid ZIP: File name extends beyond file");
+    }
+
+    const fileName = buffer.toString("utf8", offset + 46, offset + 46 + fileNameLength);
+
+    // Skip directories (names ending with /)
+    if (!fileName.endsWith("/")) {
+      entries.set(fileName, {
+        fileName,
+        compressedSize,
+        uncompressedSize,
+        compressionMethod,
+        localHeaderOffset,
+      });
+    }
+
+    offset += 46 + fileNameLength + extraLength + commentLength;
+  }
+
+  return entries;
+}
+
+/**
+ * Parse ZIP entries using the central directory for accurate sizes.
+ * This handles ZIP files with data descriptors (bit 3 set) where local headers have size 0.
+ */
+function parseZipEntries(buffer: Buffer): ZipEntry[] {
+  const centralDir = parseCentralDirectory(buffer);
+  const entries: ZipEntry[] = [];
+
+  for (const [fileName, cdEntry] of centralDir) {
+    const offset = cdEntry.localHeaderOffset;
+
+    if (offset + 30 > buffer.length) {
+      throw new Error(`Invalid ZIP: Local header for ${fileName} extends beyond file`);
+    }
+
+    if (buffer.readUInt32LE(offset) !== LOCAL_FILE_HEADER) {
+      throw new Error(`Invalid ZIP: Expected local file header for ${fileName}`);
+    }
+
+    const fileNameLength = buffer.readUInt16LE(offset + 26);
+    const extraFieldLength = buffer.readUInt16LE(offset + 28);
+    const dataOffset = offset + 30 + fileNameLength + extraFieldLength;
+
+    entries.push({
+      name: fileName,
+      compressedSize: cdEntry.compressedSize,
+      uncompressedSize: cdEntry.uncompressedSize,
+      compressionMethod: cdEntry.compressionMethod,
+      dataOffset,
+    });
   }
 
   return entries;
@@ -84,6 +160,34 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
 
     if (relativePath === "package.json") {
       manifest = JSON.parse(content.toString("utf8")) as VsixManifest;
+    }
+  }
+
+  // Handle non-standard prefixes (e.g., "publisher.name-version/" instead of "extension/")
+  if (!manifest) {
+    for (const [path, content] of files) {
+      const match = path.match(/^([^/]+)\/package\.json$/);
+      if (match) {
+        const prefix = match[1] + "/";
+
+        // Re-normalize all paths with detected prefix
+        const normalized = new Map<string, Buffer>();
+        for (const [p, c] of files) {
+          if (p.startsWith(prefix)) {
+            normalized.set(p.slice(prefix.length), c);
+          } else {
+            normalized.set(p, c);
+          }
+        }
+
+        files.clear();
+        for (const [p, c] of normalized) {
+          files.set(p, c);
+        }
+
+        manifest = JSON.parse(content.toString("utf8")) as VsixManifest;
+        break;
+      }
     }
   }
 

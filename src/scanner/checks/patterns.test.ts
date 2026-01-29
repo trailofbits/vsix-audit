@@ -117,31 +117,10 @@ describe("checkPatterns - high-risk patterns", () => {
     expect(findings.some((f) => f.id === "CRYPTO_WALLET")).toBe(true);
   });
 
-  it("detects keylogger-like patterns", () => {
-    const contents = makeContents({
-      "extension.js": `
-        document.addEventListener('keydown', (e) => {
-          sendToServer(e.key);
-        });
-      `,
-    });
-
-    const findings = checkPatterns(contents);
-    expect(findings.some((f) => f.id === "KEYLOGGER_PATTERN")).toBe(true);
-  });
-
-  it("detects VS Code text document change listener", () => {
-    const contents = makeContents({
-      "extension.js": `
-        vscode.workspace.onDidChangeTextDocument((event) => {
-          logChanges(event.document.getText());
-        });
-      `,
-    });
-
-    const findings = checkPatterns(contents);
-    expect(findings.some((f) => f.id === "KEYLOGGER_PATTERN")).toBe(true);
-  });
+  // KEYLOGGER_PATTERN was removed from patterns.ts as it was too noisy
+  // (triggered on standard VS Code APIs like onDidChangeTextDocument).
+  // The behavioral check BEHAVIOR_KEYLOGGER in behavioral.ts now handles
+  // this with multi-stage detection (capture + store + exfiltrate).
 
   it("detects network data exfiltration pattern", () => {
     const contents = makeContents({

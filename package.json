@@ -35,10 +35,13 @@
     "prepublishOnly": "npm run check && npm run build"
   },
   "dependencies": {
+    "@babel/parser": "7.28.6",
+    "@babel/traverse": "7.28.6",
     "commander": "14.0.2",
     "picocolors": "1.1.1"
   },
   "devDependencies": {
+    "@types/babel__traverse": "7.28.0",
     "@types/node": "22.19.7",
     "oxlint": "1.42.0",
     "typescript": "5.9.3",

@@ -6,6 +6,74 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { Finding, VsixContents } from "../types.js";
 
+/**
+ * Binary file extensions that should be skipped for YARA scanning.
+ * These cause false positives because YARA pattern matching on binary
+ * content often matches arbitrary byte sequences.
+ */
+const BINARY_EXTENSIONS = new Set([
+  // Java
+  ".jar",
+  ".class",
+  ".war",
+  ".ear",
+  // Compiled
+  ".wasm",
+  ".pyc",
+  ".pyo",
+  // Images
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".bmp",
+  ".ico",
+  ".webp",
+  ".svg",
+  ".tiff",
+  ".tif",
+  // Fonts
+  ".ttf",
+  ".otf",
+  ".woff",
+  ".woff2",
+  ".eot",
+  // Audio/Video
+  ".mp3",
+  ".mp4",
+  ".wav",
+  ".ogg",
+  ".webm",
+  ".avi",
+  // Archives
+  ".zip",
+  ".tar",
+  ".gz",
+  ".bz2",
+  ".xz",
+  ".7z",
+  ".rar",
+  // Documents
+  ".pdf",
+  // Native binaries (scanned separately by checkNativeFiles)
+  ".node",
+  ".dll",
+  ".dylib",
+  ".so",
+  ".exe",
+  // Other binary
+  ".bin",
+  ".dat",
+]);
+
+/**
+ * Check if a file should be skipped for YARA scanning
+ */
+function shouldSkipForYara(filename: string): boolean {
+  const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
+  return BINARY_EXTENSIONS.has(ext);
+}
+
 const execAsync = promisify(exec);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -153,6 +221,9 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
       // Skip binary files that are too large
       if (buffer.length > 10 * 1024 * 1024) continue; // Skip files > 10MB
 
+      // Skip binary files that cause false positives
+      if (shouldSkipForYara(filename)) continue;
+
       const filePath = join(tempDir, filename);
       await mkdir(dirname(filePath), { recursive: true });
       await writeFile(filePath, buffer);
@@ -183,6 +254,9 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
           // Convert temp path back to relative path
           const relativePath = match.file.replace(tempDir + "/", "");
 
+          // Get file extension for metadata
+          const fileExt = relativePath.slice(relativePath.lastIndexOf(".")).toLowerCase();
+
           findings.push({
             id: `YARA_${match.rule}`,
             title: `YARA rule match: ${match.rule}`,
@@ -195,6 +269,7 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
             metadata: {
               rule: match.rule,
               ruleFile,
+              fileType: fileExt,
             },
           });
         }

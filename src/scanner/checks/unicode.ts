@@ -1,3 +1,4 @@
+import { detectBundler } from "../bundler.js";
 import { isScannable, SCANNABLE_EXTENSIONS_UNICODE } from "../constants.js";
 import type { Finding, Severity, VsixContents } from "../types.js";
 
@@ -76,8 +77,52 @@ function detectPattern(content: string, regex: RegExp, minMatches = 1): UnicodeM
   return matches.length >= minMatches ? matches : [];
 }
 
-function hasExecutionContext(content: string): boolean {
-  // Check if invisible chars appear near code execution patterns
+/**
+ * Check if the file appears to be primarily i18n/localization content.
+ * These files naturally have high Unicode diversity and should be treated differently.
+ */
+function isI18nFile(filename: string, content: string): boolean {
+  // Check filename patterns
+  const i18nPatterns = [
+    /locales?\//i,
+    /i18n\//i,
+    /translations?\//i,
+    /lang\//i,
+    /messages/i,
+    /\.l10n\./i,
+    /nls\./i,
+  ];
+  if (i18nPatterns.some((p) => p.test(filename))) {
+    return true;
+  }
+
+  // Check if content looks like localization JSON
+  // (has many string keys with translated values)
+  if (filename.endsWith(".json")) {
+    const keyValuePairs = (content.match(/"[^"]+"\s*:\s*"[^"]+"/g) ?? []).length;
+    const lines = content.split("\n").length;
+    // If more than 50% of lines are key-value pairs, likely i18n
+    if (keyValuePairs / lines > 0.5 && keyValuePairs > 10) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Check if invisible characters are in proximity to execution patterns.
+ * This helps distinguish malicious steganography from benign Unicode use.
+ */
+function hasExecutionInProximity(
+  content: string,
+  invisibleIndex: number,
+  proximityChars = 200,
+): boolean {
+  const start = Math.max(0, invisibleIndex - proximityChars);
+  const end = Math.min(content.length, invisibleIndex + proximityChars);
+  const region = content.slice(start, end);
+
   const execPatterns = [
     /eval\s*\(/i,
     /Function\s*\(/i,
@@ -88,9 +133,19 @@ function hasExecutionContext(content: string): boolean {
     /\.\s*call\s*\(/,
     /\.\s*apply\s*\(/,
     /new\s+Function/i,
+    /atob\s*\(/i,
+    /Buffer\.from/i,
   ];
-  return execPatterns.some((p) => p.test(content));
+  return execPatterns.some((p) => p.test(region));
 }
+
+// Rules that should be skipped for bundled code (they're noisy on minified i18n)
+const SKIP_FOR_BUNDLED = new Set([
+  "ZERO_WIDTH_CHARS",
+  "CYRILLIC_HOMOGLYPH",
+  "OTHER_INVISIBLE_CHARS",
+  "UNICODE_ASCII_ESCAPE",
+]);
 
 const UNICODE_RULES: UnicodeRule[] = [
   {
@@ -105,9 +160,11 @@ const UNICODE_RULES: UnicodeRule[] = [
     id: "VARIATION_SELECTOR",
     title: "Unicode variation selectors detected (GlassWorm technique)",
     description:
-      "File contains Unicode variation selectors (U+FE00-FE0F). This is the technique used by GlassWorm malware to hide executable code in plain sight.",
+      "File contains many Unicode variation selectors (U+FE00-FE0F). GlassWorm malware uses these to hide executable code. A few variation selectors are normal (emoji formatting), but many indicates hidden data.",
     severity: "critical",
-    detect: (content) => detectPattern(content, VARIATION_SELECTOR_REGEX, 1),
+    // Require at least 10 variation selectors - a few are normal for emojis
+    // GlassWorm attack uses hundreds to encode hidden payloads
+    detect: (content) => detectPattern(content, VARIATION_SELECTOR_REGEX, 10),
   },
   {
     id: "BIDI_OVERRIDE",
@@ -136,6 +193,12 @@ const UNICODE_RULES: UnicodeRule[] = [
       if (filename.endsWith(".md") || filename.endsWith(".txt")) {
         return [];
       }
+
+      // Skip i18n files which legitimately contain Cyrillic
+      if (isI18nFile(filename, content)) {
+        return [];
+      }
+
       return detectPattern(content, CYRILLIC_LOOKALIKE_REGEX, 1);
     },
   },
@@ -151,18 +214,36 @@ const UNICODE_RULES: UnicodeRule[] = [
     id: "INVISIBLE_CODE_EXECUTION",
     title: "Invisible characters near code execution",
     description:
-      "File contains invisible Unicode characters in proximity to code execution functions (eval, Function, exec). This is a strong indicator of hidden malicious code.",
+      "File contains many invisible Unicode characters in proximity to code execution functions (eval, Function, exec). This is a strong indicator of hidden malicious code.",
     severity: "critical",
-    detect: (content) => {
-      if (!hasExecutionContext(content)) {
+    detect: (content, filename) => {
+      // Skip i18n files - these legitimately contain RTL and combining chars
+      if (isI18nFile(filename, content)) {
         return [];
       }
-      // Check for any invisible chars when execution context exists
-      const allInvisible = new RegExp(
-        `${ZERO_WIDTH_REGEX.source}|${VARIATION_SELECTOR_REGEX.source}|${BIDI_OVERRIDE_REGEX.source}`,
+
+      // Check for truly suspicious invisible chars (exclude ZWNJ which is common in RTL text)
+      // Only flag: variation selectors (GlassWorm), bidi overrides (Trojan Source)
+      // Note: Single ZWSPs are common in UI libraries as constants, so exclude them
+      const suspiciousInvisible = new RegExp(
+        `${VARIATION_SELECTOR_REGEX.source}|${BIDI_OVERRIDE_REGEX.source}`,
         "g",
       );
-      return detectPattern(content, allInvisible, 1);
+      // Require at least 5 invisible chars - single chars are often legitimate
+      const matches = detectPattern(content, suspiciousInvisible, 5);
+
+      // Only return matches that are actually near execution patterns
+      // (within 200 chars of eval, Function, exec, etc.)
+      return matches.filter((m) => {
+        const matchIndex =
+          content.slice(0, m.line).split("\n").length > 1
+            ? content
+                .split("\n")
+                .slice(0, m.line - 1)
+                .join("\n").length + m.column
+            : m.column;
+        return hasExecutionInProximity(content, matchIndex);
+      });
     },
   },
 ];
@@ -176,7 +257,15 @@ export function checkUnicode(contents: VsixContents): Finding[] {
 
     const content = buffer.toString("utf8");
 
+    // Detect bundled code
+    const bundlerInfo = detectBundler(content, filename);
+
     for (const rule of UNICODE_RULES) {
+      // Skip noisy rules for bundled code
+      if (bundlerInfo.isBundled && SKIP_FOR_BUNDLED.has(rule.id)) {
+        continue;
+      }
+
       const matches = rule.detect(content, filename);
 
       if (matches.length === 0) continue;

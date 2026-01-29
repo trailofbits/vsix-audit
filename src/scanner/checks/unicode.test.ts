@@ -53,9 +53,11 @@ describe("checkUnicode", () => {
   });
 
   describe("variation selectors (GlassWorm technique)", () => {
-    it("detects variation selectors (U+FE00-FE0F)", () => {
-      // Even one variation selector is suspicious in code
-      const content = "const x\uFE01 = 'test';";
+    it("detects variation selectors (U+FE00-FE0F) when >= 10 present", () => {
+      // Implementation requires 10+ variation selectors (GlassWorm uses hundreds)
+      // A few are normal for emoji formatting
+      const content =
+        "a\uFE00b\uFE01c\uFE02d\uFE03e\uFE04f\uFE05g\uFE06h\uFE07i\uFE08j\uFE09k\uFE0A";
       const contents = makeContents({ "extension.js": content });
 
       const findings = checkUnicode(contents);
@@ -65,15 +67,14 @@ describe("checkUnicode", () => {
       expect(findings.some((f) => f.severity === "critical")).toBe(true);
     });
 
-    it("detects multiple variation selectors", () => {
+    it("ignores few variation selectors (normal for emoji)", () => {
+      // Less than 10 variation selectors should be ignored (normal emoji use)
       const content = "a\uFE00b\uFE01c\uFE02d\uFE0F";
       const contents = makeContents({ "extension.js": content });
 
       const findings = checkUnicode(contents);
 
-      expect(findings).toHaveLength(1);
-      const finding = findings.find((f) => f.id === "VARIATION_SELECTOR");
-      expect(finding?.metadata?.["matchCount"]).toBe(4);
+      expect(findings.find((f) => f.id === "VARIATION_SELECTOR")).toBeUndefined();
     });
   });
 
@@ -158,20 +159,9 @@ describe("checkUnicode", () => {
   });
 
   describe("invisible characters near code execution", () => {
-    it("flags invisible chars in file with eval()", () => {
-      // File has both: a normal eval() call and invisible chars elsewhere
-      const content = "const payload\uFE01 = 'data';\neval(payload);";
-      const contents = makeContents({ "extension.js": content });
-
-      const findings = checkUnicode(contents);
-
-      // Should have both VARIATION_SELECTOR and INVISIBLE_CODE_EXECUTION
-      expect(findings.some((f) => f.id === "VARIATION_SELECTOR")).toBe(true);
-      expect(findings.some((f) => f.id === "INVISIBLE_CODE_EXECUTION")).toBe(true);
-    });
-
-    it("flags invisible chars in file with Function()", () => {
-      const content = "const x\uFE02 = 1;\nnew Function('return x')();";
+    it("flags many invisible chars in file with eval()", () => {
+      // Implementation requires 5+ invisible chars near execution patterns
+      const content = "const payload\uFE01\uFE02\uFE03\uFE04\uFE05 = 'data';\neval(payload);";
       const contents = makeContents({ "extension.js": content });
 
       const findings = checkUnicode(contents);
@@ -179,8 +169,8 @@ describe("checkUnicode", () => {
       expect(findings.some((f) => f.id === "INVISIBLE_CODE_EXECUTION")).toBe(true);
     });
 
-    it("flags invisible chars in file with child_process", () => {
-      const content = "require('child_process').exec('ls');\nconst hidden\uFE03 = 1;";
+    it("flags many invisible chars in file with Function()", () => {
+      const content = "const x\uFE01\uFE02\uFE03\uFE04\uFE05 = 1;\nnew Function('return x')();";
       const contents = makeContents({ "extension.js": content });
 
       const findings = checkUnicode(contents);
@@ -188,21 +178,31 @@ describe("checkUnicode", () => {
       expect(findings.some((f) => f.id === "INVISIBLE_CODE_EXECUTION")).toBe(true);
     });
 
-    it("does NOT flag invisible chars without execution context", () => {
-      const content = "const x\uFE01 = 'test';"; // variation selector but no eval/exec
+    it("flags many invisible chars in file with child_process", () => {
+      const content =
+        "require('child_process').exec('ls');\nconst hidden\uFE01\uFE02\uFE03\uFE04\uFE05 = 1;";
       const contents = makeContents({ "extension.js": content });
 
       const findings = checkUnicode(contents);
 
-      // Should have VARIATION_SELECTOR but NOT INVISIBLE_CODE_EXECUTION
-      expect(findings.some((f) => f.id === "VARIATION_SELECTOR")).toBe(true);
+      expect(findings.some((f) => f.id === "INVISIBLE_CODE_EXECUTION")).toBe(true);
+    });
+
+    it("does NOT flag few invisible chars even with execution context", () => {
+      // Single invisible char isn't enough - needs 5+
+      const content = "const x\uFE01 = 1;\neval(x);";
+      const contents = makeContents({ "extension.js": content });
+
+      const findings = checkUnicode(contents);
+
       expect(findings.some((f) => f.id === "INVISIBLE_CODE_EXECUTION")).toBe(false);
     });
   });
 
   describe("file filtering", () => {
     it("scans JavaScript files", () => {
-      const content = "const x\uFE01 = 1;";
+      // Use bidi override which triggers with just 1 occurrence
+      const content = "const admin\u202E = true;";
       const contents = makeContents({ "test.js": content });
 
       const findings = checkUnicode(contents);
@@ -210,7 +210,7 @@ describe("checkUnicode", () => {
     });
 
     it("scans TypeScript files", () => {
-      const content = "const x\uFE01: number = 1;";
+      const content = "const admin\u202E: boolean = true;";
       const contents = makeContents({ "test.ts": content });
 
       const findings = checkUnicode(contents);
@@ -218,7 +218,7 @@ describe("checkUnicode", () => {
     });
 
     it("scans JSON files", () => {
-      const content = '{"key\uFE01": "value"}';
+      const content = '{"key\u202E": "value"}';
       const contents = makeContents({ "test.json": content });
 
       const findings = checkUnicode(contents);
@@ -226,7 +226,8 @@ describe("checkUnicode", () => {
     });
 
     it("ignores binary files", () => {
-      const content = "\uFE01\uFE02\uFE03";
+      // Even critical patterns should be ignored in binary files
+      const content = "\u202E\u202D\u202C";
       const contents = makeContents({ "test.png": content });
 
       const findings = checkUnicode(contents);
@@ -236,33 +237,34 @@ describe("checkUnicode", () => {
 
   describe("metadata", () => {
     it("includes match count in metadata", () => {
-      const content = "a\uFE00b\uFE01c\uFE02";
+      // Use BIDI_OVERRIDE which triggers with 1+ occurrences
+      const content = "a\u202Db\u202Ec\u202D";
       const contents = makeContents({ "test.js": content });
 
       const findings = checkUnicode(contents);
-      const finding = findings.find((f) => f.id === "VARIATION_SELECTOR");
+      const finding = findings.find((f) => f.id === "BIDI_OVERRIDE");
 
       expect(finding?.metadata?.["matchCount"]).toBe(3);
     });
 
     it("includes code points in metadata", () => {
-      const content = "a\uFE00b";
+      const content = "const admin\u202E = true;";
       const contents = makeContents({ "test.js": content });
 
       const findings = checkUnicode(contents);
-      const finding = findings.find((f) => f.id === "VARIATION_SELECTOR");
+      const finding = findings.find((f) => f.id === "BIDI_OVERRIDE");
       const codePoints = finding?.metadata?.["codePoints"] as string[] | undefined;
 
       expect(codePoints).toBeDefined();
-      expect(codePoints?.some((cp) => cp.includes("FE00"))).toBe(true);
+      expect(codePoints?.some((cp) => cp.includes("202E"))).toBe(true);
     });
 
     it("includes line number in location", () => {
-      const content = "line1\nline2\nconst x\uFE01 = 1;";
+      const content = "line1\nline2\nconst admin\u202E = true;";
       const contents = makeContents({ "test.js": content });
 
       const findings = checkUnicode(contents);
-      const finding = findings.find((f) => f.id === "VARIATION_SELECTOR");
+      const finding = findings.find((f) => f.id === "BIDI_OVERRIDE");
 
       expect(finding?.location?.line).toBe(3);
     });

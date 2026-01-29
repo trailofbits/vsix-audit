@@ -153,7 +153,10 @@ const PATTERNS: PatternRule[] = [
     title: "Cryptocurrency wallet access",
     description:
       "Code references cryptocurrency wallet paths or extensions. Could indicate crypto theft, but is expected in blockchain/Solidity development tools and security audit extensions.",
-    pattern: /(?:metamask|phantom|solflare|exodus|atomic|trust.*wallet|\.wallet|wallet\.dat)/gi,
+    // Removed 'atomic' (too generic - matches Atomic Design, atomic operations, etc.)
+    // Removed '.wallet' (too generic - matches many non-crypto uses)
+    pattern:
+      /(?:metamask|phantom|solflare|exodus|trust.*wallet|wallet\.dat|\.ethereum|\.bitcoin)/gi,
     severity: "high",
     legitimateUses: [
       "Solidity development tools",
@@ -167,13 +170,9 @@ const PATTERNS: PatternRule[] = [
       "Unexpected in non-blockchain extension",
     ],
   },
-  {
-    id: "KEYLOGGER_PATTERN",
-    title: "Potential keylogger behavior",
-    description: "Code captures keyboard input which could indicate keylogging.",
-    pattern: /onDidChangeTextDocument|keyboard|keydown|keyup|keypress/gi,
-    severity: "low",
-  },
+  // Removed KEYLOGGER_PATTERN - too noisy, triggers on standard VS Code APIs
+  // (onDidChangeTextDocument is used by virtually all extensions)
+  // Behavioral check BEHAVIOR_KEYLOGGER handles this with multi-stage detection
   {
     id: "NETWORK_EXFIL",
     title: "Network data transmission",
