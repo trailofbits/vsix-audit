@@ -1,9 +1,32 @@
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
-import { downloadExtension } from "./scanner/download.js";
+import { downloadExtension, parseExtensionId } from "./scanner/download.js";
 import { scanExtension } from "./scanner/index.js";
 import type { ScanOptions, ScanResult } from "./scanner/types.js";
 import { loadExtension } from "./scanner/vsix.js";
+
+/**
+ * Check if a target looks like an extension ID vs a local path
+ */
+function isExtensionId(target: string): boolean {
+  // Local paths: start with /, ./, ~, or contain path separators
+  if (target.startsWith("/") || target.startsWith("./") || target.startsWith("~")) {
+    return false;
+  }
+  if (target.includes("/") || target.includes("\\")) {
+    return false;
+  }
+  // Extension IDs: publisher.name or publisher.name@version
+  try {
+    parseExtensionId(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export const cli = new Command()
   .name("vsix-audit")
@@ -22,8 +45,27 @@ cli
   )
   .option("--no-network", "Disable network-based checks")
   .action(async (target: string, options: ScanOptions) => {
+    let scanTarget = target;
+    let tempDir: string | undefined;
+
+    async function cleanup(): Promise<void> {
+      if (tempDir) {
+        await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+
     try {
-      const result = await scanExtension(target, options);
+      if (isExtensionId(target)) {
+        // Download to temp directory
+        tempDir = join(tmpdir(), `vsix-audit-${Date.now()}`);
+        console.log(pc.cyan("Downloading:"), target);
+        const result = await downloadExtension(target, { destDir: tempDir });
+        scanTarget = result.path;
+        console.log(pc.green("✓ Downloaded"), pc.dim(result.path));
+        console.log();
+      }
+
+      const result = await scanExtension(scanTarget, options);
       if (options.output === "json") {
         console.log(JSON.stringify(result, null, 2));
       } else if (options.output === "sarif") {
@@ -31,8 +73,10 @@ cli
       } else {
         printTextReport(result);
       }
+      await cleanup();
       process.exit(result.findings.length > 0 ? 1 : 0);
     } catch (error) {
+      await cleanup();
       console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
       process.exit(2);
     }

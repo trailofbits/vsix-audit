@@ -8,6 +8,7 @@
 vscodesettings03rgg[.]vercel[.]app  # FAMOUS CHOLLIMA - C2
 mylocationapi03[.]vercel[.]app  # FAMOUS CHOLLIMA - C2
 ip-check-wh-notification[.]vercel[.]app  # FAMOUS CHOLLIMA - C2
+chainlink-api-v3[.]com  # FAMOUS CHOLLIMA - BeaverTail payload delivery (via HTTP error responses)
 
 # HardHatRAT Campaign
 api[.]npoint[.]io  # HardHatRAT - JSON payload hosting (legitimate service abused)

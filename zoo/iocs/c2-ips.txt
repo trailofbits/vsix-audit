@@ -13,6 +13,10 @@
 103.65.230.100  # FAMOUS CHOLLIMA - Eurohoster
 148.227.170.199  # FAMOUS CHOLLIMA - Eurohoster
 138.226.220.187  # FAMOUS CHOLLIMA - Eurohoster
+146.70.253.107:1224  # FAMOUS CHOLLIMA - InvisibleFerret Python stager download
+146.70.253.107:2242  # FAMOUS CHOLLIMA - InvisibleFerret RAT C2
+172.86.116.178:5918  # FAMOUS CHOLLIMA - BeaverTail socket.io exfiltration
+172.86.116.178:5978  # FAMOUS CHOLLIMA - BeaverTail socket.io exfiltration
 
 # HardHatRAT Campaign (Hetzner)
 95.216.37.186:5000  # HardHatRAT - Hetzner - Socket.IO WebSocket C2
