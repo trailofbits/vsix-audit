@@ -42,7 +42,7 @@
   },
   "devDependencies": {
     "@types/babel__traverse": "7.28.0",
-    "@types/node": "22.19.7",
+    "@types/node": "25.0.10",
     "oxlint": "1.42.0",
     "typescript": "5.9.3",
     "vitest": "4.0.18"
