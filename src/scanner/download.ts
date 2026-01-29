@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
+import type { Registry } from "./types.js";
 
 export interface ExtensionMetadata {
   extensionId: string;
@@ -13,6 +14,7 @@ export interface ExtensionMetadata {
   description?: string;
   installCount?: number;
   lastUpdated?: string;
+  registry?: Registry;
 }
 
 export interface DownloadResult {
@@ -43,22 +45,53 @@ const GALLERY_API_URL = "https://marketplace.visualstudio.com/_apis/public/galle
 
 const GALLERY_API_VERSION = "7.1-preview.1";
 
-/**
- * Parse an extension ID in the format "publisher.name" or "publisher.name@version"
- */
-export function parseExtensionId(input: string): {
+const OPENVSX_API_URL = "https://open-vsx.org/api";
+
+interface OpenVSXExtension {
+  namespace: string;
+  name: string;
+  displayName?: string;
+  description?: string;
+  version: string;
+  timestamp?: string;
+  downloadCount?: number;
+  files?: {
+    download?: string;
+  };
+}
+
+export interface ParsedExtensionId {
   publisher: string;
   name: string;
   version?: string;
-} {
+  registry: Registry;
+}
+
+/**
+ * Parse an extension ID in the format "publisher.name" or "publisher.name@version"
+ * Optionally with registry prefix: "openvsx:publisher.name" or "marketplace:publisher.name"
+ */
+export function parseExtensionId(input: string): ParsedExtensionId {
+  let registry: Registry = "marketplace";
+  let rest = input;
+
+  // Check for registry prefix
+  if (input.startsWith("openvsx:")) {
+    registry = "openvsx";
+    rest = input.slice(8);
+  } else if (input.startsWith("marketplace:")) {
+    registry = "marketplace";
+    rest = input.slice(12);
+  }
+
   // Check for version suffix
-  const atIndex = input.lastIndexOf("@");
-  let identifier = input;
+  const atIndex = rest.lastIndexOf("@");
+  let identifier = rest;
   let version: string | undefined;
 
   if (atIndex > 0) {
-    identifier = input.slice(0, atIndex);
-    version = input.slice(atIndex + 1);
+    identifier = rest.slice(0, atIndex);
+    version = rest.slice(atIndex + 1);
   }
 
   // Split publisher.name
@@ -78,10 +111,11 @@ export function parseExtensionId(input: string): {
     );
   }
 
-  if (version) {
-    return { publisher, name, version };
+  const result: ParsedExtensionId = { publisher, name, registry };
+  if (version !== undefined) {
+    result.version = version;
   }
-  return { publisher, name };
+  return result;
 }
 
 /**
@@ -153,6 +187,7 @@ export async function queryExtension(
     name: ext.extensionName,
     version: targetVersion.version,
     lastUpdated: targetVersion.lastUpdated,
+    registry: "marketplace",
   };
 
   if (ext.displayName) {
@@ -169,24 +204,82 @@ export async function queryExtension(
 }
 
 /**
- * Get the download URL for a VSIX package
+ * Query OpenVSX for extension metadata
  */
-export function getDownloadUrl(publisher: string, name: string, version: string): string {
-  // The VS Code Marketplace uses a specific URL pattern for VSIX downloads
+export async function queryOpenVSX(
+  publisher: string,
+  name: string,
+  version?: string,
+): Promise<ExtensionMetadata> {
+  const extensionId = `${publisher}.${name}`;
+  const url = version
+    ? `${OPENVSX_API_URL}/${publisher}/${name}/${version}`
+    : `${OPENVSX_API_URL}/${publisher}/${name}`;
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error(`Extension not found on OpenVSX: ${extensionId}`);
+    }
+    throw new Error(`OpenVSX API error: ${response.status} ${response.statusText}`);
+  }
+
+  const data = (await response.json()) as OpenVSXExtension;
+
+  const result: ExtensionMetadata = {
+    extensionId,
+    publisher: data.namespace,
+    name: data.name,
+    version: data.version,
+    registry: "openvsx",
+  };
+
+  if (data.timestamp) {
+    result.lastUpdated = data.timestamp;
+  }
+  if (data.displayName) {
+    result.displayName = data.displayName;
+  }
+  if (data.description) {
+    result.description = data.description;
+  }
+  if (data.downloadCount !== undefined) {
+    result.installCount = data.downloadCount;
+  }
+
+  return result;
+}
+
+/**
+ * Get the download URL for a VSIX package from the VS Code Marketplace
+ */
+export function getMarketplaceDownloadUrl(
+  publisher: string,
+  name: string,
+  version: string,
+): string {
   return `https://${publisher}.gallery.vsassets.io/_apis/public/gallery/publisher/${publisher}/extension/${name}/${version}/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage`;
 }
 
 /**
- * Download a VSIX from the marketplace
+ * Get the download URL for a VSIX package from OpenVSX
  */
-export async function downloadVsix(
-  publisher: string,
-  name: string,
-  version: string,
-  destPath: string,
-): Promise<void> {
-  const url = getDownloadUrl(publisher, name, version);
+export function getOpenVSXDownloadUrl(publisher: string, name: string, version: string): string {
+  return `${OPENVSX_API_URL}/${publisher}/${name}/${version}/file/${publisher}.${name}-${version}.vsix`;
+}
 
+/**
+ * Get the download URL for a VSIX package
+ * @deprecated Use getMarketplaceDownloadUrl or getOpenVSXDownloadUrl instead
+ */
+export function getDownloadUrl(publisher: string, name: string, version: string): string {
+  return getMarketplaceDownloadUrl(publisher, name, version);
+}
+
+/**
+ * Download a VSIX from a URL
+ */
+async function downloadVsixFromUrl(url: string, destPath: string): Promise<void> {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Download failed: ${response.status} ${response.statusText}`);
@@ -207,9 +300,28 @@ export async function downloadVsix(
 }
 
 /**
- * Download an extension from the VS Code Marketplace
+ * Download a VSIX from the marketplace
+ */
+export async function downloadVsix(
+  publisher: string,
+  name: string,
+  version: string,
+  destPath: string,
+  registry: Registry = "marketplace",
+): Promise<void> {
+  const url =
+    registry === "openvsx"
+      ? getOpenVSXDownloadUrl(publisher, name, version)
+      : getMarketplaceDownloadUrl(publisher, name, version);
+
+  await downloadVsixFromUrl(url, destPath);
+}
+
+/**
+ * Download an extension from the VS Code Marketplace or OpenVSX
  *
- * @param extensionId - Extension ID in format "publisher.name" or "publisher.name@version"
+ * @param extensionId - Extension ID in format "publisher.name", "publisher.name@version",
+ *                      or with registry prefix: "openvsx:publisher.name", "marketplace:publisher.name"
  * @param options - Optional settings
  * @returns Path to downloaded VSIX and extension metadata
  */
@@ -217,10 +329,13 @@ export async function downloadExtension(
   extensionId: string,
   options?: { destDir?: string },
 ): Promise<DownloadResult> {
-  const { publisher, name, version } = parseExtensionId(extensionId);
+  const { publisher, name, version, registry } = parseExtensionId(extensionId);
 
-  // Query marketplace for metadata
-  const metadata = await queryExtension(publisher, name, version);
+  // Query the appropriate registry for metadata
+  const metadata =
+    registry === "openvsx"
+      ? await queryOpenVSX(publisher, name, version)
+      : await queryExtension(publisher, name, version);
 
   // Determine download path
   const destDir = options?.destDir ?? process.cwd();
@@ -228,7 +343,7 @@ export async function downloadExtension(
   const destPath = join(destDir, filename);
 
   // Download the VSIX
-  await downloadVsix(metadata.publisher, metadata.name, metadata.version, destPath);
+  await downloadVsix(metadata.publisher, metadata.name, metadata.version, destPath, registry);
 
   return {
     path: destPath,

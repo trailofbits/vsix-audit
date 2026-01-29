@@ -1,5 +1,7 @@
 export type Severity = "low" | "medium" | "high" | "critical";
 
+export type Registry = "marketplace" | "openvsx";
+
 export interface ScanOptions {
   output: "text" | "json" | "sarif";
   severity: Severity;
@@ -41,6 +43,7 @@ export interface ScanResult {
   metadata: {
     scannedAt: string;
     scanDuration: number;
+    registry?: Registry;
   };
 }
 

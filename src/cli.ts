@@ -5,18 +5,36 @@ import { Command } from "commander";
 import pc from "picocolors";
 import { downloadExtension, parseExtensionId } from "./scanner/download.js";
 import { scanExtension } from "./scanner/index.js";
-import type { ScanOptions, ScanResult } from "./scanner/types.js";
+import type { Registry, ScanOptions, ScanResult } from "./scanner/types.js";
 import { loadExtension } from "./scanner/vsix.js";
+
+const REGISTRIES: Registry[] = ["marketplace", "openvsx"];
+
+interface CliScanOptions extends ScanOptions {
+  allRegistries?: boolean;
+}
+
+/**
+ * Strip registry prefix from an extension ID for path-checking purposes
+ */
+function stripRegistryPrefix(target: string): string {
+  if (target.startsWith("openvsx:")) return target.slice(8);
+  if (target.startsWith("marketplace:")) return target.slice(12);
+  return target;
+}
 
 /**
  * Check if a target looks like an extension ID vs a local path
  */
 function isExtensionId(target: string): boolean {
+  // Strip registry prefix for path validation
+  const id = stripRegistryPrefix(target);
+
   // Local paths: start with /, ./, ~, or contain path separators
-  if (target.startsWith("/") || target.startsWith("./") || target.startsWith("~")) {
+  if (id.startsWith("/") || id.startsWith("./") || id.startsWith("~")) {
     return false;
   }
-  if (target.includes("/") || target.includes("\\")) {
+  if (id.includes("/") || id.includes("\\")) {
     return false;
   }
   // Extension IDs: publisher.name or publisher.name@version
@@ -44,8 +62,8 @@ cli
     "low",
   )
   .option("--no-network", "Disable network-based checks")
-  .action(async (target: string, options: ScanOptions) => {
-    let scanTarget = target;
+  .option("--all-registries", "Scan from all registries (Marketplace + OpenVSX)")
+  .action(async (target: string, options: CliScanOptions) => {
     let tempDir: string | undefined;
 
     async function cleanup(): Promise<void> {
@@ -55,6 +73,65 @@ cli
     }
 
     try {
+      // Handle --all-registries mode for extension IDs
+      if (options.allRegistries && isExtensionId(target)) {
+        tempDir = join(tmpdir(), `vsix-audit-${Date.now()}`);
+        const results: ScanResult[] = [];
+        const baseId = stripRegistryPrefix(target);
+
+        for (const registry of REGISTRIES) {
+          const prefixedId = `${registry}:${baseId}`;
+          try {
+            console.log(pc.cyan(`Downloading from ${registry}:`), baseId);
+            const downloaded = await downloadExtension(prefixedId, { destDir: tempDir });
+            console.log(pc.green("✓ Downloaded"), pc.dim(downloaded.path));
+
+            const result = await scanExtension(downloaded.path, options);
+            result.metadata = { ...result.metadata, registry };
+            results.push(result);
+          } catch (error) {
+            // Extension may not exist in this registry - continue
+            const msg = error instanceof Error ? error.message : String(error);
+            console.log(pc.dim(`  Not found in ${registry}: ${msg}`));
+          }
+        }
+        console.log();
+
+        if (results.length === 0) {
+          console.error(pc.red("Error:"), `Extension not found in any registry: ${baseId}`);
+          await cleanup();
+          process.exit(2);
+        }
+
+        // Output results
+        if (options.output === "json") {
+          console.log(JSON.stringify(results, null, 2));
+        } else if (options.output === "sarif") {
+          // Combine SARIF results
+          const combined = {
+            $schema:
+              "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            version: "2.1.0",
+            runs: results.map((r) => toSarif(r).runs[0]),
+          };
+          console.log(JSON.stringify(combined, null, 2));
+        } else {
+          for (const result of results) {
+            const registry = (result.metadata as { registry?: string }).registry ?? "unknown";
+            console.log(pc.bold(`Registry: ${registry}`));
+            printTextReport(result);
+            console.log();
+          }
+        }
+
+        await cleanup();
+        const hasFindings = results.some((r) => r.findings.length > 0);
+        process.exit(hasFindings ? 1 : 0);
+        return;
+      }
+
+      // Standard single-registry scan
+      let scanTarget = target;
       if (isExtensionId(target)) {
         // Download to temp directory
         tempDir = join(tmpdir(), `vsix-audit-${Date.now()}`);
@@ -228,7 +305,13 @@ function printTextReport(result: ScanResult): void {
   }
 }
 
-function toSarif(result: ScanResult): object {
+interface SarifReport {
+  $schema: string;
+  version: string;
+  runs: object[];
+}
+
+function toSarif(result: ScanResult): SarifReport {
   return {
     $schema:
       "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
