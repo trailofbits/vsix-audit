@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import pc from "picocolors";
 import { clearCache, getCacheDir, getCachedVersions, listCached } from "./scanner/cache.js";
+import { extractCapabilities, type Capabilities } from "./scanner/capabilities.js";
 import { downloadExtension, parseExtensionId } from "./scanner/download.js";
 import { scanExtension } from "./scanner/index.js";
 import type { Registry, ScanOptions, ScanResult } from "./scanner/types.js";
@@ -213,14 +214,19 @@ cli
     }
   });
 
+interface CliInfoOptions {
+  verbose?: boolean;
+}
+
 cli
   .command("info")
-  .description("Display metadata about a VS Code extension")
+  .description("Display metadata and capabilities of a VS Code extension")
   .argument(
     "<target>",
     "Path to .vsix file, directory, or extension ID (e.g., publisher.extension)",
   )
-  .action(async (target: string) => {
+  .option("-v, --verbose", "Show detailed evidence for each capability")
+  .action(async (target: string, options: CliInfoOptions) => {
     try {
       let infoTarget = target;
       if (isExtensionId(target)) {
@@ -238,57 +244,110 @@ cli
       const contents = await loadExtension(infoTarget);
       const manifest = contents.manifest;
 
+      // Run scanner to get findings for capability extraction
+      const scanResult = await scanExtension(infoTarget, {
+        output: "text",
+        severity: "low",
+        network: true,
+      });
+      const capabilities = extractCapabilities(scanResult.findings);
+
       console.log();
-      console.log(pc.bold("Extension Info"));
-      console.log(pc.dim("─".repeat(50)));
-      console.log();
-      console.log(`${pc.cyan("Name:")} ${manifest.displayName ?? manifest.name}`);
+      console.log(
+        pc.bold(`Extension: ${manifest.displayName ?? manifest.name} v${manifest.version}`),
+      );
       console.log(`${pc.cyan("Publisher:")} ${manifest.publisher}`);
-      console.log(`${pc.cyan("Version:")} ${manifest.version}`);
       if (manifest.description) {
-        console.log(`${pc.cyan("Description:")} ${manifest.description}`);
+        console.log(`${pc.dim(manifest.description)}`);
       }
+
+      // Capabilities section
       console.log();
+      console.log(pc.dim("── Capabilities ") + pc.dim("─".repeat(34)));
+      printCapabilities(capabilities, options.verbose ?? false);
+
+      // Manifest section
+      console.log();
+      console.log(pc.dim("── Manifest ") + pc.dim("─".repeat(38)));
 
       // Activation events
       const events = manifest.activationEvents ?? [];
       console.log(
-        `${pc.cyan("Activation Events:")} ${events.length > 0 ? events.join(", ") : pc.dim("(none)")}`,
+        `${pc.cyan("Activation:".padEnd(16))}${events.length > 0 ? events.join(", ") : pc.dim("(none)")}`,
       );
 
       // Entry points
-      if (manifest.main) {
-        console.log(`${pc.cyan("Main Entry:")} ${manifest.main}`);
-      }
-      if (manifest.browser) {
-        console.log(`${pc.cyan("Browser Entry:")} ${manifest.browser}`);
+      const entryPoints: string[] = [];
+      if (manifest.main) entryPoints.push(`main: ${manifest.main}`);
+      if (manifest.browser) entryPoints.push(`browser: ${manifest.browser}`);
+      if (entryPoints.length > 0) {
+        console.log(`${pc.cyan("Entry Points:".padEnd(16))}${entryPoints.join(", ")}`);
       }
 
       // Contributions summary
       const contributes = manifest.contributes ?? {};
-      const contributionTypes = Object.keys(contributes).filter((k) => {
-        const val = contributes[k];
-        return Array.isArray(val) ? val.length > 0 : val !== undefined;
-      });
-      if (contributionTypes.length > 0) {
-        console.log(`${pc.cyan("Contributes:")} ${contributionTypes.join(", ")}`);
+      const contributionSummary = Object.entries(contributes)
+        .filter(([, val]) => (Array.isArray(val) ? val.length > 0 : val !== undefined))
+        .map(([key, val]) => {
+          const count = Array.isArray(val) ? val.length : 1;
+          return `${key} (${count})`;
+        });
+      if (contributionSummary.length > 0) {
+        console.log(`${pc.cyan("Contributes:".padEnd(16))}${contributionSummary.join(", ")}`);
       }
 
       // Dependencies
       const deps = manifest["extensionDependencies"] as string[] | undefined;
       if (deps && deps.length > 0) {
-        console.log(`${pc.cyan("Extension Dependencies:")} ${deps.join(", ")}`);
+        console.log(`${pc.cyan("Dependencies:".padEnd(16))}${deps.join(", ")}`);
       }
 
+      // Stats section
       console.log();
-      console.log(`${pc.cyan("Files:")} ${contents.files.size}`);
+      console.log(pc.dim("── Stats ") + pc.dim("─".repeat(41)));
+
+      const codeExtensions = [".js", ".ts", ".mjs", ".cjs"];
+      const codeFileCount = [...contents.files.keys()].filter((f) =>
+        codeExtensions.some((ext) => f.endsWith(ext)),
+      ).length;
+      console.log(`${pc.cyan("Files:".padEnd(16))}${contents.files.size} (${codeFileCount} code)`);
+
       const totalSize = [...contents.files.values()].reduce((sum, buf) => sum + buf.length, 0);
-      console.log(`${pc.cyan("Total Size:")} ${formatBytes(totalSize)}`);
+      console.log(`${pc.cyan("Size:".padEnd(16))}${formatBytes(totalSize)}`);
+      console.log();
     } catch (error) {
       console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
       process.exit(2);
     }
   });
+
+function printCapabilities(capabilities: Capabilities, verbose: boolean): void {
+  const capEntries: [string, keyof Capabilities][] = [
+    ["Network", "network"],
+    ["Execution", "execution"],
+    ["File Access", "fileAccess"],
+    ["Credentials", "credentials"],
+    ["Obfuscation", "obfuscation"],
+  ];
+
+  for (const [label, key] of capEntries) {
+    const cap = capabilities[key];
+    const icon = cap.detected ? pc.green("✓") : pc.dim("✗");
+    const summary = cap.detected ? cap.summary.join(", ") : pc.dim("None detected");
+    console.log(`${label.padEnd(16)}${icon} ${summary}`);
+
+    if (verbose && cap.detected && cap.evidence.length > 0) {
+      for (const ev of cap.evidence.slice(0, 5)) {
+        const loc = ev.line ? `${ev.file}:${ev.line}` : ev.file;
+        const matched = ev.matched ? pc.dim(` (${ev.matched.slice(0, 40)})`) : "";
+        console.log(`                  ${pc.dim("└")} ${pc.dim(loc)}${matched}`);
+      }
+      if (cap.evidence.length > 5) {
+        console.log(`                  ${pc.dim(`... and ${cap.evidence.length - 5} more`)}`);
+      }
+    }
+  }
+}
 
 // Cache subcommand
 const cacheCommand = cli.command("cache").description("Manage the extension cache");
