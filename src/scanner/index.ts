@@ -1,12 +1,10 @@
 import { stat } from "node:fs/promises";
 import { checkAST } from "./checks/ast.js";
-import { checkBehavioral } from "./checks/behavioral.js";
 import { checkBlocklist } from "./checks/blocklist.js";
-import { checkDataFlow } from "./checks/dataflow.js";
-import { checkDependencies } from "./checks/dependencies.js";
+import { checkChains } from "./checks/chains.js";
 import { checkIocs } from "./checks/ioc.js";
-import { checkManifest } from "./checks/manifest.js";
 import { checkObfuscation } from "./checks/obfuscation.js";
+import { checkPackage } from "./checks/package.js";
 import { checkAllPatterns } from "./checks/patterns.js";
 import { checkUnicode } from "./checks/unicode.js";
 import {
@@ -110,12 +108,12 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
     description: "Extension ID not in malware blocklist",
   });
 
-  // Manifest check
-  findings.push(...checkManifest(manifest));
+  // Package check (manifest + dependencies)
+  findings.push(...checkPackage(contents, zooData));
   inventory.push({
-    name: "Manifest",
+    name: "Package",
     enabled: true,
-    description: "Activation events, entry points, dependencies",
+    description: "Manifest analysis, npm dependencies, lifecycle scripts",
   });
 
   // Pattern check
@@ -148,23 +146,13 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
     filesExamined: codeFileCount,
   });
 
-  // Data flow analysis (new)
-  findings.push(...checkDataFlow(contents));
+  // Chain detection (unified dataflow + behavioral)
+  findings.push(...checkChains(contents));
   inventory.push({
-    name: "DataFlow",
-    enabled: true,
-    description: `Source-to-sink tracking across ${codeFileCount} code files`,
-    rulesApplied: 9,
-    filesExamined: codeFileCount,
-  });
-
-  // Behavioral signatures (new)
-  findings.push(...checkBehavioral(contents));
-  inventory.push({
-    name: "Behavioral",
+    name: "Chains",
     enabled: true,
     description: `Multi-stage attack patterns across ${codeFileCount} code files`,
-    rulesApplied: 8,
+    rulesApplied: 16,
     filesExamined: codeFileCount,
   });
 
@@ -184,14 +172,6 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
     name: "IOC",
     enabled: true,
     description: "Hashes, domains, IPs against threat intel",
-  });
-
-  // Dependencies check
-  findings.push(...checkDependencies(contents, zooData));
-  inventory.push({
-    name: "Dependencies",
-    enabled: true,
-    description: "package.json scripts and packages",
   });
 
   // YARA check

@@ -1,21 +1,29 @@
 import { describe, expect, it } from "vitest";
 import type { VsixContents, VsixManifest, ZooData } from "../types.js";
 import {
-  checkDependencies,
+  checkActivationEvents,
   checkLifecycleScripts,
   checkMaliciousPackages,
+  checkPackage,
+  checkThemeAbuse,
   checkTyposquattingPackages,
-} from "./dependencies.js";
+} from "./package.js";
+
+// --- Test helpers ---
 
 function makePackageJson(content: object): string {
   return JSON.stringify(content, null, 2);
 }
 
-function makeContents(packageJsonContent: object): VsixContents {
+function makeContents(
+  packageJsonContent: object,
+  manifestOverrides: Partial<VsixManifest> = {},
+): VsixContents {
   const manifest: VsixManifest = {
     name: "test-extension",
     publisher: "test",
     version: "1.0.0",
+    ...manifestOverrides,
   };
 
   const files = new Map<string, Buffer>();
@@ -33,6 +41,112 @@ function makeZooData(maliciousPackages: string[] = []): ZooData {
     maliciousNpmPackages: new Set(maliciousPackages.map((p) => p.toLowerCase())),
   };
 }
+
+// --- Manifest checks ---
+
+describe("checkActivationEvents", () => {
+  it("flags wildcard activation event", () => {
+    const manifest: VsixManifest = {
+      name: "test",
+      publisher: "test",
+      version: "1.0.0",
+      activationEvents: ["*"],
+    };
+
+    const findings = checkActivationEvents(manifest);
+    expect(findings.some((f) => f.id === "ACTIVATION_WILDCARD")).toBe(true);
+    expect(findings[0]?.severity).toBe("high");
+  });
+
+  it("flags onStartupFinished activation event", () => {
+    const manifest: VsixManifest = {
+      name: "test",
+      publisher: "test",
+      version: "1.0.0",
+      activationEvents: ["onStartupFinished"],
+    };
+
+    const findings = checkActivationEvents(manifest);
+    expect(findings.some((f) => f.id === "ACTIVATION_STARTUP")).toBe(true);
+    expect(findings[0]?.severity).toBe("medium");
+  });
+
+  it("does not flag normal activation events", () => {
+    const manifest: VsixManifest = {
+      name: "test",
+      publisher: "test",
+      version: "1.0.0",
+      activationEvents: ["onCommand:test.command", "onLanguage:typescript"],
+    };
+
+    const findings = checkActivationEvents(manifest);
+    expect(findings).toHaveLength(0);
+  });
+});
+
+describe("checkThemeAbuse", () => {
+  it("flags theme extension with code entry point", () => {
+    const manifest: VsixManifest = {
+      name: "test-theme",
+      publisher: "test",
+      version: "1.0.0",
+      main: "./extension.js",
+      contributes: {
+        themes: [{ id: "dark-theme", label: "Dark Theme", path: "./themes/dark.json" }],
+      },
+    };
+
+    const findings = checkThemeAbuse(manifest);
+    expect(findings.some((f) => f.id === "THEME_WITH_CODE")).toBe(true);
+    expect(findings[0]?.severity).toBe("high");
+  });
+
+  it("flags icon theme extension with code entry point", () => {
+    const manifest: VsixManifest = {
+      name: "test-icons",
+      publisher: "test",
+      version: "1.0.0",
+      main: "./extension.js",
+      contributes: {
+        iconThemes: [{ id: "material-icons", label: "Material Icons", path: "./icons.json" }],
+      },
+    };
+
+    const findings = checkThemeAbuse(manifest);
+    expect(findings.some((f) => f.id === "THEME_WITH_CODE")).toBe(true);
+  });
+
+  it("does not flag pure theme without code", () => {
+    const manifest: VsixManifest = {
+      name: "test-theme",
+      publisher: "test",
+      version: "1.0.0",
+      contributes: {
+        themes: [{ id: "dark-theme", label: "Dark Theme", path: "./themes/dark.json" }],
+      },
+    };
+
+    const findings = checkThemeAbuse(manifest);
+    expect(findings).toHaveLength(0);
+  });
+
+  it("does not flag extension with code but no themes", () => {
+    const manifest: VsixManifest = {
+      name: "test-extension",
+      publisher: "test",
+      version: "1.0.0",
+      main: "./extension.js",
+      contributes: {
+        commands: [{ command: "test.command", title: "Test Command" }],
+      },
+    };
+
+    const findings = checkThemeAbuse(manifest);
+    expect(findings).toHaveLength(0);
+  });
+});
+
+// --- Dependency checks ---
 
 describe("checkMaliciousPackages", () => {
   it("detects known malicious packages in dependencies", () => {
@@ -236,7 +350,28 @@ describe("checkLifecycleScripts", () => {
   });
 });
 
-describe("checkDependencies (integration)", () => {
+// --- Integration tests ---
+
+describe("checkPackage (integration)", () => {
+  it("combines all manifest checks", () => {
+    const contents = makeContents(
+      { name: "test" },
+      {
+        name: "suspicious-theme",
+        publisher: "suspicious",
+        main: "./extension.js",
+        activationEvents: ["*"],
+        contributes: {
+          themes: [{ id: "theme", label: "Theme", path: "./theme.json" }],
+        },
+      },
+    );
+
+    const findings = checkPackage(contents, makeZooData());
+    expect(findings.some((f) => f.id === "ACTIVATION_WILDCARD")).toBe(true);
+    expect(findings.some((f) => f.id === "THEME_WITH_CODE")).toBe(true);
+  });
+
   it("runs all checks on a malicious package.json", () => {
     const contents = makeContents({
       name: "evil-extension",
@@ -250,7 +385,7 @@ describe("checkDependencies (integration)", () => {
     });
 
     const zooData = makeZooData(["event-stream"]);
-    const findings = checkDependencies(contents, zooData);
+    const findings = checkPackage(contents, zooData);
 
     expect(findings.some((f) => f.id === "MALICIOUS_NPM_PACKAGE")).toBe(true);
     expect(findings.some((f) => f.id === "TYPOSQUAT_PACKAGE")).toBe(true);
@@ -271,7 +406,7 @@ describe("checkDependencies (integration)", () => {
     });
 
     const zooData = makeZooData();
-    const findings = checkDependencies(contents, zooData);
+    const findings = checkPackage(contents, zooData);
 
     expect(findings).toHaveLength(0);
   });
@@ -289,7 +424,7 @@ describe("checkDependencies (integration)", () => {
     };
 
     const zooData = makeZooData();
-    const findings = checkDependencies(contents, zooData);
+    const findings = checkPackage(contents, zooData);
 
     expect(findings).toHaveLength(0);
   });
@@ -305,7 +440,7 @@ describe("checkDependencies (integration)", () => {
     const contents: VsixContents = { manifest, files, basePath: "/test" };
 
     const zooData = makeZooData();
-    const findings = checkDependencies(contents, zooData);
+    const findings = checkPackage(contents, zooData);
 
     expect(findings).toHaveLength(0);
   });
