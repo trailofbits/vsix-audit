@@ -216,10 +216,26 @@ cli
 cli
   .command("info")
   .description("Display metadata about a VS Code extension")
-  .argument("<target>", "Path to .vsix file or directory")
+  .argument(
+    "<target>",
+    "Path to .vsix file, directory, or extension ID (e.g., publisher.extension)",
+  )
   .action(async (target: string) => {
     try {
-      const contents = await loadExtension(target);
+      let infoTarget = target;
+      if (isExtensionId(target)) {
+        console.log(pc.cyan("Downloading:"), target);
+        const result = await downloadExtension(target);
+        infoTarget = result.path;
+
+        if (result.fromCache) {
+          console.log(pc.green("✓ Using cached"), pc.dim(result.path));
+        } else {
+          console.log(pc.green("✓ Downloaded"), pc.dim(result.path));
+        }
+      }
+
+      const contents = await loadExtension(infoTarget);
       const manifest = contents.manifest;
 
       console.log();
