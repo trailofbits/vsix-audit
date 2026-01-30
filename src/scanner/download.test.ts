@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getCursorDownloadUrl,
   getDownloadUrl,
   getMarketplaceDownloadUrl,
   getOpenVSXDownloadUrl,
@@ -86,6 +87,24 @@ describe("parseExtensionId", () => {
     expect(result.registry).toBe("marketplace");
   });
 
+  it("parses cursor: prefix", () => {
+    const result = parseExtensionId("cursor:ms-python.python");
+
+    expect(result.publisher).toBe("ms-python");
+    expect(result.name).toBe("python");
+    expect(result.version).toBeUndefined();
+    expect(result.registry).toBe("cursor");
+  });
+
+  it("parses cursor: prefix with version", () => {
+    const result = parseExtensionId("cursor:ms-python.python@2024.1.0");
+
+    expect(result.publisher).toBe("ms-python");
+    expect(result.name).toBe("python");
+    expect(result.version).toBe("2024.1.0");
+    expect(result.registry).toBe("cursor");
+  });
+
   it("throws on missing publisher", () => {
     expect(() => parseExtensionId("python")).toThrow("Invalid extension ID");
   });
@@ -152,6 +171,24 @@ describe("getOpenVSXDownloadUrl", () => {
 
     expect(url).toBe(
       "https://open-vsx.org/api/ms-python/python/2024.1.0/file/ms-python.python-2024.1.0.vsix",
+    );
+  });
+});
+
+describe("getCursorDownloadUrl", () => {
+  it("generates correct Cursor download URL", () => {
+    const url = getCursorDownloadUrl("ms-python", "python", "2024.1.0");
+
+    expect(url).toBe(
+      "https://marketplace.cursorapi.com/_apis/public/gallery/publishers/ms-python/vsextensions/python/2024.1.0/vspackage",
+    );
+  });
+
+  it("handles extension name with hyphen", () => {
+    const url = getCursorDownloadUrl("eamodio", "gitlens", "15.0.0");
+
+    expect(url).toBe(
+      "https://marketplace.cursorapi.com/_apis/public/gallery/publishers/eamodio/vsextensions/gitlens/15.0.0/vspackage",
     );
   });
 });

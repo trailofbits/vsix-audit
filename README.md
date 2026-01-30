@@ -79,11 +79,12 @@ Displays: name, publisher, version, activation events, entry points, contributio
 
 ### Registry Prefixes
 
-| Prefix         | Registry                              |
-| -------------- | ------------------------------------- |
-| (none)         | VS Code Marketplace (default)         |
-| `marketplace:` | VS Code Marketplace (explicit)        |
-| `openvsx:`     | Open VSX Registry                     |
+| Prefix         | Registry                       |
+| -------------- | ------------------------------ |
+| (none)         | VS Code Marketplace (default)  |
+| `marketplace:` | VS Code Marketplace (explicit) |
+| `openvsx:`     | Open VSX Registry              |
+| `cursor:`      | Cursor Extension Marketplace   |
 
 ### Scan Options
 
@@ -92,6 +93,50 @@ Displays: name, publisher, version, activation events, entry points, contributio
 | `-o, --output <format>`  | Output format: `text`, `json`, or `sarif` (default: `text`)                      |
 | `-s, --severity <level>` | Minimum severity to report: `low`, `medium`, `high`, `critical` (default: `low`) |
 | `--no-network`           | Disable network-based checks                                                     |
+| `--no-cache`             | Bypass cache, download fresh                                                     |
+| `--force`                | Re-download even if cached                                                       |
+| `--all-registries`       | Scan from all registries (Marketplace + OpenVSX + Cursor)                        |
+
+### Extension Cache
+
+Downloaded extensions are cached for faster subsequent scans:
+
+| Platform | Cache Location                                          |
+| -------- | ------------------------------------------------------- |
+| macOS    | `~/Library/Caches/vsix-audit/`                          |
+| Linux    | `$XDG_CACHE_HOME/vsix-audit/` or `~/.cache/vsix-audit/` |
+
+Extensions are organized by registry (`marketplace/`, `openvsx/`, `cursor/`).
+
+**Cache management commands:**
+
+```sh
+vsix-audit cache path              # Print cache directory
+vsix-audit cache list [--json]     # List cached extensions
+vsix-audit cache clear [pattern]   # Clear cache (optional glob pattern)
+vsix-audit cache info <ext-id>     # Show cached versions
+```
+
+**Examples:**
+
+```sh
+# First scan downloads to cache
+vsix-audit scan ms-python.python
+# → Downloaded ~/.cache/vsix-audit/marketplace/ms-python.python-2024.1.0.vsix
+
+# Second scan uses cache
+vsix-audit scan ms-python.python
+# → Using cached ~/.cache/vsix-audit/marketplace/ms-python.python-2024.1.0.vsix
+
+# Force re-download
+vsix-audit scan --force ms-python.python
+
+# Bypass cache entirely
+vsix-audit scan --no-cache ms-python.python
+
+# Clear specific extensions
+vsix-audit cache clear ms-python.*
+```
 
 ### Output Formats
 
