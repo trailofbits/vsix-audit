@@ -37,8 +37,13 @@ async function runWithConcurrency<T>(
   await Promise.all(running);
 }
 
+interface VsixFile {
+  path: string;
+  size: number;
+}
+
 export async function findVsixFiles(dir: string): Promise<string[]> {
-  const files: string[] = [];
+  const files: VsixFile[] = [];
 
   async function walk(currentDir: string): Promise<void> {
     const entries = await readdir(currentDir, { withFileTypes: true });
@@ -49,13 +54,18 @@ export async function findVsixFiles(dir: string): Promise<string[]> {
       if (entry.isDirectory()) {
         await walk(fullPath);
       } else if (entry.isFile() && entry.name.endsWith(".vsix")) {
-        files.push(fullPath);
+        const fileStat = await stat(fullPath);
+        files.push({ path: fullPath, size: fileStat.size });
       }
     }
   }
 
   await walk(dir);
-  return files.sort();
+
+  // Sort by size (smallest first) so smaller files complete sooner
+  files.sort((a, b) => a.size - b.size);
+
+  return files.map((f) => f.path);
 }
 
 export async function scanDirectory(
