@@ -269,14 +269,6 @@ export function getOpenVSXDownloadUrl(publisher: string, name: string, version: 
 }
 
 /**
- * Get the download URL for a VSIX package
- * @deprecated Use getMarketplaceDownloadUrl or getOpenVSXDownloadUrl instead
- */
-export function getDownloadUrl(publisher: string, name: string, version: string): string {
-  return getMarketplaceDownloadUrl(publisher, name, version);
-}
-
-/**
  * Download a VSIX from a URL
  */
 async function downloadVsixFromUrl(url: string, destPath: string): Promise<void> {
