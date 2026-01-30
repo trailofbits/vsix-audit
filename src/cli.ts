@@ -701,10 +701,26 @@ function printBatchSummary(batch: BatchScanResult): void {
   const withFindings = results.filter((r) => r.findings.length > 0);
   if (withFindings.length > 0) {
     console.log(pc.cyan("Extensions with findings:"));
+    console.log();
     for (const r of withFindings) {
-      const summary = formatFindingSummary(r.findings);
-      console.log(`  - ${r.extension.name} v${r.extension.version}`);
-      console.log(`    ${summary}`);
+      console.log(pc.bold(`${r.extension.name} v${r.extension.version}`));
+      console.log(pc.dim("─".repeat(40)));
+      for (const finding of r.findings) {
+        const severityColor = {
+          critical: pc.red,
+          high: pc.red,
+          medium: pc.yellow,
+          low: pc.blue,
+        }[finding.severity];
+        console.log(`  ${severityColor(`[${finding.severity.toUpperCase()}]`)} ${finding.title}`);
+        console.log(`  ${pc.dim(finding.description)}`);
+        if (finding.location) {
+          console.log(
+            `  ${pc.dim(`at ${finding.location.file}${finding.location.line ? `:${finding.location.line}` : ""}`)}`,
+          );
+        }
+        console.log();
+      }
     }
   }
 
