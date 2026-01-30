@@ -13,6 +13,7 @@ const REGISTRIES: Registry[] = ["marketplace", "openvsx"];
 interface CliScanOptions extends ScanOptions {
   allRegistries?: boolean;
   recursive?: boolean;
+  jobs?: string;
 }
 
 /**
@@ -65,6 +66,7 @@ cli
   .option("--no-network", "Disable network-based checks")
   .option("--all-registries", "Scan from all registries (Marketplace + OpenVSX)")
   .option("-r, --recursive", "Recursively scan all .vsix files in a directory")
+  .option("-j, --jobs <n>", "Number of parallel scans (default: 4)", "4")
   .action(async (target: string, options: CliScanOptions) => {
     let tempDir: string | undefined;
 
@@ -132,6 +134,11 @@ cli
         return;
       }
 
+      // Warn if -j used without -r
+      if (options.jobs && options.jobs !== "4" && !options.recursive) {
+        console.log(pc.yellow("Warning:"), "--jobs is only used with --recursive, ignoring");
+      }
+
       // Handle --recursive mode for directories
       if (options.recursive) {
         const targetStat = await stat(target).catch(() => null);
@@ -140,15 +147,36 @@ cli
           process.exit(2);
         }
 
+        // Validate --jobs
+        const concurrency = parseInt(options.jobs ?? "4", 10);
+        if (isNaN(concurrency) || concurrency < 1) {
+          console.error(pc.red("Error:"), "--jobs must be a positive integer");
+          process.exit(2);
+        }
+
+        const isParallel = concurrency > 1;
+
         console.log(pc.cyan("Scanning directory:"), target);
+        if (isParallel) {
+          console.log(pc.dim(`Parallel mode: ${concurrency} concurrent scans`));
+        }
         console.log();
 
         const batchResult = await scanDirectory(target, options, {
-          onProgress: (current, total, path) => {
-            process.stdout.write(`[${current}/${total}] Scanning ${basename(path)}...`);
+          onProgress: (completed, total, _path) => {
+            if (isParallel) {
+              // No line clearing in parallel mode - just update progress
+              process.stderr.write(`\r[${completed}/${total}] Scanning...`);
+            }
+            // Sequential mode: progress shown via onResult
           },
           onResult: (_path, result) => {
-            process.stdout.write("\r\x1b[K"); // Clear line
+            if (isParallel) {
+              // Clear progress line before printing result
+              process.stderr.write("\r\x1b[K");
+            } else {
+              process.stdout.write("\r\x1b[K");
+            }
             const count = result.findings.length;
             if (count === 0) {
               console.log(`[${pc.green("OK")}] ${result.extension.name} v${result.extension.version}`);
@@ -160,10 +188,14 @@ cli
             }
           },
           onError: (path, error) => {
-            process.stdout.write("\r\x1b[K"); // Clear line
+            if (isParallel) {
+              process.stderr.write("\r\x1b[K");
+            } else {
+              process.stdout.write("\r\x1b[K");
+            }
             console.log(`[${pc.red("ERROR")}] ${basename(path)} - Error: ${error}`);
           },
-        });
+        }, { concurrency });
 
         // Output results
         if (options.output === "json") {

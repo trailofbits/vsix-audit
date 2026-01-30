@@ -33,6 +33,7 @@ import type {
 import { loadExtension } from "./vsix.js";
 
 export type { BatchScanResult, CheckSummary, Finding, ScanOptions, ScanResult, Severity };
+export type { BatchScanCallbacks, BatchScanOptions } from "./batch.js";
 export { findVsixFiles, scanDirectory } from "./batch.js";
 
 const SEVERITY_ORDER: Record<Severity, number> = {
