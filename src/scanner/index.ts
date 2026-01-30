@@ -20,6 +20,7 @@ import {
 } from "./constants.js";
 import { loadZooData } from "./loaders/zoo.js";
 import type {
+  BatchScanResult,
   CheckSummary,
   Finding,
   ScanOptions,
@@ -29,7 +30,8 @@ import type {
 } from "./types.js";
 import { loadExtension } from "./vsix.js";
 
-export type { CheckSummary, Finding, ScanOptions, ScanResult, Severity };
+export type { BatchScanResult, CheckSummary, Finding, ScanOptions, ScanResult, Severity };
+export { findVsixFiles, scanDirectory } from "./batch.js";
 
 const SEVERITY_ORDER: Record<Severity, number> = {
   low: 0,

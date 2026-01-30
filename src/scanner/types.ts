@@ -95,3 +95,16 @@ export interface ZooData {
   ips: Set<string>;
   maliciousNpmPackages: Set<string>;
 }
+
+export interface BatchScanResult {
+  results: ScanResult[];
+  errors: Array<{ path: string; error: string }>;
+  summary: {
+    totalFiles: number;
+    scannedFiles: number;
+    failedFiles: number;
+    totalFindings: number;
+    findingsBySeverity: Record<Severity, number>;
+    scanDuration: number;
+  };
+}

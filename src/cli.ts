@@ -1,10 +1,12 @@
+import { stat } from "node:fs/promises";
+import { basename } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
 import { clearCache, getCacheDir, getCachedVersions, listCached } from "./scanner/cache.js";
 import { extractCapabilities, type Capabilities } from "./scanner/capabilities.js";
 import { downloadExtension, parseExtensionId } from "./scanner/download.js";
-import { scanExtension } from "./scanner/index.js";
-import type { Registry, ScanOptions, ScanResult } from "./scanner/types.js";
+import { scanDirectory, scanExtension } from "./scanner/index.js";
+import type { BatchScanResult, Registry, ScanOptions, ScanResult, Severity } from "./scanner/types.js";
 import { loadExtension } from "./scanner/vsix.js";
 
 const REGISTRIES: Registry[] = ["marketplace", "openvsx", "cursor"];
@@ -13,6 +15,7 @@ interface CliScanOptions extends ScanOptions {
   allRegistries?: boolean;
   noCache?: boolean;
   force?: boolean;
+  recursive?: boolean;
 }
 
 interface CliDownloadOptions {
@@ -73,6 +76,7 @@ cli
   .option("--all-registries", "Scan from all registries (Marketplace + OpenVSX + Cursor)")
   .option("--no-cache", "Bypass cache, download fresh")
   .option("--force", "Re-download even if cached")
+  .option("-r, --recursive", "Recursively scan all .vsix files in a directory")
   .action(async (target: string, options: CliScanOptions) => {
     try {
       const useCache = options.noCache !== true;
@@ -137,6 +141,64 @@ cli
 
         const hasFindings = results.some((r) => r.findings.length > 0);
         process.exit(hasFindings ? 1 : 0);
+        return;
+      }
+
+      // Handle --recursive mode for directories
+      if (options.recursive) {
+        const targetStat = await stat(target).catch(() => null);
+        if (!targetStat?.isDirectory()) {
+          console.error(pc.red("Error:"), "--recursive requires a directory path");
+          process.exit(2);
+        }
+
+        console.log(pc.cyan("Scanning directory:"), target);
+        console.log();
+
+        const batchResult = await scanDirectory(target, options, {
+          onProgress: (current, total, path) => {
+            process.stdout.write(`[${current}/${total}] Scanning ${basename(path)}...`);
+          },
+          onResult: (_path, result) => {
+            process.stdout.write("\r\x1b[K"); // Clear line
+            const count = result.findings.length;
+            if (count === 0) {
+              console.log(`[${pc.green("OK")}] ${result.extension.name} v${result.extension.version}`);
+            } else {
+              const summary = formatFindingSummary(result.findings);
+              console.log(
+                `[${pc.yellow("WARN")}] ${result.extension.name} v${result.extension.version} - ${count} issue(s) (${summary})`,
+              );
+            }
+          },
+          onError: (path, error) => {
+            process.stdout.write("\r\x1b[K"); // Clear line
+            console.log(`[${pc.red("ERROR")}] ${basename(path)} - Error: ${error}`);
+          },
+        });
+
+        // Output results
+        if (options.output === "json") {
+          console.log(JSON.stringify(batchResult, null, 2));
+        } else if (options.output === "sarif") {
+          const combined = {
+            $schema:
+              "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            version: "2.1.0",
+            runs: batchResult.results.map((r) => toSarif(r).runs[0]),
+          };
+          console.log(JSON.stringify(combined, null, 2));
+        } else {
+          printBatchSummary(batchResult);
+        }
+
+        // Exit codes: 0=clean, 1=findings, 2=errors only
+        if (batchResult.summary.totalFindings > 0) {
+          process.exit(1);
+        } else if (batchResult.summary.failedFiles > 0 && batchResult.summary.scannedFiles === 0) {
+          process.exit(2);
+        }
+        process.exit(0);
         return;
       }
 
@@ -562,4 +624,64 @@ function toSarif(result: ScanResult): SarifReport {
       },
     ],
   };
+}
+
+function formatFindingSummary(findings: Array<{ severity: Severity }>): string {
+  const counts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const f of findings) {
+    counts[f.severity]++;
+  }
+  const parts: string[] = [];
+  if (counts.critical > 0) parts.push(`${counts.critical} critical`);
+  if (counts.high > 0) parts.push(`${counts.high} high`);
+  if (counts.medium > 0) parts.push(`${counts.medium} medium`);
+  if (counts.low > 0) parts.push(`${counts.low} low`);
+  return parts.join(", ");
+}
+
+function printBatchSummary(batch: BatchScanResult): void {
+  const { summary, results, errors } = batch;
+
+  console.log();
+  console.log(pc.bold("Batch Scan Summary"));
+  console.log(pc.dim("─".repeat(50)));
+  console.log();
+  console.log(`Files scanned: ${summary.scannedFiles}/${summary.totalFiles}`);
+  if (summary.failedFiles > 0) {
+    console.log(`Failed: ${pc.red(String(summary.failedFiles))}`);
+  }
+  console.log(`Duration: ${(summary.scanDuration / 1000).toFixed(1)}s`);
+  console.log();
+
+  if (summary.totalFindings === 0) {
+    console.log(pc.green("No issues found across all extensions"));
+    return;
+  }
+
+  console.log(pc.yellow(`Found ${summary.totalFindings} issue(s) across all extensions:`));
+  const sev = summary.findingsBySeverity;
+  if (sev.critical > 0) console.log(`  ${pc.red("Critical:")} ${sev.critical}`);
+  if (sev.high > 0) console.log(`  ${pc.red("High:")} ${sev.high}`);
+  if (sev.medium > 0) console.log(`  ${pc.yellow("Medium:")} ${sev.medium}`);
+  if (sev.low > 0) console.log(`  ${pc.blue("Low:")} ${sev.low}`);
+  console.log();
+
+  const withFindings = results.filter((r) => r.findings.length > 0);
+  if (withFindings.length > 0) {
+    console.log(pc.cyan("Extensions with findings:"));
+    for (const r of withFindings) {
+      const summary = formatFindingSummary(r.findings);
+      console.log(`  - ${r.extension.name} v${r.extension.version}`);
+      console.log(`    ${summary}`);
+    }
+  }
+
+  if (errors.length > 0) {
+    console.log();
+    console.log(pc.cyan("Failed files:"));
+    for (const e of errors) {
+      console.log(`  - ${e.path}`);
+      console.log(`    ${pc.dim(e.error)}`);
+    }
+  }
 }
