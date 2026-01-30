@@ -205,6 +205,13 @@ Type check and lint:
 npm run check
 ```
 
+Run from development directory:
+
+```sh
+npm exec -- vsix-audit cmdhere
+```
+
+
 ## License
 
 AGPL-3.0
