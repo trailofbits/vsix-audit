@@ -1,6 +1,6 @@
 export type Severity = "low" | "medium" | "high" | "critical";
 
-export type Registry = "marketplace" | "openvsx";
+export type Registry = "marketplace" | "openvsx" | "cursor";
 
 export interface ScanOptions {
   output: "text" | "json" | "sarif";

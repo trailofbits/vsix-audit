@@ -1,17 +1,23 @@
-import { rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
+import { clearCache, getCacheDir, getCachedVersions, listCached } from "./scanner/cache.js";
 import { downloadExtension, parseExtensionId } from "./scanner/download.js";
 import { scanExtension } from "./scanner/index.js";
 import type { Registry, ScanOptions, ScanResult } from "./scanner/types.js";
 import { loadExtension } from "./scanner/vsix.js";
 
-const REGISTRIES: Registry[] = ["marketplace", "openvsx"];
+const REGISTRIES: Registry[] = ["marketplace", "openvsx", "cursor"];
 
 interface CliScanOptions extends ScanOptions {
   allRegistries?: boolean;
+  noCache?: boolean;
+  force?: boolean;
+}
+
+interface CliDownloadOptions {
+  output?: string;
+  noCache?: boolean;
+  force?: boolean;
 }
 
 /**
@@ -20,6 +26,7 @@ interface CliScanOptions extends ScanOptions {
 function stripRegistryPrefix(target: string): string {
   if (target.startsWith("openvsx:")) return target.slice(8);
   if (target.startsWith("marketplace:")) return target.slice(12);
+  if (target.startsWith("cursor:")) return target.slice(7);
   return target;
 }
 
@@ -62,20 +69,16 @@ cli
     "low",
   )
   .option("--no-network", "Disable network-based checks")
-  .option("--all-registries", "Scan from all registries (Marketplace + OpenVSX)")
+  .option("--all-registries", "Scan from all registries (Marketplace + OpenVSX + Cursor)")
+  .option("--no-cache", "Bypass cache, download fresh")
+  .option("--force", "Re-download even if cached")
   .action(async (target: string, options: CliScanOptions) => {
-    let tempDir: string | undefined;
-
-    async function cleanup(): Promise<void> {
-      if (tempDir) {
-        await rm(tempDir, { recursive: true, force: true }).catch(() => {});
-      }
-    }
-
     try {
+      const useCache = options.noCache !== true;
+      const forceDownload = options.force === true;
+
       // Handle --all-registries mode for extension IDs
       if (options.allRegistries && isExtensionId(target)) {
-        tempDir = join(tmpdir(), `vsix-audit-${Date.now()}`);
         const results: ScanResult[] = [];
         const baseId = stripRegistryPrefix(target);
 
@@ -83,8 +86,16 @@ cli
           const prefixedId = `${registry}:${baseId}`;
           try {
             console.log(pc.cyan(`Downloading from ${registry}:`), baseId);
-            const downloaded = await downloadExtension(prefixedId, { destDir: tempDir });
-            console.log(pc.green("✓ Downloaded"), pc.dim(downloaded.path));
+            const downloaded = await downloadExtension(prefixedId, {
+              useCache,
+              forceDownload,
+            });
+
+            if (downloaded.fromCache) {
+              console.log(pc.green("✓ Using cached"), pc.dim(downloaded.path));
+            } else {
+              console.log(pc.green("✓ Downloaded"), pc.dim(downloaded.path));
+            }
 
             const result = await scanExtension(downloaded.path, options);
             result.metadata = { ...result.metadata, registry };
@@ -99,7 +110,6 @@ cli
 
         if (results.length === 0) {
           console.error(pc.red("Error:"), `Extension not found in any registry: ${baseId}`);
-          await cleanup();
           process.exit(2);
         }
 
@@ -124,7 +134,6 @@ cli
           }
         }
 
-        await cleanup();
         const hasFindings = results.some((r) => r.findings.length > 0);
         process.exit(hasFindings ? 1 : 0);
         return;
@@ -133,12 +142,18 @@ cli
       // Standard single-registry scan
       let scanTarget = target;
       if (isExtensionId(target)) {
-        // Download to temp directory
-        tempDir = join(tmpdir(), `vsix-audit-${Date.now()}`);
         console.log(pc.cyan("Downloading:"), target);
-        const result = await downloadExtension(target, { destDir: tempDir });
+        const result = await downloadExtension(target, {
+          useCache,
+          forceDownload,
+        });
         scanTarget = result.path;
-        console.log(pc.green("✓ Downloaded"), pc.dim(result.path));
+
+        if (result.fromCache) {
+          console.log(pc.green("✓ Using cached"), pc.dim(result.path));
+        } else {
+          console.log(pc.green("✓ Downloaded"), pc.dim(result.path));
+        }
         console.log();
       }
 
@@ -150,10 +165,8 @@ cli
       } else {
         printTextReport(result);
       }
-      await cleanup();
       process.exit(result.findings.length > 0 ? 1 : 0);
     } catch (error) {
-      await cleanup();
       console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
       process.exit(2);
     }
@@ -163,15 +176,29 @@ cli
   .command("download")
   .description("Download a VS Code extension from the marketplace")
   .argument("<extension-id>", "Extension ID (e.g., ms-python.python or ms-python.python@2024.1.0)")
-  .option("-o, --output <dir>", "Output directory", process.cwd())
-  .action(async (extensionId: string, options: { output: string }) => {
+  .option("-o, --output <dir>", "Also copy to this directory (in addition to cache)")
+  .option("--no-cache", "Bypass cache, download fresh")
+  .option("--force", "Re-download even if cached")
+  .action(async (extensionId: string, options: CliDownloadOptions) => {
     try {
+      const useCache = options.noCache !== true;
+      const forceDownload = options.force === true;
+
       console.log(pc.cyan("Downloading:"), extensionId);
 
-      const result = await downloadExtension(extensionId, { destDir: options.output });
+      const downloadOptions = {
+        useCache,
+        forceDownload,
+        ...(options.output ? { destDir: options.output } : {}),
+      };
+      const result = await downloadExtension(extensionId, downloadOptions);
 
       console.log();
-      console.log(pc.green("✓ Downloaded successfully"));
+      if (result.fromCache) {
+        console.log(pc.green("✓ Using cached version"));
+      } else {
+        console.log(pc.green("✓ Downloaded successfully"));
+      }
       console.log(pc.dim("─".repeat(50)));
       console.log(`${pc.cyan("Name:")} ${result.metadata.displayName ?? result.metadata.name}`);
       console.log(`${pc.cyan("Publisher:")} ${result.metadata.publisher}`);
@@ -241,6 +268,123 @@ cli
       console.log(`${pc.cyan("Files:")} ${contents.files.size}`);
       const totalSize = [...contents.files.values()].reduce((sum, buf) => sum + buf.length, 0);
       console.log(`${pc.cyan("Total Size:")} ${formatBytes(totalSize)}`);
+    } catch (error) {
+      console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
+      process.exit(2);
+    }
+  });
+
+// Cache subcommand
+const cacheCommand = cli.command("cache").description("Manage the extension cache");
+
+cacheCommand
+  .command("path")
+  .description("Print the cache directory path")
+  .action(() => {
+    console.log(getCacheDir());
+  });
+
+cacheCommand
+  .command("list")
+  .description("List cached extensions")
+  .option("--json", "Output as JSON")
+  .action(async (options: { json?: boolean }) => {
+    try {
+      const extensions = await listCached();
+
+      if (extensions.length === 0) {
+        if (options.json) {
+          console.log("[]");
+        } else {
+          console.log(pc.dim("Cache is empty"));
+        }
+        return;
+      }
+
+      if (options.json) {
+        console.log(JSON.stringify(extensions, null, 2));
+        return;
+      }
+
+      console.log();
+      console.log(pc.bold("Cached Extensions"));
+      console.log(pc.dim("─".repeat(70)));
+
+      for (const ext of extensions) {
+        const extensionId = `${ext.publisher}.${ext.name}`;
+        const cachedDate = ext.cachedAt.toLocaleDateString();
+        console.log(
+          `  ${pc.cyan(extensionId.padEnd(40))} ` +
+            `${pc.dim(ext.version.padEnd(12))} ` +
+            `${pc.dim(formatBytes(ext.size).padEnd(10))} ` +
+            `${pc.dim(ext.registry.padEnd(12))} ` +
+            `${pc.dim(cachedDate)}`,
+        );
+      }
+
+      console.log();
+      const totalSize = extensions.reduce((sum, ext) => sum + ext.size, 0);
+      console.log(
+        `${pc.cyan("Total:")} ${extensions.length} extensions, ${formatBytes(totalSize)}`,
+      );
+    } catch (error) {
+      console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
+      process.exit(2);
+    }
+  });
+
+cacheCommand
+  .command("clear")
+  .description("Clear cached extensions")
+  .argument("[pattern]", "Optional glob pattern (e.g., ms-python.* or *.python)")
+  .action(async (pattern?: string) => {
+    try {
+      const deleted = await clearCache(pattern);
+
+      if (deleted === 0) {
+        if (pattern) {
+          console.log(pc.dim(`No extensions matching "${pattern}" found in cache`));
+        } else {
+          console.log(pc.dim("Cache is already empty"));
+        }
+      } else {
+        console.log(pc.green(`✓ Cleared ${deleted} extension(s) from cache`));
+      }
+    } catch (error) {
+      console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
+      process.exit(2);
+    }
+  });
+
+cacheCommand
+  .command("info")
+  .description("Show cached versions of an extension")
+  .argument("<extension-id>", "Extension ID (e.g., ms-python.python)")
+  .action(async (extensionId: string) => {
+    try {
+      const { publisher, name } = parseExtensionId(extensionId);
+      const versions = await getCachedVersions(publisher, name);
+
+      if (versions.length === 0) {
+        console.log(pc.dim(`No cached versions of ${extensionId}`));
+        return;
+      }
+
+      console.log();
+      console.log(pc.bold(`Cached versions of ${extensionId}`));
+      console.log(pc.dim("─".repeat(50)));
+
+      for (const ext of versions) {
+        const cachedDate = ext.cachedAt.toLocaleDateString();
+        console.log(
+          `  ${pc.cyan(ext.version.padEnd(15))} ` +
+            `${pc.dim(ext.registry.padEnd(12))} ` +
+            `${pc.dim(formatBytes(ext.size).padEnd(10))} ` +
+            `${pc.dim(cachedDate)}`,
+        );
+      }
+
+      console.log();
     } catch (error) {
       console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
       process.exit(2);

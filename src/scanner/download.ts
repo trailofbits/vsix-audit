@@ -1,8 +1,9 @@
 import { createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
+import { ensureCacheDir, getCachedPath, isCached } from "./cache.js";
 import type { Registry } from "./types.js";
 
 export interface ExtensionMetadata {
@@ -17,9 +18,16 @@ export interface ExtensionMetadata {
   registry?: Registry;
 }
 
+export interface DownloadOptions {
+  destDir?: string;
+  useCache?: boolean;
+  forceDownload?: boolean;
+}
+
 export interface DownloadResult {
   path: string;
   metadata: ExtensionMetadata;
+  fromCache?: boolean;
 }
 
 interface GalleryExtension {
@@ -46,6 +54,8 @@ const GALLERY_API_URL = "https://marketplace.visualstudio.com/_apis/public/galle
 const GALLERY_API_VERSION = "7.1-preview.1";
 
 const OPENVSX_API_URL = "https://open-vsx.org/api";
+
+const CURSOR_API_URL = "https://marketplace.cursorapi.com/_apis/public/gallery/extensionquery";
 
 interface OpenVSXExtension {
   namespace: string;
@@ -82,6 +92,9 @@ export function parseExtensionId(input: string): ParsedExtensionId {
   } else if (input.startsWith("marketplace:")) {
     registry = "marketplace";
     rest = input.slice(12);
+  } else if (input.startsWith("cursor:")) {
+    registry = "cursor";
+    rest = input.slice(7);
   }
 
   // Check for version suffix
@@ -251,6 +264,91 @@ export async function queryOpenVSX(
 }
 
 /**
+ * Query Cursor Extension Marketplace for extension metadata
+ */
+export async function queryCursor(
+  publisher: string,
+  name: string,
+  version?: string,
+): Promise<ExtensionMetadata> {
+  const extensionId = `${publisher}.${name}`;
+
+  const requestBody = {
+    filters: [
+      {
+        criteria: [{ filterType: 7, value: extensionId }],
+        pageSize: 1,
+        pageNumber: 1,
+      },
+    ],
+    flags: 0x200 | 0x80 | 0x1, // Include versions, files, and statistics
+  };
+
+  const response = await fetch(CURSOR_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: `application/json;api-version=${GALLERY_API_VERSION}`,
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Cursor API error: ${response.status} ${response.statusText}`);
+  }
+
+  const data = (await response.json()) as GalleryResponse;
+  const extensions = data.results?.[0]?.extensions;
+  const ext = extensions?.[0];
+
+  if (!ext) {
+    throw new Error(`Extension not found on Cursor: ${extensionId}`);
+  }
+
+  const versions = ext.versions ?? [];
+
+  // Find the requested version or use latest
+  let targetVersion = versions[0];
+  if (version) {
+    const found = versions.find((v) => v.version === version);
+    if (!found) {
+      throw new Error(
+        `Version ${version} not found for ${extensionId}. Latest: ${versions[0]?.version}`,
+      );
+    }
+    targetVersion = found;
+  }
+
+  if (!targetVersion) {
+    throw new Error(`No versions available for ${extensionId}`);
+  }
+
+  // Get install count from statistics
+  const installStat = ext.statistics?.find((s) => s.statisticName === "install");
+
+  const result: ExtensionMetadata = {
+    extensionId,
+    publisher: ext.publisher.publisherName,
+    name: ext.extensionName,
+    version: targetVersion.version,
+    lastUpdated: targetVersion.lastUpdated,
+    registry: "cursor",
+  };
+
+  if (ext.displayName) {
+    result.displayName = ext.displayName;
+  }
+  if (ext.shortDescription) {
+    result.description = ext.shortDescription;
+  }
+  if (installStat?.value !== undefined) {
+    result.installCount = installStat.value;
+  }
+
+  return result;
+}
+
+/**
  * Get the download URL for a VSIX package from the VS Code Marketplace
  */
 export function getMarketplaceDownloadUrl(
@@ -301,10 +399,14 @@ export async function downloadVsix(
   destPath: string,
   registry: Registry = "marketplace",
 ): Promise<void> {
-  const url =
-    registry === "openvsx"
-      ? getOpenVSXDownloadUrl(publisher, name, version)
-      : getMarketplaceDownloadUrl(publisher, name, version);
+  let url: string;
+  if (registry === "openvsx") {
+    url = getOpenVSXDownloadUrl(publisher, name, version);
+  } else if (registry === "cursor") {
+    url = getCursorDownloadUrl(publisher, name, version);
+  } else {
+    url = getMarketplaceDownloadUrl(publisher, name, version);
+  }
 
   await downloadVsixFromUrl(url, destPath);
 }
@@ -319,26 +421,64 @@ export async function downloadVsix(
  */
 export async function downloadExtension(
   extensionId: string,
-  options?: { destDir?: string },
+  options?: DownloadOptions,
 ): Promise<DownloadResult> {
   const { publisher, name, version, registry } = parseExtensionId(extensionId);
+  const useCache = options?.useCache !== false;
+  const forceDownload = options?.forceDownload === true;
 
   // Query the appropriate registry for metadata
-  const metadata =
-    registry === "openvsx"
-      ? await queryOpenVSX(publisher, name, version)
-      : await queryExtension(publisher, name, version);
+  let metadata: ExtensionMetadata;
+  if (registry === "openvsx") {
+    metadata = await queryOpenVSX(publisher, name, version);
+  } else if (registry === "cursor") {
+    metadata = await queryCursor(publisher, name, version);
+  } else {
+    metadata = await queryExtension(publisher, name, version);
+  }
 
-  // Determine download path
-  const destDir = options?.destDir ?? process.cwd();
-  const filename = `${metadata.publisher}.${metadata.name}-${metadata.version}.vsix`;
-  const destPath = join(destDir, filename);
+  // If destDir is explicitly provided, download directly there (bypasses cache)
+  if (options?.destDir) {
+    const filename = `${metadata.publisher}.${metadata.name}-${metadata.version}.vsix`;
+    const destPath = join(options.destDir, filename);
 
-  // Download the VSIX
-  await downloadVsix(metadata.publisher, metadata.name, metadata.version, destPath, registry);
+    // Check cache first if enabled
+    if (useCache && !forceDownload) {
+      const cachedPath = getCachedPath(
+        registry,
+        metadata.publisher,
+        metadata.name,
+        metadata.version,
+      );
+      const cached = await isCached(registry, metadata.publisher, metadata.name, metadata.version);
 
-  return {
-    path: destPath,
-    metadata,
-  };
+      if (cached) {
+        // Copy from cache to destination
+        await mkdir(options.destDir, { recursive: true });
+        await copyFile(cachedPath, destPath);
+        return { path: destPath, metadata, fromCache: true };
+      }
+    }
+
+    // Download fresh
+    await downloadVsix(metadata.publisher, metadata.name, metadata.version, destPath, registry);
+    return { path: destPath, metadata, fromCache: false };
+  }
+
+  // Use cache directory
+  const cachedPath = getCachedPath(registry, metadata.publisher, metadata.name, metadata.version);
+
+  // Check if already cached
+  if (useCache && !forceDownload) {
+    const cached = await isCached(registry, metadata.publisher, metadata.name, metadata.version);
+    if (cached) {
+      return { path: cachedPath, metadata, fromCache: true };
+    }
+  }
+
+  // Download to cache
+  await ensureCacheDir(registry);
+  await downloadVsix(metadata.publisher, metadata.name, metadata.version, cachedPath, registry);
+
+  return { path: cachedPath, metadata, fromCache: false };
 }
