@@ -75,7 +75,7 @@ JavaScript obfuscation patterns (hex variables, `fromCharCode` arrays, eval+deco
 
 ### YARA Rules (`yara.ts`)
 
-External YARA engine for complex pattern matching. Rules loaded from `zoo/signatures/yara/`. Requires `yara` CLI (`brew install yara`).
+External YARA-X engine for complex pattern matching. Rules loaded from `zoo/signatures/yara/`. Requires `yr` CLI (`brew install yara-x`).
 
 | Rule File                     | Detects                                                        |
 | ----------------------------- | -------------------------------------------------------------- |

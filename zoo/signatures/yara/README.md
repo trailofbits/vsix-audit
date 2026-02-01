@@ -38,9 +38,12 @@ Example: `tigerjack_keylogger.yar`
 ## Usage
 
 ```bash
-# Scan with YARA
-yara -r zoo/signatures/yara/ path/to/extension/
+# Scan with YARA-X
+yr scan -r zoo/signatures/yara/unicode_stealth.yar path/to/extension/
 
-# With vsix-audit (planned)
-vsix-audit scan extension.vsix --yara zoo/signatures/yara/
+# Or scan all rules in directory
+for f in zoo/signatures/yara/*.yar; do yr scan -r "$f" path/to/extension/; done
+
+# With vsix-audit (automatic)
+vsix-audit scan extension.vsix  # YARA rules loaded automatically
 ```
