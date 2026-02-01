@@ -1,5 +1,5 @@
 {
-  "name": "vsix-audit",
+  "name": "@trailofbits/vsix-audit",
   "version": "0.1.0",
   "description": "Security scanner for VS Code extensions",
   "keywords": [
