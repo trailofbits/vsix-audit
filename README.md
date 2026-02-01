@@ -249,31 +249,8 @@ VSIX_ZOO_PATH=../vsix-zoo/samples npm test
 git clone https://github.com/trailofbits/vsix-audit.git
 cd vsix-audit
 npm install
-npm run build
-```
-
-Set up pre-commit hooks:
-
-```sh
-prek install
-```
-
-Run tests:
-
-```sh
-npm test
-```
-
-Type check and lint:
-
-```sh
-npm run check
-```
-
-Run from development directory:
-
-```sh
-npm exec -- vsix-audit scan ./extension.vsix
+prek install   # pre-commit hooks
+npm run check  # typecheck + lint + test
 ```
 
 ## License
