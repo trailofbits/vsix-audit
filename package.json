@@ -1,0 +1,60 @@
+{
+  "name": "vsix-audit",
+  "version": "0.1.0",
+  "description": "Security scanner for VS Code extensions",
+  "keywords": [
+    "audit",
+    "scanner",
+    "security",
+    "trail-of-bits",
+    "vscode",
+    "vsix"
+  ],
+  "homepage": "https://github.com/trailofbits/vsix-audit#readme",
+  "bugs": {
+    "url": "https://github.com/trailofbits/vsix-audit/issues"
+  },
+  "license": "AGPL-3.0",
+  "author": "Trail of Bits",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/trailofbits/vsix-audit.git"
+  },
+  "bin": {
+    "vsix-audit": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "zoo"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "oxlint .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run lint && npm run test",
+    "prepublishOnly": "npm run check && npm run build"
+  },
+  "dependencies": {
+    "commander": "14.0.2",
+    "oxc-parser": "0.111.0",
+    "picocolors": "1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "25.0.10",
+    "oxlint": "1.42.0",
+    "typescript": "5.9.3",
+    "vitest": "4.0.18"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

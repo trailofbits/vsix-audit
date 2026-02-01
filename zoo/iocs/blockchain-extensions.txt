@@ -1,0 +1,21 @@
+# Known legitimate blockchain development extensions
+# These extensions legitimately reference wallet addresses and contract addresses
+# Format: publisher.name (one per line)
+
+# Solidity development
+AckeeBlockchain.tools-for-solidity
+JuanBlanco.solidity
+NomicFoundation.hardhat-solidity
+tintinweb.solidity-visual-auditor
+tintinweb.vscode-solidity-language
+tintinweb.vscode-solidity-flattener
+tintinweb.graphviz-interactive-preview
+tintinweb.vscode-ethover
+tintinweb.vscode-vyper
+
+# Security audit tools
+trailofbits.vscode-weaudit
+
+# Web3 development
+AureliaEffect.aelf-contract-build
+AureliaEffect.aelf-contract-deploy

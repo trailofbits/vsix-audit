@@ -1,0 +1,49 @@
+# See https://pre-commit.com for more information
+# Run `prek install` to set up hooks
+# Run `prek run --all-files` to check entire codebase
+
+repos:
+  # Standard hygiene
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+      - id: check-merge-conflict
+      - id: detect-private-key
+        exclude: ^zoo/signatures/yara/ # YARA rules contain detection patterns, not actual keys
+
+  # TypeScript quality checks
+  - repo: local
+    hooks:
+      - id: typecheck
+        name: TypeScript type check
+        entry: npm run typecheck
+        language: system
+        types: [ts]
+        pass_filenames: false
+
+      - id: lint
+        name: Oxlint
+        entry: npm run lint
+        language: system
+        types: [ts]
+        pass_filenames: false
+
+      - id: format-check
+        name: Oxfmt format check
+        entry: npm run format:check
+        language: system
+        types: [ts]
+        pass_filenames: false
+
+      - id: test
+        name: Vitest
+        entry: npm run test
+        language: system
+        types: [ts]
+        pass_filenames: false
