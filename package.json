@@ -18,10 +18,10 @@
   "author": "Trail of Bits",
   "repository": {
     "type": "git",
-    "url": "https://github.com/trailofbits/vsix-audit.git"
+    "url": "git+https://github.com/trailofbits/vsix-audit.git"
   },
   "bin": {
-    "vsix-audit": "./dist/index.js"
+    "vsix-audit": "dist/index.js"
   },
   "files": [
     "dist",
