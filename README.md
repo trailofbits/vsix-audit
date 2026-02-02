@@ -16,7 +16,7 @@ VS Code extensions run with full trust and the same permissions as the editor it
 
 ## Detection Modules
 
-The scanner runs 5 detection modules against each extension:
+The scanner runs 6 detection modules against each extension:
 
 ### Package Analysis (`package.ts`)
 
@@ -91,6 +91,22 @@ External YARA-X engine for complex pattern matching. Rules loaded from `zoo/sign
 | `rat_capabilities.yar`        | SOCKS proxy, VNC, remote command execution                     |
 | `self_propagation.yar`        | GlassWorm-style worm propagation via extension modification    |
 | `unicode_stealth.yar`         | Invisible Unicode, variation selectors, homoglyphs             |
+
+### Telemetry Detection (`telemetry.ts`)
+
+Detects when extensions send data to external analytics, crash-reporting, or APM services.
+
+| Check               | What It Detects                                                   | Severity     |
+| ------------------- | ----------------------------------------------------------------- | ------------ |
+| SDK imports         | Known telemetry packages (Sentry, Mixpanel, PostHog, AppInsights) | High/Medium  |
+| Endpoint URLs       | URLs matching known telemetry services from `zoo/telemetry/`      | High/Medium  |
+| Telemetry paths     | API paths like `/collect`, `/track`, `/ingest`, `/metrics`        | High/Medium  |
+| Data collection     | Patterns near telemetry code (machine_id, user_id, file_paths)    | Informational |
+
+**Opt-out detection:** Severity is reduced from High to Medium when extensions respect user preferences:
+- `vscode.env.isTelemetryEnabled` - VS Code's global telemetry setting
+- Manifest configuration - Extension exposes a telemetry toggle setting
+- Code conditional - Checks a user preference before sending
 
 ### Triage-Friendly Output
 
@@ -228,6 +244,7 @@ The `zoo/` directory contains threat intelligence for detection:
 | `zoo/blocklist/`  | Known malicious extension IDs with campaign attribution               |
 | `zoo/iocs/`       | SHA256 hashes, C2 domains/IPs, crypto wallets, malicious npm packages |
 | `zoo/signatures/` | YARA rules for credential harvesting, RAT behavior, self-propagation  |
+| `zoo/telemetry/`  | Known telemetry service domains (analytics, crash-reporting, APM)     |
 
 **Campaigns covered:** GlassWorm, Evelyn, TigerJack, OctoRAT, WhiteCobra, Shiba, MUT-9332, FAMOUS CHOLLIMA, ReversingLabs-Dec2025
 
