@@ -1,7 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BlocklistEntry, ZooData } from "../types.js";
+import type { BlocklistEntry, TelemetryCategory, TelemetryServiceInfo, ZooData } from "../types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -97,6 +97,43 @@ function parseWalletFile(content: string): Set<string> {
   return result;
 }
 
+/**
+ * Parse telemetry services file format: SERVICE_NAME  CATEGORY  DOMAIN1,DOMAIN2,...
+ * Returns a map from domain to service info for fast lookup.
+ */
+function parseTelemetryServices(content: string): Map<string, TelemetryServiceInfo> {
+  const result = new Map<string, TelemetryServiceInfo>();
+  const validCategories = new Set<TelemetryCategory>(["analytics", "crash-reporting", "apm"]);
+
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    // Format: SERVICE_NAME  CATEGORY  DOMAIN1,DOMAIN2,...
+    // Use regex to split on 2+ whitespace to handle multi-word service names
+    const parts = trimmed.split(/\s{2,}/);
+    if (parts.length < 3) continue;
+
+    const name = parts[0];
+    const category = parts[1] as TelemetryCategory;
+    const domainsStr = parts[2];
+
+    if (!name || !validCategories.has(category) || !domainsStr) continue;
+
+    const domains = domainsStr.split(",").map((d) => d.trim().toLowerCase());
+    const serviceInfo: TelemetryServiceInfo = { name, category, domains };
+
+    // Map each domain to this service for fast lookup
+    for (const domain of domains) {
+      if (domain) {
+        result.set(domain, serviceInfo);
+      }
+    }
+  }
+
+  return result;
+}
+
 let cachedZooData: ZooData | undefined;
 
 export async function loadZooData(): Promise<ZooData> {
@@ -114,6 +151,7 @@ export async function loadZooData(): Promise<ZooData> {
     npmContent,
     walletsContent,
     blockchainContent,
+    telemetryContent,
   ] = await Promise.all([
     readFile(join(zooRoot, "blocklist", "extensions.json"), "utf8"),
     readFile(join(zooRoot, "iocs", "hashes.txt"), "utf8"),
@@ -122,6 +160,7 @@ export async function loadZooData(): Promise<ZooData> {
     readFile(join(zooRoot, "iocs", "malicious-npm.txt"), "utf8"),
     readFile(join(zooRoot, "iocs", "wallets.txt"), "utf8"),
     readFile(join(zooRoot, "iocs", "blockchain-extensions.txt"), "utf8"),
+    readFile(join(zooRoot, "telemetry", "known-services.txt"), "utf8").catch(() => ""),
   ]);
 
   const blocklistFile = JSON.parse(blocklistContent) as BlocklistFile;
@@ -136,6 +175,7 @@ export async function loadZooData(): Promise<ZooData> {
     maliciousNpmPackages: parseIOCFile(npmContent, (pkg) => pkg.toLowerCase()),
     wallets: parseWalletFile(walletsContent),
     blockchainAllowlist: parseIOCFile(blockchainContent, (extId) => extId),
+    telemetryServices: parseTelemetryServices(telemetryContent),
   };
 
   return cachedZooData;

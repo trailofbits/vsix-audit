@@ -9,6 +9,7 @@ export interface ModuleTimings {
   ast?: number;
   ioc?: number;
   yara?: number;
+  telemetry?: number;
   total: number;
 }
 
@@ -101,6 +102,14 @@ export interface BlocklistEntry {
   reference?: string;
 }
 
+export type TelemetryCategory = "analytics" | "crash-reporting" | "apm";
+
+export interface TelemetryServiceInfo {
+  name: string;
+  category: TelemetryCategory;
+  domains: string[];
+}
+
 export interface ZooData {
   blocklist: BlocklistEntry[];
   hashes: Set<string>;
@@ -109,6 +118,7 @@ export interface ZooData {
   maliciousNpmPackages: Set<string>;
   wallets: Set<string>;
   blockchainAllowlist: Set<string>;
+  telemetryServices: Map<string, TelemetryServiceInfo>;
 }
 
 export interface BatchScanResult {

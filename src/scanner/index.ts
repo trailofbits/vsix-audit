@@ -3,6 +3,7 @@ import { checkAST } from "./checks/ast.js";
 import { checkIocs } from "./checks/ioc.js";
 import { checkObfuscation } from "./checks/obfuscation.js";
 import { checkPackage } from "./checks/package.js";
+import { checkTelemetry } from "./checks/telemetry.js";
 import {
   checkYara,
   DEFAULT_YARA_RULES_DIR,
@@ -27,7 +28,7 @@ import type {
 } from "./types.js";
 import { loadExtension } from "./vsix.js";
 
-export const MODULE_NAMES = ["package", "obfuscation", "ast", "ioc", "yara"] as const;
+export const MODULE_NAMES = ["package", "obfuscation", "ast", "ioc", "yara", "telemetry"] as const;
 export type ModuleName = (typeof MODULE_NAMES)[number];
 
 export type {
@@ -192,6 +193,19 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
         skipReason: "yara not installed",
       });
     }
+  }
+
+  // Telemetry check
+  if (shouldRunModule("telemetry", options)) {
+    const moduleStart = performance.now();
+    findings.push(...checkTelemetry(contents, zooData));
+    timings.telemetry = performance.now() - moduleStart;
+    inventory.push({
+      name: "Telemetry",
+      enabled: true,
+      description: "Analytics and data collection detection",
+      filesExamined: codeFileCount,
+    });
   }
 
   findings = deduplicateFindings(findings);

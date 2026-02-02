@@ -42,6 +42,7 @@ function makeZooData(maliciousPackages: string[] = []): ZooData {
     maliciousNpmPackages: new Set(maliciousPackages.map((p) => p.toLowerCase())),
     wallets: new Set(),
     blockchainAllowlist: new Set(),
+    telemetryServices: new Map(),
   };
 }
 

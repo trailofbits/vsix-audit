@@ -36,6 +36,7 @@ function makeZooData(overrides: Partial<ZooData> = {}): ZooData {
     maliciousNpmPackages: new Set(),
     wallets: new Set(),
     blockchainAllowlist: new Set(),
+    telemetryServices: new Map(),
     ...overrides,
   };
 }
