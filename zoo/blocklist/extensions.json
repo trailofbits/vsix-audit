@@ -1,0 +1,201 @@
+{
+  "$schema": "../schemas/blocklist.schema.json",
+  "version": "1.1.0",
+  "lastUpdated": "2026-01-27",
+  "extensions": [
+    {
+      "id": "IconKiefApp.material-icon-theme",
+      "name": "Icon Theme: Material",
+      "reason": "GlassWorm malware - impersonates PKief.material-icon-theme",
+      "campaign": "GlassWorm",
+      "addedDate": "2025-11-28",
+      "reference": "https://www.nextron-systems.com/2025/11/28/malicious-vs-code-extension-impersonating-material-icon-theme-found-in-marketplace/"
+    },
+    {
+      "id": "498.cppplayground",
+      "name": "C++ Playground",
+      "reason": "TigerJack keylogger - steals keystrokes and .cpp files",
+      "campaign": "TigerJack",
+      "addedDate": "2025-10-01",
+      "reference": "https://www.koi.ai/blog/tiger-jack-malicious-vscode-extensions-stealing-code"
+    },
+    {
+      "id": "498.httpformat",
+      "name": "HTTP Format",
+      "reason": "TigerJack cryptominer - CoinIMP miner",
+      "campaign": "TigerJack",
+      "addedDate": "2025-10-01",
+      "reference": "https://www.koi.ai/blog/tiger-jack-malicious-vscode-extensions-stealing-code"
+    },
+    {
+      "id": "498.pythonformat",
+      "name": "Python Format",
+      "reason": "TigerJack backdoor - 20-minute C2 polling",
+      "campaign": "TigerJack",
+      "addedDate": "2025-10-01",
+      "reference": "https://www.koi.ai/blog/tiger-jack-malicious-vscode-extensions-stealing-code"
+    },
+    {
+      "id": "498-00.*",
+      "name": "498-00 publisher (all)",
+      "reason": "TigerJack republished extensions",
+      "campaign": "TigerJack",
+      "addedDate": "2025-09-17",
+      "reference": "https://www.bleepingcomputer.com/news/security/malicious-crypto-stealing-vscode-extensions-resurface-on-openvsx/"
+    },
+    {
+      "id": "BigBlack.bitcoin-black",
+      "name": "Bitcoin Black",
+      "reason": "Evelyn infostealer disguised as theme",
+      "campaign": "Evelyn",
+      "addedDate": "2025-12-05",
+      "reference": "https://www.bleepingcomputer.com/news/security/malicious-vscode-extensions-on-microsofts-registry-drop-infostealers/"
+    },
+    {
+      "id": "BigBlack.codo-ai",
+      "name": "Codo AI",
+      "reason": "Evelyn infostealer with working AI features as cover",
+      "campaign": "Evelyn",
+      "addedDate": "2025-12-08",
+      "reference": "https://www.koi.ai/blog/the-vs-code-malware-that-captures-your-screen"
+    },
+    {
+      "id": "suspublisher18.susvsex",
+      "name": "susvsex",
+      "reason": "Ransomware - zipUploadAndEncrypt function",
+      "campaign": "Unknown",
+      "addedDate": "2025-11-01",
+      "reference": "https://www.businesstechweekly.com/technology-news/malicious-vs-code-extension-ransomware-capabilities-discovered-and-removed-from-marketplace/"
+    },
+    {
+      "id": "publishingsofficial.prettier-vscode-plus",
+      "name": "prettier-vscode-plus",
+      "reason": "OctoRAT - multi-stage RAT delivery",
+      "campaign": "OctoRAT",
+      "addedDate": "2025-11-21",
+      "reference": "https://hunt.io/blog/malicious-vscode-extension-anivia-octorat-attack-chain"
+    },
+    {
+      "id": "ahban.shiba",
+      "name": "shiba",
+      "reason": "Ransomware - early stage, demonstrates name reuse vulnerability",
+      "campaign": "Shiba",
+      "addedDate": "2025-03-01",
+      "reference": "https://www.reversinglabs.com/blog/malware-vs-code-extension-names"
+    },
+    {
+      "id": "ahban.cychelloworld",
+      "name": "cychelloworld",
+      "reason": "Ransomware - related to shiba",
+      "campaign": "Shiba",
+      "addedDate": "2025-03-01",
+      "reference": "https://www.reversinglabs.com/blog/malware-vs-code-extension-names"
+    },
+    {
+      "id": "ahbanC.shiba",
+      "name": "shiba (republished)",
+      "reason": "Ransomware - republished after removal",
+      "campaign": "Shiba",
+      "addedDate": "2025-08-01",
+      "reference": "https://www.reversinglabs.com/blog/malware-vs-code-extension-names"
+    },
+    {
+      "id": "Ethereum.solidity",
+      "name": "Solidity (fake Ethereum publisher)",
+      "reason": "WhiteCobra - ScreenConnect RAT with fake download count",
+      "campaign": "WhiteCobra",
+      "platform": "openvsx",
+      "addedDate": "2025-08-10",
+      "reference": "https://dex.koi.security/reports/cursor/8e0ec40b-ef95-4e11-9264-cf055c58050c/0.0.7"
+    },
+    {
+      "id": "wli273088.vscode-pets-",
+      "name": "vscode-pets-",
+      "reason": "Malicious - Koidex Catch of the Day",
+      "campaign": "Unknown",
+      "addedDate": "2026-01-01",
+      "reference": "https://dex.koi.security/"
+    },
+    {
+      "id": "GPTOnce.chatgpt",
+      "name": "ChatGPT",
+      "reason": "Malicious - Koidex Catch of the Day",
+      "campaign": "Unknown",
+      "addedDate": "2026-01-01",
+      "reference": "https://dex.koi.security/"
+    },
+    {
+      "id": "juan-bianco.solidity-vlang",
+      "name": "Solidity (SleepyDuck)",
+      "reason": "SleepyDuck RAT - Ethereum smart contract C2",
+      "campaign": "WhiteCobra",
+      "platform": "openvsx",
+      "addedDate": "2025-11-03",
+      "reference": "https://www.bleepingcomputer.com/news/security/fake-solidity-vscode-extension-on-open-vsx-backdoors-developers/"
+    },
+    {
+      "id": "malkolm.*",
+      "name": "malkolm publisher (all)",
+      "reason": "Trojan-laden fake image - banner.png contains Rust binary",
+      "campaign": "ReversingLabs-Dec2025",
+      "addedDate": "2025-12-10",
+      "reference": "https://www.reversinglabs.com/blog/malicious-vs-code-fake-image"
+    },
+    {
+      "id": "pandaexpress.*",
+      "name": "pandaexpress publisher (all)",
+      "reason": "Trojan-laden fake image - banner.png contains Rust binary",
+      "campaign": "ReversingLabs-Dec2025",
+      "addedDate": "2025-12-10",
+      "reference": "https://www.reversinglabs.com/blog/malicious-vs-code-fake-image"
+    },
+    {
+      "id": "prada555.*",
+      "name": "prada555 publisher (all)",
+      "reason": "Trojan-laden fake image - banner.png contains Rust binary",
+      "campaign": "ReversingLabs-Dec2025",
+      "addedDate": "2025-12-10",
+      "reference": "https://www.reversinglabs.com/blog/malicious-vs-code-fake-image"
+    },
+    {
+      "id": "priskinski.*",
+      "name": "priskinski publisher (all)",
+      "reason": "Trojan-laden fake image - banner.png contains Rust binary",
+      "campaign": "ReversingLabs-Dec2025",
+      "addedDate": "2025-12-10",
+      "reference": "https://www.reversinglabs.com/blog/malicious-vs-code-fake-image"
+    },
+    {
+      "id": "iconkieftwo.icon-theme-materiall",
+      "name": "Icon Theme Material (GlassWorm Wave 3)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2025-12-01",
+      "reference": "https://www.bleepingcomputer.com/news/security/glassworm-malware-returns-in-third-wave-of-malicious-vs-code-packages/"
+    },
+    {
+      "id": "solaibot.*",
+      "name": "solaibot (MUT-9332)",
+      "reason": "MUT-9332 campaign - targets Solidity developers",
+      "campaign": "MUT-9332",
+      "addedDate": "2025-05-23",
+      "reference": "https://securityonline.info/malicious-vs-code-extensions-deliver-spyware-steal-crypto-credentials/"
+    },
+    {
+      "id": "among-eth.*",
+      "name": "among-eth (MUT-9332)",
+      "reason": "MUT-9332 campaign - targets Solidity developers",
+      "campaign": "MUT-9332",
+      "addedDate": "2025-05-23",
+      "reference": "https://securityonline.info/malicious-vs-code-extensions-deliver-spyware-steal-crypto-credentials/"
+    },
+    {
+      "id": "blankebesxstnion.*",
+      "name": "blankebesxstnion (MUT-9332)",
+      "reason": "MUT-9332 campaign - targets Solidity developers",
+      "campaign": "MUT-9332",
+      "addedDate": "2025-05-23",
+      "reference": "https://securityonline.info/malicious-vs-code-extensions-deliver-spyware-steal-crypto-credentials/"
+    }
+  ]
+}

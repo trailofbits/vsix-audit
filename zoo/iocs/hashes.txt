@@ -1,0 +1,47 @@
+# VS Code Extension Malware Hashes
+# Format: SHA256  # Campaign - Description
+#
+# Submit new hashes via PR or issue
+
+# GlassWorm Campaign (Nov 2025)
+6ebeb188f3cc3b647c4460c0b8e41b75d057747c662f4cd7912d77deaccfd2f2  # GlassWorm - os.node Windows DLL (Rust implant)
+fb07743d139f72fca4616b01308f1f705f02fda72988027bc68e9316655eadda  # GlassWorm - darwin.node macOS Dylib (Rust implant)
+9212a99a7730b9ee306e804af358955c3104e5afce23f7d5a207374482ab2f8f  # GlassWorm - extension.js loader
+c32379e4567a926aa0d35d8123718e2ebeb15544a83a5b1da0269db5829d5ece  # GlassWorm - Decrypted C2 payload
+
+# HardHatRAT Campaign (Jan 2026) - npm delivery
+8e8823d8c2a44512bb8abdaeeb5dd5d187950fd07bf008f89f8005103834a98d  # HardHatRAT - tailwindcss-forms-kit-1.0.6.tgz
+e96c208c0503b8556c4c245cf693576cf142174b6f7a9e7066768876bc041697  # HardHatRAT - index.js loader
+e7071063f8cc743023889f71d070b60d3932079b2fdd75290d68c3188ac6b303  # HardHatRAT - encoded payload
+da6e9835f90b417c6c8f532287eabb78701dd746388f0c3bfe1fc6be0221d6ec  # HardHatRAT - decoded payload
+1c8c1a693209c310e9089eb2d5713dc00e8d19f335bde34c68f6e30bccfbe781  # HardHatRAT - secondary payload (PyInstaller)
+e39c91f0a14d6aa7788249bb80091160bab39b64cb9b5e2b311cf7493fd9ab0b  # HardHatRAT - Python keylogger
+
+# FAMOUS CHOLLIMA / Contagious Interview (Dec 2025)
+72602e4f621b642b823ff25a2326dc6a2edc772572a4ccafd5993b42c081cd79  # FAMOUS CHOLLIMA - Malicious ZIP archive
+a2b35d436db39682e7a5ec13e4d8b940e8e743864aad8eb9088290061e25dd59  # FAMOUS CHOLLIMA - tasks.json
+d52d99d0aa00c0b2df9044b31dde81ec9ef5dce6389b1d61ead6fffd6a1bff3b  # FAMOUS CHOLLIMA - settings.json
+3a3b1d5fa23d9eb98b0f53ef9b8db56d759e8c34c85edbb8fc38e1e8b2eb30fb  # FAMOUS CHOLLIMA - dl.py stager
+
+# Related samples (VTI pivoting)
+825ebf26a7df821478282c5d1cff868da9fcbe51934113d4b0444acc5fd94077  # HardHatRAT - related sample
+bf2bed6b6ab8df8c6c076572024fd5a6ebeb571ecef30dfbc5dbbf9d9e87aad2  # HardHatRAT - related sample
+5671cd2f328ed4276385a9e6d3bcc33328efaa45197e1d5717d0b0027caf00ac  # HardHatRAT - NvidiaDriverUpdate related
+f2db7770a017f37ff4c17c409de72161e84f1aea784a9a4d523070d799754bc6  # HardHatRAT - NvidiaDriverUpdate related
+
+# Evelyn Stealer Campaign (Dec 2025)
+369479bd9a248c9448705c222d81ff1a0143343a138fc38fc0ea00f54fcc1598  # Evelyn - Lightshot.dll first-stage downloader
+92af258d13494f208ccf76f53a36f288060543f02ed438531e0675b85da00430  # Evelyn - iknowyou.model second-stage injector
+aba7133f975a0788dd2728b4bbb1d7d948e50571a033a1e8f47a2691e98600c5  # Evelyn - EvelynStealer.exe final payload
+74e43a0175179a0a04361faaaaf05eb1e6b84adca69e4f446ef82c0a5d1923d5  # Evelyn - abe_decrypt.dll browser injection
+
+# MalwareBazaar samples - GlassWorm extended
+bb68992f6aa2d3f316322e88d9e71491a38e95fd3a27f48084c66b9c210bd17d  # GlassWorm - react-native-vscode.1.13.1.vsix (full malicious extension)
+68e5fb92a7d7d182306a025010c77ae2cd89c39031cced13f9686a9f34671041  # GlassWorm - f_ex86.node.decoded (Rust DLL, pre-decryption)
+a9a6a03bd6958710aeacc2a23860a7f7f0d09497fef85fe658ac5406734061f8  # GlassWorm - priskinski.theme-allhallowseve-remake-1.0.0.vsix (ReversingLabs Dec2025)
+
+# Zoo samples (GitHub sources)
+2cdaee2863396e558f17503ad290163d513acbc3c2ca2dbfa6852c2e064ca9f1  # SnowShoNo - PowerShell downloader (obfuscated)
+6674b3505ac23b2354230d691b9e18c2dda74a66f76bb0df724286cb9b23581c  # ECM3401 - Extension Attack Suite .vsix
+837174f9426d244d5a6f153f147812cea84ad22acec79c6be48e6c7a2eb8b2ed  # ECM3401 - Malicious API Extension .vsix
+15afd43b543760a9a7849140ebf3425658d92aeaca596634fcfd385fae724046  # ECM3401 - Example API Extension .vsix

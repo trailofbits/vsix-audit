@@ -1,0 +1,27 @@
+# Known telemetry services for VS Code extension analysis
+# Format: SERVICE_NAME  CATEGORY  DOMAIN1,DOMAIN2,...
+# Categories: analytics, crash-reporting, apm
+
+# Analytics
+Google Analytics       analytics         analytics.google.com,google-analytics.com,www.google-analytics.com
+Mixpanel               analytics         api.mixpanel.com,mixpanel.com
+Segment                analytics         api.segment.io,cdn.segment.io,segment.io
+Amplitude              analytics         api.amplitude.com,amplitude.com,api2.amplitude.com
+PostHog                analytics         app.posthog.com,us.posthog.com,eu.posthog.com,posthog.com
+Heap                   analytics         heapanalytics.com,cdn.heapanalytics.com
+Plausible              analytics         plausible.io
+Matomo                 analytics         matomo.cloud
+
+# Crash Reporting
+Sentry                 crash-reporting   sentry.io,ingest.sentry.io,o0.ingest.sentry.io
+Bugsnag                crash-reporting   notify.bugsnag.com,bugsnag.com,sessions.bugsnag.com
+Rollbar                crash-reporting   api.rollbar.com,rollbar.com
+Raygun                 crash-reporting   api.raygun.io,raygun.io
+
+# APM (Application Performance Monitoring)
+Azure App Insights     apm               applicationinsights.azure.com,dc.services.visualstudio.com,centralus-0.in.applicationinsights.azure.com
+Datadog                apm               datadoghq.com,browser-intake-datadoghq.com,logs.datadoghq.com
+New Relic              apm               collector.newrelic.com,newrelic.com,bam.nr-data.net
+
+# VS Code Specific
+VS Code Telemetry      analytics         vortex.data.microsoft.com
