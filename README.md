@@ -121,14 +121,11 @@ The goal is rich context for human/agent review, not just pass/fail.
 ## Installation
 
 ```sh
+brew install yara-x
 npm install -g @trailofbits/vsix-audit
 ```
 
-Requires Node.js 22 or later and [YARA-X](https://github.com/VirusTotal/yara-x) for YARA rule scanning:
-
-```sh
-brew install yara-x
-```
+Requires Node.js 22 or later and [YARA-X](https://github.com/VirusTotal/yara-x) for YARA rule scanning.
 ## Usage
 
 ### Commands
