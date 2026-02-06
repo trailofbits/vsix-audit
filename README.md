@@ -121,7 +121,7 @@ The goal is rich context for human/agent review, not just pass/fail.
 ## Installation
 
 ```sh
-npm install -g vsix-audit
+npm install -g @trailofbits/vsix-audit
 ```
 
 Requires Node.js 22 or later.
