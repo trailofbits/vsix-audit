@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { basename } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -15,6 +16,11 @@ import type {
   Severity,
 } from "./scanner/types.js";
 import { loadExtension } from "./scanner/vsix.js";
+
+const require = createRequire(import.meta.url);
+const { version: VERSION } = require("../package.json") as {
+  version: string;
+};
 
 const REGISTRIES: Registry[] = ["marketplace", "openvsx", "cursor"];
 
@@ -70,7 +76,7 @@ function isExtensionId(target: string): boolean {
 export const cli = new Command()
   .name("vsix-audit")
   .description("Security scanner for VS Code extensions")
-  .version("0.1.0");
+  .version(VERSION);
 
 cli
   .command("scan")
@@ -707,13 +713,66 @@ function printTextReport(result: ScanResult): void {
   }
 }
 
+type SarifLevel = "none" | "note" | "warning" | "error";
+
+interface SarifRule {
+  id: string;
+  shortDescription: { text: string };
+}
+
+interface SarifResult {
+  ruleId: string;
+  level: SarifLevel;
+  message: { text: string };
+  locations: Array<{
+    physicalLocation: {
+      artifactLocation: { uri: string };
+      region: { startLine: number } | undefined;
+    };
+  }>;
+}
+
+interface SarifRun {
+  tool: {
+    driver: {
+      name: string;
+      version: string;
+      informationUri: string;
+      rules: SarifRule[];
+    };
+  };
+  results: SarifResult[];
+}
+
 interface SarifReport {
   $schema: string;
   version: string;
-  runs: object[];
+  runs: SarifRun[];
+}
+
+function severityToSarifLevel(severity: Severity): SarifLevel {
+  const mapping: Record<Severity, SarifLevel> = {
+    low: "note",
+    medium: "warning",
+    high: "error",
+    critical: "error",
+  };
+  return mapping[severity];
 }
 
 function toSarif(result: ScanResult): SarifReport {
+  const seenRuleIds = new Set<string>();
+  const rules: SarifRule[] = [];
+  for (const f of result.findings) {
+    if (!seenRuleIds.has(f.id)) {
+      seenRuleIds.add(f.id);
+      rules.push({
+        id: f.id,
+        shortDescription: { text: f.title },
+      });
+    }
+  }
+
   return {
     $schema:
       "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
@@ -723,19 +782,22 @@ function toSarif(result: ScanResult): SarifReport {
         tool: {
           driver: {
             name: "vsix-audit",
-            version: "0.1.0",
+            version: VERSION,
             informationUri: "https://github.com/trailofbits/vsix-audit",
+            rules,
           },
         },
         results: result.findings.map((f) => ({
           ruleId: f.id,
-          level: f.severity === "critical" || f.severity === "high" ? "error" : "warning",
+          level: severityToSarifLevel(f.severity),
           message: { text: f.description },
           locations: f.location
             ? [
                 {
                   physicalLocation: {
-                    artifactLocation: { uri: f.location.file },
+                    artifactLocation: {
+                      uri: f.location.file,
+                    },
                     region: f.location.line ? { startLine: f.location.line } : undefined,
                   },
                 },

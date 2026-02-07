@@ -438,8 +438,22 @@ function analyzeFile(filename: string, content: string): Finding[] {
       lang,
       sourceType: "unambiguous",
     });
-  } catch {
-    // If parsing fails, skip this file
+  } catch (error) {
+    findings.push({
+      id: "PARSE_FAILURE_AST",
+      title: "AST parse failure",
+      description:
+        "File could not be parsed for AST analysis. " +
+        "A file that crashes the parser evades all " +
+        "AST-based checks. This may indicate " +
+        "intentional obfuscation or corruption.",
+      severity: "low",
+      category: "pattern",
+      location: { file: filename },
+      metadata: {
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
     return findings;
   }
 

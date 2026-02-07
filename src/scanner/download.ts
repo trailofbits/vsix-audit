@@ -70,6 +70,68 @@ interface OpenVSXExtension {
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Validate that an API response matches the GalleryResponse shape.
+ * Throws with a descriptive message when the response structure
+ * is unexpected.
+ */
+function validateGalleryResponse(data: unknown, registryName: string): GalleryResponse {
+  if (!isRecord(data)) {
+    throw new Error(
+      `Unexpected response from ${registryName}: ` + `expected object, got ${typeof data}`,
+    );
+  }
+
+  const results = data["results"];
+  if (!Array.isArray(results)) {
+    throw new Error(`Unexpected response from ${registryName}: ` + "missing results array");
+  }
+
+  if (results.length === 0) {
+    throw new Error(`Unexpected response from ${registryName}: ` + "results array is empty");
+  }
+
+  const firstResult: unknown = results[0];
+  if (!isRecord(firstResult)) {
+    throw new Error(`Unexpected response from ${registryName}: ` + "results[0] is not an object");
+  }
+
+  if (!Array.isArray(firstResult["extensions"])) {
+    throw new Error(`Unexpected response from ${registryName}: ` + "missing extensions array");
+  }
+
+  return data as unknown as GalleryResponse;
+}
+
+/**
+ * Validate that an API response matches the OpenVSXExtension shape.
+ * Checks that required fields (namespace, name, version) exist and
+ * are strings.
+ */
+function validateOpenVSXResponse(data: unknown): OpenVSXExtension {
+  if (!isRecord(data)) {
+    throw new Error("Unexpected response from OpenVSX: " + `expected object, got ${typeof data}`);
+  }
+
+  if (typeof data["namespace"] !== "string" || data["namespace"] === "") {
+    throw new Error("Unexpected response from OpenVSX: " + "missing or invalid namespace field");
+  }
+
+  if (typeof data["name"] !== "string" || data["name"] === "") {
+    throw new Error("Unexpected response from OpenVSX: " + "missing or invalid name field");
+  }
+
+  if (typeof data["version"] !== "string" || data["version"] === "") {
+    throw new Error("Unexpected response from OpenVSX: " + "missing or invalid version field");
+  }
+
+  return data as unknown as OpenVSXExtension;
+}
+
 export interface ParsedExtensionId {
   publisher: string;
   name: string;
@@ -165,9 +227,8 @@ export async function queryExtension(
     throw new Error(`Marketplace API error: ${response.status} ${response.statusText}`);
   }
 
-  const data = (await response.json()) as GalleryResponse;
-  const extensions = data.results?.[0]?.extensions;
-  const ext = extensions?.[0];
+  const data = validateGalleryResponse(await response.json(), "VS Code Marketplace");
+  const ext = data.results[0]?.extensions[0];
 
   if (!ext) {
     throw new Error(`Extension not found: ${extensionId}`);
@@ -237,7 +298,7 @@ export async function queryOpenVSX(
     throw new Error(`OpenVSX API error: ${response.status} ${response.statusText}`);
   }
 
-  const data = (await response.json()) as OpenVSXExtension;
+  const data = validateOpenVSXResponse(await response.json());
 
   const result: ExtensionMetadata = {
     extensionId,
@@ -297,9 +358,8 @@ export async function queryCursor(
     throw new Error(`Cursor API error: ${response.status} ${response.statusText}`);
   }
 
-  const data = (await response.json()) as GalleryResponse;
-  const extensions = data.results?.[0]?.extensions;
-  const ext = extensions?.[0];
+  const data = validateGalleryResponse(await response.json(), "Cursor Marketplace");
+  const ext = data.results[0]?.extensions[0];
 
   if (!ext) {
     throw new Error(`Extension not found on Cursor: ${extensionId}`);

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { scanExtension } from "./index.js";
-import type { Finding, ScanOptions } from "./types.js";
+import type { ScanOptions } from "./types.js";
 
 const ZOO_ROOT = join(import.meta.dirname, "..", "..", "zoo");
 const SAMPLES_DIR = process.env["VSIX_ZOO_PATH"] || join(ZOO_ROOT, "samples");

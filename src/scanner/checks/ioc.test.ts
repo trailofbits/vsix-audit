@@ -170,6 +170,93 @@ describe("checkIps", () => {
   });
 });
 
+describe("checkIps private/reserved range filtering", () => {
+  it("filters 0.x.x.x range", () => {
+    const contents = makeContents({
+      "extension.js": 'const a = "0.1.2.3";',
+    });
+    const knownIps = new Set(["0.1.2.3"]);
+    const findings = checkIps(contents, knownIps);
+    expect(findings).toHaveLength(0);
+  });
+
+  it("filters full 127.0.0.0/8 loopback range", () => {
+    const contents = makeContents({
+      "extension.js": 'const a = "127.0.0.1"; const b = "127.1.2.3";',
+    });
+    const knownIps = new Set(["127.0.0.1", "127.1.2.3"]);
+    const findings = checkIps(contents, knownIps);
+    expect(findings).toHaveLength(0);
+  });
+
+  it("filters 169.254.x.x link-local range", () => {
+    const contents = makeContents({
+      "extension.js": 'const a = "169.254.1.1";',
+    });
+    const knownIps = new Set(["169.254.1.1"]);
+    const findings = checkIps(contents, knownIps);
+    expect(findings).toHaveLength(0);
+  });
+
+  it("filters 172.16.0.0/12 range", () => {
+    const contents = makeContents({
+      "extension.js": [
+        'const a = "172.16.0.1";',
+        'const b = "172.20.0.1";',
+        'const c = "172.31.255.255";',
+      ].join("\n"),
+    });
+    const knownIps = new Set(["172.16.0.1", "172.20.0.1", "172.31.255.255"]);
+    const findings = checkIps(contents, knownIps);
+    expect(findings).toHaveLength(0);
+  });
+
+  it("does not filter 172.15.x.x or 172.32.x.x", () => {
+    const contents = makeContents({
+      "extension.js": 'const a = "172.15.0.1"; const b = "172.32.0.1";',
+    });
+    const knownIps = new Set(["172.15.0.1", "172.32.0.1"]);
+    const findings = checkIps(contents, knownIps);
+    expect(findings).toHaveLength(2);
+  });
+
+  it("filters multicast 224.0.0.0/4 range", () => {
+    const contents = makeContents({
+      "extension.js": [
+        'const a = "224.0.0.1";',
+        'const b = "239.255.255.255";',
+        'const c = "240.0.0.1";',
+      ].join("\n"),
+    });
+    const knownIps = new Set(["224.0.0.1", "239.255.255.255", "240.0.0.1"]);
+    const findings = checkIps(contents, knownIps);
+    expect(findings).toHaveLength(0);
+  });
+
+  it("filters 255.255.255.255 broadcast", () => {
+    const contents = makeContents({
+      "extension.js": 'const a = "255.255.255.255";',
+    });
+    const knownIps = new Set(["255.255.255.255"]);
+    const findings = checkIps(contents, knownIps);
+    expect(findings).toHaveLength(0);
+  });
+
+  it("does not filter public IPs", () => {
+    const contents = makeContents({
+      "extension.js": [
+        'const a = "8.8.8.8";',
+        'const b = "185.234.123.45";',
+        'const c = "1.1.1.1";',
+        'const d = "223.255.255.255";',
+      ].join("\n"),
+    });
+    const knownIps = new Set(["8.8.8.8", "185.234.123.45", "1.1.1.1", "223.255.255.255"]);
+    const findings = checkIps(contents, knownIps);
+    expect(findings).toHaveLength(4);
+  });
+});
+
 describe("checkWallets", () => {
   it("detects Bitcoin wallet address", () => {
     const contents = makeContents({

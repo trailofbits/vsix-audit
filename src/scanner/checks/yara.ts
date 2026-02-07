@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { access, readdir, writeFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { Finding, VsixContents } from "../types.js";
@@ -207,6 +207,11 @@ function parseYaraOutput(output: string): YaraMatch[] {
 const ruleMetaCache = new Map<string, Map<string, { severity?: string; description?: string }>>();
 
 /**
+ * Accumulated errors from parseRuleFile, drained by checkYara.
+ */
+const ruleFileErrors: { ruleFile: string; error: string }[] = [];
+
+/**
  * Parse YARA rule file and extract metadata for all rules
  */
 async function parseRuleFile(
@@ -247,8 +252,11 @@ async function parseRuleFile(
 
       ruleMap.set(ruleName, meta);
     }
-  } catch {
-    // If we can't read the file, return empty map
+  } catch (error) {
+    ruleFileErrors.push({
+      ruleFile,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   ruleMetaCache.set(ruleFile, ruleMap);
@@ -324,13 +332,11 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
     return findings;
   }
 
-  // Create a temporary directory for scanning
-  const tempDir = join(tmpdir(), `vsix-audit-${Date.now()}`);
+  // Create a temporary directory for scanning (mkdtemp is atomic + unpredictable)
+  const tempDir = await mkdtemp(join(tmpdir(), "vsix-audit-"));
 
   try {
     // Write extension files to temp directory for YARA to scan
-    const { mkdir } = await import("node:fs/promises");
-    await mkdir(tempDir, { recursive: true });
 
     for (const [filename, buffer] of contents.files) {
       // Skip binary files that are too large
@@ -340,6 +346,7 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
       if (shouldSkipForYara(filename)) continue;
 
       const filePath = join(tempDir, filename);
+      if (!resolve(filePath).startsWith(resolve(tempDir))) continue;
       await mkdir(dirname(filePath), { recursive: true });
       await writeFile(filePath, buffer);
     }
@@ -391,10 +398,24 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
           });
         }
       } catch (error) {
-        // YARA returns exit code 1 when no matches, which throws in exec
-        // Only log actual errors
-        if (error instanceof Error && !error.message.includes("exit code 1")) {
-          // Silently ignore scan errors for individual rules
+        // YARA returns exit code 1 when no matches
+        const isNoMatch = error instanceof Error && error.message.includes("exit code 1");
+        if (!isNoMatch) {
+          findings.push({
+            id: "YARA_SCAN_ERROR",
+            title: "YARA scan failed for rule file",
+            description:
+              "YARA scan error for a rule file. " +
+              "Matching rules in this file were not " +
+              "applied, reducing detection coverage.",
+            severity: "low",
+            category: "yara",
+            location: { file: ruleFile },
+            metadata: {
+              ruleFile,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
         }
       }
     }
@@ -402,9 +423,42 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
     // Clean up temp directory
     try {
       await rm(tempDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
+    } catch (error) {
+      findings.push({
+        id: "YARA_CLEANUP_FAILURE",
+        title: "Failed to clean up temp scan files",
+        description:
+          "Temporary files from YARA scanning " +
+          "could not be removed. Extension data " +
+          "may remain in the temp directory.",
+        severity: "low",
+        category: "yara",
+        metadata: {
+          tempDir,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
     }
+  }
+
+  // Drain any rule-file parse errors into findings
+  while (ruleFileErrors.length > 0) {
+    const err = ruleFileErrors.pop()!;
+    findings.push({
+      id: "YARA_RULE_PARSE_ERROR",
+      title: "Failed to parse YARA rule file metadata",
+      description:
+        "A YARA rule file could not be read or " +
+        "parsed for metadata. Rule severity may " +
+        "default to medium, degrading triage accuracy.",
+      severity: "low",
+      category: "yara",
+      location: { file: err.ruleFile },
+      metadata: {
+        ruleFile: err.ruleFile,
+        error: err.error,
+      },
+    });
   }
 
   return findings;

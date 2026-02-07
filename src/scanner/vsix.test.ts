@@ -3,7 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateRawSync } from "node:zlib";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { computeSha256, extractVsix, loadDirectory, loadExtension } from "./vsix.js";
+import {
+  MAX_COMPRESSION_RATIO,
+  MAX_ENTRY_SIZE,
+  computeSha256,
+  extractVsix,
+  loadDirectory,
+  loadExtension,
+} from "./vsix.js";
 
 /**
  * Create a minimal ZIP file buffer for testing.
@@ -118,6 +125,89 @@ function crc32(data: Buffer): number {
     }
   }
   return (crc ^ 0xffffffff) >>> 0;
+}
+
+interface SpoofedFile {
+  name: string;
+  content: string;
+  spoofedUncompressedSize?: number;
+  spoofedCompressedSize?: number;
+}
+
+/**
+ * Create a ZIP file with spoofed size fields in the central directory.
+ * Used to simulate decompression bombs without actually creating
+ * large files.
+ */
+function createSpoofedZip(files: SpoofedFile[]): Buffer {
+  const chunks: Buffer[] = [];
+  const centralDirEntries: Buffer[] = [];
+
+  for (const file of files) {
+    const localHeaderOffset = chunks.reduce((sum, buf) => sum + buf.length, 0);
+    const content = Buffer.from(file.content, "utf8");
+    const compressed = deflateRawSync(content);
+    const fileName = Buffer.from(file.name, "utf8");
+
+    const declaredCompressed = file.spoofedCompressedSize ?? compressed.length;
+    const declaredUncompressed = file.spoofedUncompressedSize ?? content.length;
+
+    const localHeader = Buffer.alloc(30 + fileName.length);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0, 6);
+    localHeader.writeUInt16LE(8, 8);
+    localHeader.writeUInt16LE(0, 10);
+    localHeader.writeUInt16LE(0, 12);
+    localHeader.writeUInt32LE(crc32(content), 14);
+    localHeader.writeUInt32LE(compressed.length, 18);
+    localHeader.writeUInt32LE(content.length, 22);
+    localHeader.writeUInt16LE(fileName.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+    fileName.copy(localHeader, 30);
+    chunks.push(localHeader);
+
+    chunks.push(compressed);
+
+    const cdEntry = Buffer.alloc(46 + fileName.length);
+    cdEntry.writeUInt32LE(0x02014b50, 0);
+    cdEntry.writeUInt16LE(20, 4);
+    cdEntry.writeUInt16LE(20, 6);
+    cdEntry.writeUInt16LE(0, 8);
+    cdEntry.writeUInt16LE(8, 10);
+    cdEntry.writeUInt16LE(0, 12);
+    cdEntry.writeUInt16LE(0, 14);
+    cdEntry.writeUInt32LE(crc32(content), 16);
+    cdEntry.writeUInt32LE(declaredCompressed, 20);
+    cdEntry.writeUInt32LE(declaredUncompressed, 24);
+    cdEntry.writeUInt16LE(fileName.length, 28);
+    cdEntry.writeUInt16LE(0, 30);
+    cdEntry.writeUInt16LE(0, 32);
+    cdEntry.writeUInt16LE(0, 34);
+    cdEntry.writeUInt16LE(0, 36);
+    cdEntry.writeUInt32LE(0, 38);
+    cdEntry.writeUInt32LE(localHeaderOffset, 42);
+    fileName.copy(cdEntry, 46);
+    centralDirEntries.push(cdEntry);
+  }
+
+  const cdOffset = chunks.reduce((sum, buf) => sum + buf.length, 0);
+  const cdSize = centralDirEntries.reduce((sum, buf) => sum + buf.length, 0);
+
+  chunks.push(...centralDirEntries);
+
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(0, 4);
+  eocd.writeUInt16LE(0, 6);
+  eocd.writeUInt16LE(files.length, 8);
+  eocd.writeUInt16LE(files.length, 10);
+  eocd.writeUInt32LE(cdSize, 12);
+  eocd.writeUInt32LE(cdOffset, 16);
+  eocd.writeUInt16LE(0, 20);
+  chunks.push(eocd);
+
+  return Buffer.concat(chunks);
 }
 
 describe("computeSha256", () => {
@@ -310,8 +400,14 @@ describe("extractVsix", () => {
       version: "3.0.0",
     });
 
-    // Create a larger file to ensure compression works correctly
-    const largeContent = "x".repeat(10000) + "\n" + "y".repeat(10000);
+    // Use pseudo-random content to stay under compression ratio limit
+    let seed = 12345;
+    const chars: string[] = [];
+    for (let i = 0; i < 20000; i++) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      chars.push(String.fromCharCode(33 + (seed % 94)));
+    }
+    const largeContent = chars.join("");
 
     const zipBuffer = createTestZip(
       [
@@ -423,6 +519,196 @@ describe("extractVsix", () => {
       expect(contents.manifest.publisher).toBe("priskinski");
       expect(contents.files.has("package.json")).toBe(true);
       expect(contents.files.has("node_modules/evil/index.js")).toBe(true);
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+});
+
+describe("decompression bomb protection", () => {
+  const manifest = JSON.stringify({
+    name: "bomb-test",
+    publisher: "test",
+    version: "1.0.0",
+  });
+
+  it("skips entry exceeding MAX_ENTRY_SIZE", async () => {
+    const zipBuffer = createSpoofedZip([
+      { name: "extension/package.json", content: manifest },
+      {
+        name: "extension/bomb.bin",
+        content: "small payload",
+        spoofedUncompressedSize: MAX_ENTRY_SIZE + 1,
+      },
+    ]);
+
+    const vsixPath = join(tmpdir(), `test-bomb-entry-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.files.has("bomb.bin")).toBe(false);
+      expect(contents.files.has("package.json")).toBe(true);
+      expect(contents.warnings).toBeDefined();
+      expect(contents.warnings?.length).toBe(1);
+      expect(contents.warnings?.[0]).toContain("bomb.bin");
+      expect(contents.warnings?.[0]).toContain("declared size");
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("skips entry with excessive compression ratio", async () => {
+    const zipBuffer = createSpoofedZip([
+      { name: "extension/package.json", content: manifest },
+      {
+        name: "extension/suspicious.bin",
+        content: "small payload",
+        spoofedUncompressedSize: 10100,
+        spoofedCompressedSize: 100,
+      },
+    ]);
+
+    const vsixPath = join(tmpdir(), `test-bomb-ratio-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.files.has("suspicious.bin")).toBe(false);
+      expect(contents.files.has("package.json")).toBe(true);
+      expect(contents.warnings).toBeDefined();
+      expect(contents.warnings?.[0]).toContain("compression ratio");
+      expect(contents.warnings?.[0]).toContain(`${MAX_COMPRESSION_RATIO}:1`);
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("skips entry when total extracted size would exceed limit", async () => {
+    // Each entry is under MAX_ENTRY_SIZE but three together exceed MAX_TOTAL_SIZE.
+    // Set spoofedCompressedSize to keep ratio under MAX_COMPRESSION_RATIO.
+    const perEntry = MAX_ENTRY_SIZE - 1;
+    const minCompressed = Math.ceil(perEntry / MAX_COMPRESSION_RATIO);
+
+    const zipBuffer = createSpoofedZip([
+      { name: "extension/package.json", content: manifest },
+      {
+        name: "extension/big1.bin",
+        content: "payload",
+        spoofedUncompressedSize: perEntry,
+        spoofedCompressedSize: minCompressed,
+      },
+      {
+        name: "extension/big2.bin",
+        content: "payload",
+        spoofedUncompressedSize: perEntry,
+        spoofedCompressedSize: minCompressed,
+      },
+      {
+        name: "extension/big3.bin",
+        content: "payload",
+        spoofedUncompressedSize: perEntry,
+        spoofedCompressedSize: minCompressed,
+      },
+    ]);
+
+    const vsixPath = join(tmpdir(), `test-bomb-total-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.files.has("package.json")).toBe(true);
+      expect(contents.warnings).toBeDefined();
+      expect(contents.warnings?.length).toBeGreaterThanOrEqual(1);
+
+      const totalWarning = contents.warnings?.find((w) => w.includes("total extracted size"));
+      expect(totalWarning).toBeDefined();
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("allows entry at exact compression ratio boundary", async () => {
+    const zipBuffer = createSpoofedZip([
+      { name: "extension/package.json", content: manifest },
+      {
+        name: "extension/border.bin",
+        content: "some data here",
+        spoofedUncompressedSize: 10000,
+        spoofedCompressedSize: 100,
+      },
+    ]);
+
+    const vsixPath = join(tmpdir(), `test-bomb-boundary-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.files.has("package.json")).toBe(true);
+      expect(contents.files.has("border.bin")).toBe(true);
+      expect(contents.warnings).toBeUndefined();
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("does not set warnings when no bombs detected", async () => {
+    const zipBuffer = createTestZip(
+      [
+        { name: "extension/package.json", content: manifest },
+        { name: "extension/normal.js", content: 'console.log("safe");' },
+      ],
+      { useDataDescriptor: false },
+    );
+
+    const vsixPath = join(tmpdir(), `test-no-bomb-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.files.has("package.json")).toBe(true);
+      expect(contents.files.has("normal.js")).toBe(true);
+      expect(contents.warnings).toBeUndefined();
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("collects multiple warnings for different bomb types", async () => {
+    const zipBuffer = createSpoofedZip([
+      { name: "extension/package.json", content: manifest },
+      {
+        name: "extension/oversized.bin",
+        content: "data",
+        spoofedUncompressedSize: MAX_ENTRY_SIZE + 1,
+      },
+      {
+        name: "extension/high-ratio.bin",
+        content: "data",
+        spoofedUncompressedSize: 20200,
+        spoofedCompressedSize: 200,
+      },
+    ]);
+
+    const vsixPath = join(tmpdir(), `test-bomb-multi-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.files.has("package.json")).toBe(true);
+      expect(contents.files.has("oversized.bin")).toBe(false);
+      expect(contents.files.has("high-ratio.bin")).toBe(false);
+      expect(contents.warnings).toBeDefined();
+      expect(contents.warnings?.length).toBe(2);
+
+      expect(contents.warnings?.some((w) => w.includes("declared size"))).toBe(true);
+      expect(contents.warnings?.some((w) => w.includes("compression ratio"))).toBe(true);
     } finally {
       await rm(vsixPath, { force: true });
     }

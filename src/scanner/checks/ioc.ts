@@ -41,7 +41,16 @@ function isValidIp(ip: string): boolean {
     if (isNaN(num) || num < 0 || num > 255) return false;
   }
 
-  if (ip === "0.0.0.0" || ip === "127.0.0.1" || ip.startsWith("192.168.") || ip.startsWith("10.")) {
+  if (
+    ip.startsWith("0.") ||
+    ip.startsWith("10.") ||
+    ip.startsWith("127.") ||
+    ip.startsWith("169.254.") ||
+    ip.startsWith("192.168.") ||
+    ip === "255.255.255.255" ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(ip) ||
+    /^(22[4-9]|2[3-5]\d)\./.test(ip)
+  ) {
     return false;
   }
 

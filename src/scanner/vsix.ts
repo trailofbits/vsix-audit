@@ -9,11 +9,21 @@ const LOCAL_FILE_HEADER = 0x04034b50;
 const CENTRAL_DIR_HEADER = 0x02014b50;
 const END_OF_CENTRAL_DIR = 0x06054b50;
 
+/** Maximum uncompressed size for a single entry (500 MB). */
+export const MAX_ENTRY_SIZE = 500 * 1024 * 1024;
+
+/** Maximum total extracted size across all entries (1 GB). */
+export const MAX_TOTAL_SIZE = 1024 * 1024 * 1024;
+
+/** Maximum compression ratio before flagging as suspicious. */
+export const MAX_COMPRESSION_RATIO = 100;
+
 /**
  * Validate that a ZIP entry path is safe (no path traversal).
  * Prevents zip slip attacks by rejecting paths with ".." segments.
  */
 function isPathSafe(path: string): boolean {
+  if (path.includes("\\")) return false;
   const normalized = path.split("/").filter((p) => p !== ".");
   return !normalized.some((segment) => segment === ".." || segment.startsWith(".."));
 }
@@ -154,18 +164,49 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
   const buffer = await readFile(vsixPath);
   const entries = parseZipEntries(buffer);
   const files = new Map<string, Buffer>();
+  const warnings: string[] = [];
 
   let manifest: VsixManifest | undefined;
+  let totalExtractedSize = 0;
 
   for (const entry of entries) {
-    // Validate path before processing to prevent zip slip attacks
     if (!isPathSafe(entry.name)) {
       throw new Error(`Invalid VSIX: path traversal detected in "${entry.name}"`);
     }
 
-    const content = extractEntry(buffer, entry);
-    let relativePath = entry.name;
+    if (entry.uncompressedSize > MAX_ENTRY_SIZE) {
+      warnings.push(
+        `Skipped "${entry.name}": declared size ` +
+          `${entry.uncompressedSize} exceeds ` +
+          `${MAX_ENTRY_SIZE} byte limit`,
+      );
+      continue;
+    }
 
+    if (
+      entry.compressedSize > 0 &&
+      entry.uncompressedSize / entry.compressedSize > MAX_COMPRESSION_RATIO
+    ) {
+      warnings.push(
+        `Skipped "${entry.name}": compression ratio ` +
+          `${Math.round(entry.uncompressedSize / entry.compressedSize)}:1 ` +
+          `exceeds ${MAX_COMPRESSION_RATIO}:1 limit`,
+      );
+      continue;
+    }
+
+    if (totalExtractedSize + entry.uncompressedSize > MAX_TOTAL_SIZE) {
+      warnings.push(
+        `Skipped "${entry.name}": total extracted size would ` +
+          `exceed ${MAX_TOTAL_SIZE} byte limit`,
+      );
+      continue;
+    }
+
+    const content = extractEntry(buffer, entry);
+    totalExtractedSize += entry.uncompressedSize;
+
+    let relativePath = entry.name;
     if (relativePath.startsWith(VSIX_EXTENSION_PREFIX)) {
       relativePath = relativePath.slice(VSIX_EXTENSION_PREFIX.length);
     }
@@ -177,32 +218,8 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
     }
   }
 
-  // Handle non-standard prefixes (e.g., "publisher.name-version/" instead of "extension/")
   if (!manifest) {
-    for (const [path, content] of files) {
-      const match = path.match(/^([^/]+)\/package\.json$/);
-      if (match) {
-        const prefix = match[1] + "/";
-
-        // Re-normalize all paths with detected prefix
-        const normalized = new Map<string, Buffer>();
-        for (const [p, c] of files) {
-          if (p.startsWith(prefix)) {
-            normalized.set(p.slice(prefix.length), c);
-          } else {
-            normalized.set(p, c);
-          }
-        }
-
-        files.clear();
-        for (const [p, c] of normalized) {
-          files.set(p, c);
-        }
-
-        manifest = JSON.parse(content.toString("utf8")) as VsixManifest;
-        break;
-      }
-    }
+    manifest = findManifestWithNonStandardPrefix(files);
   }
 
   if (!manifest) {
@@ -213,7 +230,42 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
     manifest,
     files,
     basePath: vsixPath,
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
+}
+
+/**
+ * Find package.json under a non-standard prefix
+ * (e.g. "publisher.name-version/" instead of "extension/")
+ * and re-normalize all paths.
+ */
+function findManifestWithNonStandardPrefix(files: Map<string, Buffer>): VsixManifest | undefined {
+  for (const [path, content] of files) {
+    const match = path.match(/^([^/]+)\/package\.json$/);
+    if (!match) {
+      continue;
+    }
+
+    const prefix = match[1] + "/";
+    const normalized = new Map<string, Buffer>();
+
+    for (const [p, c] of files) {
+      if (p.startsWith(prefix)) {
+        normalized.set(p.slice(prefix.length), c);
+      } else {
+        normalized.set(p, c);
+      }
+    }
+
+    files.clear();
+    for (const [p, c] of normalized) {
+      files.set(p, c);
+    }
+
+    return JSON.parse(content.toString("utf8")) as VsixManifest;
+  }
+
+  return undefined;
 }
 
 export async function loadDirectory(dirPath: string): Promise<VsixContents> {

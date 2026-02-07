@@ -482,7 +482,22 @@ export function checkPackage(contents: VsixContents, zooData: ZooData): Finding[
     let packageJson: PackageJson;
     try {
       packageJson = JSON.parse(packageJsonBuffer.toString("utf8")) as PackageJson;
-    } catch {
+    } catch (error) {
+      findings.push({
+        id: "PARSE_FAILURE_PACKAGE",
+        title: "Malformed package.json",
+        description:
+          "package.json could not be parsed. " +
+          "All dependency checks (typosquatting, " +
+          "lifecycle scripts, blocklist) are skipped " +
+          "for this extension.",
+        severity: "low",
+        category: "pattern",
+        location: { file: "package.json" },
+        metadata: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
       return findings;
     }
 

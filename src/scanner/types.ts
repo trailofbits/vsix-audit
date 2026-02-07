@@ -90,6 +90,7 @@ export interface VsixContents {
   manifest: VsixManifest;
   files: Map<string, Buffer>;
   basePath: string;
+  warnings?: string[];
 }
 
 export interface BlocklistEntry {

@@ -126,6 +126,7 @@ npm install -g @trailofbits/vsix-audit
 ```
 
 Requires Node.js 22 or later and [YARA-X](https://github.com/VirusTotal/yara-x) for YARA rule scanning.
+
 ## Usage
 
 ### Commands

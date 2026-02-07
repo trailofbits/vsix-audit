@@ -641,6 +641,9 @@ describe("checkPackage (integration)", () => {
     const zooData = makeZooData();
     const findings = checkPackage(contents, zooData);
 
-    expect(findings).toHaveLength(0);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.id).toBe("PARSE_FAILURE_PACKAGE");
+    expect(findings[0]!.severity).toBe("low");
+    expect(findings[0]!.category).toBe("pattern");
   });
 });
