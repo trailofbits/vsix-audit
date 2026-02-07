@@ -27,7 +27,9 @@ export interface Capabilities {
   obfuscation: CapabilityInfo;
 }
 
-// Mapping of finding ID patterns to capabilities
+// Mapping of finding ID patterns to capabilities.
+// Patterns use word-boundary-like anchoring (_-delimited segments)
+// to avoid false matches (e.g. /KEY/ matching KEYLOGGER).
 const CAPABILITY_PATTERNS: Record<keyof Capabilities, RegExp[]> = {
   network: [
     /NETWORK/i,
@@ -37,43 +39,46 @@ const CAPABILITY_PATTERNS: Record<keyof Capabilities, RegExp[]> = {
     /WEBSOCKET/i,
     /FETCH/i,
     /AXIOS/i,
-    /SOCKET/i,
+    /(?:^|_)SOCKET(?:_|$)/i,
     /EXFIL/i,
   ],
   execution: [
     /CHILD_PROCESS/i,
-    /EXEC/i,
-    /EVAL/i,
+    /(?:^|_)EXEC(?:_|$)/i,
+    /(?:^|_)EVAL(?:_|$)/i,
     /SPAWN/i,
     /POWERSHELL/i,
-    /SHELL/i,
-    /CMD/i,
-    /DROPPER/i,
     /REVERSE_SHELL/i,
+    /(?:^|_)SHELL(?:_|$)/i,
+    /(?:^|_)CMD(?:_|$)/i,
+    /DROPPER/i,
+    /KEYLOGGER/i,
+    /COMMAND/i,
   ],
   fileAccess: [
-    /FILE/i,
-    /READ/i,
-    /WRITE/i,
-    /HOME/i,
-    /PATH/i,
+    /FILE_(?:READ|WRITE|ACCESS)/i,
+    /(?:^|_)WRITE(?:_|$)/i,
     /STARTUP/i,
-    /PERSISTENCE/i,
+    /PERSIST/i,
     /DROPPER/i,
+    /HOME_DIR/i,
+    /(?:^|_)BASHRC|PROFILE(?:_|$)/i,
   ],
   credentials: [
     /SSH/i,
     /CREDENTIAL/i,
     /WALLET/i,
     /BROWSER_DATA/i,
-    /TOKEN/i,
+    /(?:^|_)TOKEN(?:_|$)/i,
     /API_KEY/i,
     /PASSWORD/i,
     /SECRET/i,
-    /CRYPTO/i,
-    /KEY/i,
-    /NPM/i,
-    /ENV/i,
+    /CRYPTO(?:_WALLET)?/i,
+    /SSH_KEY/i,
+    /NPM_TOKEN/i,
+    /ENV_TOKEN/i,
+    /SEED_/i,
+    /STEALER/i,
   ],
   obfuscation: [
     /OBFUSCATION/i,
@@ -85,6 +90,9 @@ const CAPABILITY_PATTERNS: Record<keyof Capabilities, RegExp[]> = {
     /INVISIBLE/i,
     /HOMOGLYPH/i,
     /ENCODED/i,
+    /ZERO_WIDTH/i,
+    /BIDI/i,
+    /VARIATION_SELECTOR/i,
   ],
 };
 

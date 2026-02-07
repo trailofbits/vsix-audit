@@ -115,6 +115,12 @@ async function findYaraRulesDir(): Promise<string> {
 // Cached result of findYaraRulesDir
 let cachedYaraRulesDir: string | undefined;
 
+/** Reset module caches (for testing) */
+export function resetYaraCaches(): void {
+  cachedYaraRulesDir = undefined;
+  ruleMetaCache.clear();
+}
+
 /**
  * Get the default YARA rules directory (cached)
  */
@@ -124,17 +130,6 @@ export async function getDefaultYaraRulesDir(): Promise<string> {
   }
   return cachedYaraRulesDir;
 }
-
-// For backwards compatibility - returns a path that may not exist until findYaraRulesDir is called
-export const DEFAULT_YARA_RULES_DIR = join(
-  __dirname,
-  "..",
-  "..",
-  "..",
-  "zoo",
-  "signatures",
-  "yara",
-);
 
 interface YaraMatch {
   rule: string;
@@ -152,18 +147,6 @@ export async function isYaraAvailable(): Promise<boolean> {
     return stdout.trim().length > 0;
   } catch {
     return false;
-  }
-}
-
-/**
- * Get YARA-X version string
- */
-export async function getYaraVersion(): Promise<string | null> {
-  try {
-    const { stdout } = await execFileAsync("yr", ["--version"]);
-    return stdout.trim();
-  } catch {
-    return null;
   }
 }
 
@@ -336,87 +319,88 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
   const tempDir = await mkdtemp(join(tmpdir(), "vsix-audit-"));
 
   try {
-    // Write extension files to temp directory for YARA to scan
+    // Collect files to write, filtering out binary/large/traversal
+    const filesToWrite: Array<{ path: string; buffer: Buffer }> = [];
+    const dirsNeeded = new Set<string>();
 
     for (const [filename, buffer] of contents.files) {
-      // Skip binary files that are too large
-      if (buffer.length > 10 * 1024 * 1024) continue; // Skip files > 10MB
-
-      // Skip binary files that cause false positives
+      if (buffer.length > 10 * 1024 * 1024) continue;
       if (shouldSkipForYara(filename)) continue;
-
       const filePath = join(tempDir, filename);
       if (!resolve(filePath).startsWith(resolve(tempDir))) continue;
-      await mkdir(dirname(filePath), { recursive: true });
-      await writeFile(filePath, buffer);
+      dirsNeeded.add(dirname(filePath));
+      filesToWrite.push({ path: filePath, buffer });
     }
 
-    // Run YARA against the temp directory with all rules
+    // Create all directories in parallel
+    await Promise.all([...dirsNeeded].map((d) => mkdir(d, { recursive: true })));
+
+    // Write all files in parallel
+    await Promise.all(filesToWrite.map((f) => writeFile(f.path, f.buffer)));
+
+    // Pre-parse rule files to build ruleName -> ruleFile map
+    const ruleSourceMap = new Map<string, string>();
     for (const ruleFile of rules) {
       const rulePath = join(targetRulesDir, ruleFile);
+      const ruleMap = await parseRuleFile(rulePath);
+      for (const ruleName of ruleMap.keys()) {
+        ruleSourceMap.set(ruleName, ruleFile);
+      }
+    }
 
-      try {
-        // Run YARA-X with recursive scanning
-        // Using execFile instead of exec to prevent command injection
-        const { stdout, stderr } = await execFileAsync(
-          "yr",
-          ["scan", "-r", rulePath, tempDir],
-          { maxBuffer: 10 * 1024 * 1024 }, // 10MB buffer for large outputs
-        );
+    // Single YARA-X invocation scanning all rules at once
+    try {
+      const { stdout, stderr } = await execFileAsync(
+        "yr",
+        ["scan", "-r", targetRulesDir, tempDir],
+        { maxBuffer: 10 * 1024 * 1024 },
+      );
 
-        if (stderr && !stderr.includes("warning")) {
-          // YARA-X errors (not warnings) indicate rule issues
-          continue;
-        }
+      if (stderr && !stderr.includes("warning")) {
+        // Log but don't fail - partial results may still be useful
+      }
 
-        const matches = parseYaraOutput(stdout);
+      const matches = parseYaraOutput(stdout);
 
-        for (const match of matches) {
-          // Get rule metadata
-          const meta = await getRuleMeta(rulePath, match.rule);
+      for (const match of matches) {
+        const ruleFile = ruleSourceMap.get(match.rule) ?? "unknown";
+        const rulePath = join(targetRulesDir, ruleFile);
+        const meta = await getRuleMeta(rulePath, match.rule);
 
-          // Convert temp path back to relative path
-          const relativePath = match.file.replace(tempDir + "/", "");
+        const relativePath = match.file.replace(tempDir + "/", "");
+        const fileExt = relativePath.slice(relativePath.lastIndexOf(".")).toLowerCase();
 
-          // Get file extension for metadata
-          const fileExt = relativePath.slice(relativePath.lastIndexOf(".")).toLowerCase();
-
-          findings.push({
-            id: `YARA_${match.rule}`,
-            title: `YARA rule match: ${match.rule}`,
-            description: `YARA rule "${match.rule}" from ${ruleFile} matched this file. This indicates the file contains patterns associated with known malware or suspicious behavior.`,
-            severity: (meta.severity as "low" | "medium" | "high" | "critical") ?? "medium",
-            category: "yara",
-            location: {
-              file: relativePath,
-            },
-            metadata: {
-              rule: match.rule,
-              ruleFile,
-              fileType: fileExt,
-            },
-          });
-        }
-      } catch (error) {
-        // YARA returns exit code 1 when no matches
-        const isNoMatch = error instanceof Error && error.message.includes("exit code 1");
-        if (!isNoMatch) {
-          findings.push({
-            id: "YARA_SCAN_ERROR",
-            title: "YARA scan failed for rule file",
-            description:
-              "YARA scan error for a rule file. " +
-              "Matching rules in this file were not " +
-              "applied, reducing detection coverage.",
-            severity: "low",
-            category: "yara",
-            location: { file: ruleFile },
-            metadata: {
-              ruleFile,
-              error: error instanceof Error ? error.message : String(error),
-            },
-          });
-        }
+        findings.push({
+          id: `YARA_${match.rule}`,
+          title: `YARA rule match: ${match.rule}`,
+          description:
+            `YARA rule "${match.rule}" from ${ruleFile} ` +
+            "matched this file. This indicates the file " +
+            "contains patterns associated with known " +
+            "malware or suspicious behavior.",
+          severity: (meta.severity as "low" | "medium" | "high" | "critical") ?? "medium",
+          category: "yara",
+          location: { file: relativePath },
+          metadata: {
+            rule: match.rule,
+            ruleFile,
+            fileType: fileExt,
+          },
+        });
+      }
+    } catch (error) {
+      const isNoMatch = error instanceof Error && error.message.includes("exit code 1");
+      if (!isNoMatch) {
+        findings.push({
+          id: "YARA_SCAN_ERROR",
+          title: "YARA scan failed",
+          description: "YARA scan error. Rules were not applied, " + "reducing detection coverage.",
+          severity: "low",
+          category: "yara",
+          metadata: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
       }
     }
   } finally {

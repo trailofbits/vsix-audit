@@ -16,18 +16,23 @@ export interface BundlerInfo {
   isBundled: boolean;
   bundler: "webpack" | "rollup" | "esbuild" | "parcel" | "vite" | "unknown" | null;
   isMinified: boolean;
-  confidence: "high" | "medium" | "low";
 }
 
 /**
  * Detect if a file is bundled/minified code.
  */
-export function detectBundler(content: string, filename: string): BundlerInfo {
+export function detectBundler(
+  content: string,
+  filename: string,
+  cache?: Map<string, BundlerInfo>,
+): BundlerInfo {
+  const cached = cache?.get(filename);
+  if (cached) return cached;
+
   const result: BundlerInfo = {
     isBundled: false,
     bundler: null,
     isMinified: false,
-    confidence: "low",
   };
 
   // Check filename patterns first
@@ -39,7 +44,6 @@ export function detectBundler(content: string, filename: string): BundlerInfo {
     /\d+\..*\.js$/.test(filename) // numeric chunk IDs like 540.extension.js
   ) {
     result.isBundled = true;
-    result.confidence = "medium";
   }
 
   // Webpack signatures
@@ -51,14 +55,12 @@ export function detectBundler(content: string, filename: string): BundlerInfo {
   ) {
     result.isBundled = true;
     result.bundler = "webpack";
-    result.confidence = "high";
   }
 
   // Rollup signatures
   if (/\(function \(exports/.test(content) && /Object\.defineProperty\(exports,/.test(content)) {
     result.isBundled = true;
     result.bundler = "rollup";
-    result.confidence = "high";
   }
 
   // Esbuild signatures
@@ -69,14 +71,22 @@ export function detectBundler(content: string, filename: string): BundlerInfo {
   ) {
     result.isBundled = true;
     result.bundler = "esbuild";
-    result.confidence = "high";
   }
 
   // Parcel signatures
   if (/parcelRequire/.test(content)) {
     result.isBundled = true;
     result.bundler = "parcel";
-    result.confidence = "high";
+  }
+
+  // Vite signatures (SSR imports, HMR API, Vite plugin markers)
+  if (
+    /__vite_ssr_import__/.test(content) ||
+    /__vite_ssr_dynamic_import__/.test(content) ||
+    /\bimport\.meta\.hot\b/.test(content)
+  ) {
+    result.isBundled = true;
+    result.bundler = "vite";
   }
 
   // Check for minification indicators
@@ -91,7 +101,6 @@ export function detectBundler(content: string, filename: string): BundlerInfo {
       if (!result.isBundled) {
         result.isBundled = true;
         result.bundler = "unknown";
-        result.confidence = "medium";
       }
     }
   }
@@ -101,10 +110,10 @@ export function detectBundler(content: string, filename: string): BundlerInfo {
     if (!result.isBundled) {
       result.isBundled = true;
       result.bundler = "unknown";
-      result.confidence = "medium";
     }
   }
 
+  cache?.set(filename, result);
   return result;
 }
 

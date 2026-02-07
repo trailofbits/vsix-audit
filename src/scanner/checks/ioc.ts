@@ -1,6 +1,6 @@
 import { isScannable, SCANNABLE_EXTENSIONS_IOC } from "../constants.js";
 import type { Finding, VsixContents, ZooData } from "../types.js";
-import { findLineNumberByString } from "../utils.js";
+import { computeLineStarts, findLineNumberByString } from "../utils.js";
 import { computeSha256 } from "../vsix.js";
 
 function extractDomains(content: string): string[] {
@@ -89,12 +89,13 @@ export function checkDomains(contents: VsixContents, knownDomains: Set<string>):
   for (const [filename, buffer] of contents.files) {
     if (!isScannable(filename, SCANNABLE_EXTENSIONS_IOC)) continue;
 
-    const content = buffer.toString("utf8");
+    const content = contents.stringContents?.get(filename) ?? buffer.toString("utf8");
     const foundDomains = extractDomains(content);
+    const lineStarts = computeLineStarts(content);
 
     for (const domain of foundDomains) {
       if (knownDomains.has(domain)) {
-        const line = findLineNumberByString(content, domain);
+        const line = findLineNumberByString(content, domain, lineStarts);
         findings.push({
           id: "KNOWN_C2_DOMAIN",
           title: "Known C2 domain detected",
@@ -119,12 +120,13 @@ export function checkIps(contents: VsixContents, knownIps: Set<string>): Finding
   for (const [filename, buffer] of contents.files) {
     if (!isScannable(filename, SCANNABLE_EXTENSIONS_IOC)) continue;
 
-    const content = buffer.toString("utf8");
+    const content = contents.stringContents?.get(filename) ?? buffer.toString("utf8");
     const foundIps = extractIps(content);
+    const lineStarts = computeLineStarts(content);
 
     for (const ip of foundIps) {
       if (knownIps.has(ip)) {
-        const line = findLineNumberByString(content, ip);
+        const line = findLineNumberByString(content, ip, lineStarts);
         findings.push({
           id: "KNOWN_C2_IP",
           title: "Known C2 IP address detected",
@@ -217,7 +219,8 @@ export function checkWallets(
   for (const [filename, buffer] of contents.files) {
     if (!isScannable(filename, SCANNABLE_EXTENSIONS_IOC)) continue;
 
-    const content = buffer.toString("utf8");
+    const content = contents.stringContents?.get(filename) ?? buffer.toString("utf8");
+    const lineStarts = computeLineStarts(content);
     // Track wallets already found in this file to avoid duplicate findings
     // (e.g., BTC addresses matching both BTC and SOL patterns)
     const seenWallets = new Set<string>();
@@ -238,7 +241,7 @@ export function checkWallets(
           continue;
         }
 
-        const line = findLineNumberByString(content, wallet);
+        const line = findLineNumberByString(content, wallet, lineStarts);
         const isKnownMalicious = knownWallets.has(wallet);
 
         if (isKnownMalicious) {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { VsixContents, VsixManifest } from "../types.js";
-import { checkYara, getYaraVersion, isYaraAvailable, listYaraRules } from "./yara.js";
+import { checkYara, isYaraAvailable, listYaraRules } from "./yara.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ZOO_YARA_DIR = join(__dirname, "..", "..", "..", "zoo", "signatures", "yara");
@@ -28,17 +28,6 @@ describe("isYaraAvailable", () => {
 
     // This will be true if yara is installed, false otherwise
     expect(typeof result).toBe("boolean");
-  });
-});
-
-describe("getYaraVersion", () => {
-  it("returns version string or null", async () => {
-    const result = await getYaraVersion();
-
-    if (result !== null) {
-      // If YARA is installed, version should be a non-empty string
-      expect(result.length).toBeGreaterThan(0);
-    }
   });
 });
 

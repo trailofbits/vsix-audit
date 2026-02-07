@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   getCursorDownloadUrl,
-  getDownloadUrl,
   getMarketplaceDownloadUrl,
   getOpenVSXDownloadUrl,
   parseExtensionId,
@@ -123,29 +122,6 @@ describe("parseExtensionId", () => {
 
   it("throws on openvsx: prefix with invalid ID", () => {
     expect(() => parseExtensionId("openvsx:invalid")).toThrow("Invalid extension ID");
-  });
-});
-
-describe("getDownloadUrl", () => {
-  it("generates correct download URL", () => {
-    const url = getDownloadUrl("ms-python", "python", "2024.1.0");
-
-    expect(url).toBe(
-      "https://ms-python.gallery.vsassets.io/_apis/public/gallery/publisher/ms-python/extension/python/2024.1.0/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage",
-    );
-  });
-
-  it("handles publisher with hyphen", () => {
-    const url = getDownloadUrl("ms-vscode", "cpptools", "1.0.0");
-
-    expect(url).toContain("ms-vscode.gallery.vsassets.io");
-    expect(url).toContain("/publisher/ms-vscode/");
-  });
-
-  it("handles extension name with special chars", () => {
-    const url = getDownloadUrl("pub", "my-ext", "1.0.0");
-
-    expect(url).toContain("/extension/my-ext/");
   });
 });
 

@@ -7,7 +7,7 @@ import type {
   VsixManifest,
   ZooData,
 } from "../types.js";
-import { findLineNumberByString } from "../utils.js";
+import { computeLineStarts, findLineNumberByString } from "../utils.js";
 
 /**
  * Known telemetry SDK packages and their service info.
@@ -347,13 +347,8 @@ function detectDataCollection(content: string, nearIndex: number): string[] {
 /**
  * Determine opt-out information for a file.
  */
-function determineOptOut(
-  content: string,
-  manifest: VsixManifest,
-  allFileContents: Map<string, string>,
-): OptOutInfo {
-  // Check VS Code API first (highest priority)
-  // Check all files since opt-out might be in a different file than telemetry
+function determineOptOut(manifest: VsixManifest, allFileContents: Map<string, string>): OptOutInfo {
+  // Check VS Code API across all files
   for (const fileContent of allFileContents.values()) {
     if (detectVsCodeApiOptOut(fileContent)) {
       return {
@@ -362,15 +357,6 @@ function determineOptOut(
         settingName: "vscode.env.isTelemetryEnabled",
       };
     }
-  }
-
-  // Check current file for VS Code API
-  if (detectVsCodeApiOptOut(content)) {
-    return {
-      available: true,
-      method: "vscode-api",
-      settingName: "vscode.env.isTelemetryEnabled",
-    };
   }
 
   // Check manifest for configuration
@@ -383,7 +369,7 @@ function determineOptOut(
     };
   }
 
-  // Check code conditional patterns in all files
+  // Check code conditional patterns across all files
   for (const fileContent of allFileContents.values()) {
     const codeOptOut = detectCodeConditionalOptOut(fileContent);
     if (codeOptOut.found) {
@@ -393,16 +379,6 @@ function determineOptOut(
         settingName: codeOptOut.settingName,
       };
     }
-  }
-
-  // Check current file for code conditional
-  const codeOptOut = detectCodeConditionalOptOut(content);
-  if (codeOptOut.found) {
-    return {
-      available: true,
-      method: "code-conditional",
-      settingName: codeOptOut.settingName,
-    };
   }
 
   return { available: false, method: "none", settingName: null };
@@ -420,6 +396,7 @@ function analyzeFile(
   seenServices: Set<string>,
 ): TelemetryDetection[] {
   const detections: TelemetryDetection[] = [];
+  const lineStarts = computeLineStarts(content);
 
   // Detect SDK imports
   const sdkImports = detectSdkImports(content);
@@ -428,9 +405,9 @@ function analyzeFile(
     if (seenServices.has(serviceKey)) continue;
     seenServices.add(serviceKey);
 
-    const line = findLineNumberByString(content, pkg);
+    const line = findLineNumberByString(content, pkg, lineStarts);
     const dataCollected = detectDataCollection(content, index);
-    const optOut = determineOptOut(content, manifest, allFileContents);
+    const optOut = determineOptOut(manifest, allFileContents);
 
     detections.push({
       serviceName: info.name,
@@ -463,9 +440,9 @@ function analyzeFile(
       if (seenServices.has(serviceKey)) continue;
       seenServices.add(serviceKey);
 
-      const line = findLineNumberByString(content, url);
+      const line = findLineNumberByString(content, url, lineStarts);
       const dataCollected = detectDataCollection(content, index);
-      const optOut = determineOptOut(content, manifest, allFileContents);
+      const optOut = determineOptOut(manifest, allFileContents);
 
       detections.push({
         serviceName: serviceInfo.name,
@@ -484,9 +461,9 @@ function analyzeFile(
       if (seenServices.has(serviceKey)) continue;
       seenServices.add(serviceKey);
 
-      const line = findLineNumberByString(content, url);
+      const line = findLineNumberByString(content, url, lineStarts);
       const dataCollected = detectDataCollection(content, index);
-      const optOut = determineOptOut(content, manifest, allFileContents);
+      const optOut = determineOptOut(manifest, allFileContents);
 
       detections.push({
         serviceName: domain,
@@ -559,7 +536,10 @@ export function checkTelemetry(contents: VsixContents, zooData: ZooData): Findin
     const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
     if (![".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"].includes(ext)) continue;
 
-    allFileContents.set(filename, buffer.toString("utf8"));
+    allFileContents.set(
+      filename,
+      contents.stringContents?.get(filename) ?? buffer.toString("utf8"),
+    );
   }
 
   // Track services seen across all files to avoid duplicate findings

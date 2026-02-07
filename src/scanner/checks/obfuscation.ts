@@ -1,3 +1,4 @@
+import type { BundlerInfo } from "../bundler.js";
 import { detectBundler } from "../bundler.js";
 import {
   isScannable,
@@ -5,7 +6,12 @@ import {
   SCANNABLE_EXTENSIONS_UNICODE,
 } from "../constants.js";
 import type { Finding, Severity, VsixContents } from "../types.js";
-import { findLineNumberByIndex } from "../utils.js";
+import {
+  computeLineStarts,
+  findLineNumberByIndex,
+  offsetToColumn,
+  offsetToLine,
+} from "../utils.js";
 
 /**
  * Obfuscation detection module.
@@ -124,10 +130,14 @@ function checkEntropy(contents: VsixContents): Finding[] {
     // Skip node_modules - third-party deps generate many false positives
     if (isNodeModules(filename)) continue;
 
-    const content = buffer.toString("utf8");
+    const content = contents.stringContents?.get(filename) ?? buffer.toString("utf8");
 
     // Skip bundled code - minification naturally increases entropy
-    const bundlerInfo = detectBundler(content, filename);
+    const bundlerInfo = detectBundler(
+      content,
+      filename,
+      contents.cache as Map<string, BundlerInfo> | undefined,
+    );
     if (bundlerInfo.isBundled) continue;
 
     const regions = findHighEntropyRegions(content);
@@ -174,11 +184,9 @@ function checkEntropy(contents: VsixContents): Finding[] {
 // UNICODE HIDING DETECTION
 // ============================================================================
 
-function findLineAndColumn(content: string, index: number): { line: number; column: number } {
-  const beforeMatch = content.slice(0, index);
-  const lines = beforeMatch.split("\n");
-  const line = lines.length;
-  const column = (lines.at(-1)?.length ?? 0) + 1;
+function findLineAndColumn(index: number, lineStarts: number[]): { line: number; column: number } {
+  const line = offsetToLine(index, lineStarts);
+  const column = offsetToColumn(index, lineStarts) + 1;
   return { line, column };
 }
 
@@ -211,13 +219,19 @@ const CYRILLIC_LOOKALIKE_REGEX =
 const OTHER_INVISIBLE_REGEX =
   /[\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180E\u2060-\u2064\u206A-\u206F]/g;
 
-function detectUnicodePattern(content: string, regex: RegExp, minMatches = 1): UnicodeMatch[] {
+function detectUnicodePattern(
+  content: string,
+  regex: RegExp,
+  minMatches = 1,
+  lineStarts?: number[],
+): UnicodeMatch[] {
   const matches: UnicodeMatch[] = [];
   const r = new RegExp(regex.source, regex.flags);
+  const starts = lineStarts ?? computeLineStarts(content);
   let match: RegExpExecArray | null;
 
   while ((match = r.exec(content)) !== null) {
-    const { line, column } = findLineAndColumn(content, match.index);
+    const { line, column } = findLineAndColumn(match.index, starts);
     matches.push({
       line,
       column,
@@ -467,8 +481,12 @@ function checkUnicodeHiding(contents: VsixContents): Finding[] {
   for (const [filename, buffer] of contents.files) {
     if (!isScannable(filename, SCANNABLE_EXTENSIONS_UNICODE)) continue;
 
-    const content = buffer.toString("utf8");
-    const bundlerInfo = detectBundler(content, filename);
+    const content = contents.stringContents?.get(filename) ?? buffer.toString("utf8");
+    const bundlerInfo = detectBundler(
+      content,
+      filename,
+      contents.cache as Map<string, BundlerInfo> | undefined,
+    );
     const inNodeModules = isNodeModules(filename);
 
     for (const rule of UNICODE_RULES) {

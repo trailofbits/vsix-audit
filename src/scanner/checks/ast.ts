@@ -8,9 +8,11 @@ import type {
   Node,
   Span,
 } from "oxc-parser";
+import type { BundlerInfo } from "../bundler.js";
 import { detectBundler, hasGenuineObfuscation } from "../bundler.js";
 import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "../constants.js";
 import type { Finding, Severity, VsixContents } from "../types.js";
+import { computeLineStarts, offsetToColumn, offsetToLine } from "../utils.js";
 
 interface ASTPattern {
   id: string;
@@ -40,42 +42,6 @@ interface ASTContext {
 /**
  * Pre-compute line start positions for fast line/column lookup from byte offsets.
  */
-function computeLineStarts(content: string): number[] {
-  const lineStarts = [0];
-  for (let i = 0; i < content.length; i++) {
-    if (content[i] === "\n") {
-      lineStarts.push(i + 1);
-    }
-  }
-  return lineStarts;
-}
-
-/**
- * Convert byte offset to line number (1-indexed).
- */
-function offsetToLine(offset: number, lineStarts: number[]): number {
-  let low = 0;
-  let high = lineStarts.length - 1;
-  while (low < high) {
-    const mid = Math.ceil((low + high) / 2);
-    const midStart = lineStarts[mid];
-    if (midStart !== undefined && midStart <= offset) {
-      low = mid;
-    } else {
-      high = mid - 1;
-    }
-  }
-  return low + 1;
-}
-
-/**
- * Convert byte offset to column number (0-indexed).
- */
-function offsetToColumn(offset: number, lineStarts: number[]): number {
-  const line = offsetToLine(offset, lineStarts);
-  const lineStart = lineStarts[line - 1] ?? 0;
-  return offset - lineStart;
-}
 
 /**
  * Get code snippet around a node's location.
@@ -416,7 +382,11 @@ const AST_PATTERNS: ASTPattern[] = [
 /**
  * Parse and analyze a JavaScript/TypeScript file for suspicious patterns.
  */
-function analyzeFile(filename: string, content: string): Finding[] {
+function analyzeFile(
+  filename: string,
+  content: string,
+  bundlerCache?: Map<string, BundlerInfo>,
+): Finding[] {
   const findings: Finding[] = [];
 
   // Determine lang from extension
@@ -462,7 +432,7 @@ function analyzeFile(filename: string, content: string): Finding[] {
     return findings;
   }
 
-  const bundlerInfo = detectBundler(content, filename);
+  const bundlerInfo = detectBundler(content, filename, bundlerCache);
   const lineStarts = computeLineStarts(content);
 
   const context: ASTContext = {
@@ -553,9 +523,10 @@ export function checkAST(contents: VsixContents): Finding[] {
     const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
     if (![".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"].includes(ext)) continue;
 
-    const content = buffer.toString("utf8");
+    const content = contents.stringContents?.get(filename) ?? buffer.toString("utf8");
 
-    findings.push(...analyzeFile(filename, content));
+    const bundlerCache = contents.cache as Map<string, BundlerInfo> | undefined;
+    findings.push(...analyzeFile(filename, content, bundlerCache));
   }
 
   return findings;

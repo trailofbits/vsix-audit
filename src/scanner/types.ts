@@ -2,57 +2,62 @@ export type Severity = "low" | "medium" | "high" | "critical";
 
 export type Registry = "marketplace" | "openvsx" | "cursor";
 
+export const MODULE_NAMES = ["package", "obfuscation", "ast", "ioc", "yara", "telemetry"] as const;
+export type ModuleName = (typeof MODULE_NAMES)[number];
+
 export interface ModuleTimings {
   load: number;
-  package?: number;
-  obfuscation?: number;
-  ast?: number;
-  ioc?: number;
-  yara?: number;
-  telemetry?: number;
   total: number;
+  [module: string]: number;
 }
 
 export interface ScanOptions {
   output: "text" | "json" | "sarif";
   severity: Severity;
   network: boolean;
-  modules?: string[];
+  modules?: ModuleName[];
   profile?: boolean;
 }
 
+export interface FindingMetadata {
+  matched?: string | undefined;
+  legitimateUses?: string[] | undefined;
+  redFlags?: string[] | undefined;
+  [key: string]: unknown;
+}
+
 export interface Finding {
-  id: string;
-  title: string;
-  description: string;
-  severity: Severity;
-  category: string;
-  location?: {
-    file: string;
-    line?: number;
-    column?: number;
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly severity: Severity;
+  readonly category: string;
+  readonly location?: {
+    readonly file: string;
+    readonly line?: number;
+    readonly column?: number;
   };
-  metadata?: Record<string, unknown>;
+  readonly metadata?: FindingMetadata;
 }
 
 export interface CheckSummary {
-  name: string;
-  enabled: boolean;
-  description: string;
-  filesExamined?: number;
-  rulesApplied?: number;
-  skipReason?: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly description: string;
+  readonly filesExamined?: number;
+  readonly rulesApplied?: number;
+  readonly skipReason?: string;
 }
 
 export interface ScanResult {
-  extension: {
-    id: string;
-    name: string;
-    version: string;
-    publisher: string;
+  readonly extension: {
+    readonly id: string;
+    readonly name: string;
+    readonly version: string;
+    readonly publisher: string;
   };
-  findings: Finding[];
-  inventory: CheckSummary[];
+  readonly findings: Finding[];
+  readonly inventory: CheckSummary[];
   metadata: {
     scannedAt: string;
     scanDuration: number;
@@ -91,6 +96,10 @@ export interface VsixContents {
   files: Map<string, Buffer>;
   basePath: string;
   warnings?: string[];
+  /** Pre-computed UTF-8 string contents, keyed by filename */
+  stringContents?: Map<string, string>;
+  /** Shared cache for memoized per-file computations */
+  cache?: Map<string, unknown>;
 }
 
 export interface BlocklistEntry {

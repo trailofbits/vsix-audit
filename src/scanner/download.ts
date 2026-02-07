@@ -3,7 +3,7 @@ import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
-import { ensureCacheDir, getCachedPath, isCached } from "./cache.js";
+import { ensureCacheDir, evictStaleEntries, getCachedPath, isCached } from "./cache.js";
 import type { Registry } from "./types.js";
 
 export interface ExtensionMetadata {
@@ -194,9 +194,14 @@ export function parseExtensionId(input: string): ParsedExtensionId {
 }
 
 /**
- * Query the VS Code Marketplace for extension metadata
+ * Shared Gallery API query for VS Code Marketplace and Cursor.
+ * Both registries use the same protocol; only the URL and
+ * registry label differ.
  */
-export async function queryExtension(
+async function queryGalleryApi(
+  apiUrl: string,
+  registry: Registry,
+  registryLabel: string,
   publisher: string,
   name: string,
   version?: string,
@@ -214,7 +219,7 @@ export async function queryExtension(
     flags: 0x200 | 0x80 | 0x1, // Include versions, files, and statistics
   };
 
-  const response = await fetch(GALLERY_API_URL, {
+  const response = await fetch(apiUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -224,19 +229,18 @@ export async function queryExtension(
   });
 
   if (!response.ok) {
-    throw new Error(`Marketplace API error: ${response.status} ${response.statusText}`);
+    throw new Error(`${registryLabel} API error: ${response.status} ${response.statusText}`);
   }
 
-  const data = validateGalleryResponse(await response.json(), "VS Code Marketplace");
+  const data = validateGalleryResponse(await response.json(), registryLabel);
   const ext = data.results[0]?.extensions[0];
 
   if (!ext) {
-    throw new Error(`Extension not found: ${extensionId}`);
+    throw new Error(`Extension not found on ${registryLabel}: ${extensionId}`);
   }
 
   const versions = ext.versions ?? [];
 
-  // Find the requested version or use latest
   let targetVersion = versions[0];
   if (version) {
     const found = versions.find((v) => v.version === version);
@@ -252,7 +256,6 @@ export async function queryExtension(
     throw new Error(`No versions available for ${extensionId}`);
   }
 
-  // Get install count from statistics
   const installStat = ext.statistics?.find((s) => s.statisticName === "install");
 
   const result: ExtensionMetadata = {
@@ -261,7 +264,7 @@ export async function queryExtension(
     name: ext.extensionName,
     version: targetVersion.version,
     lastUpdated: targetVersion.lastUpdated,
-    registry: "marketplace",
+    registry,
   };
 
   if (ext.displayName) {
@@ -275,6 +278,24 @@ export async function queryExtension(
   }
 
   return result;
+}
+
+/**
+ * Query the VS Code Marketplace for extension metadata
+ */
+export async function queryExtension(
+  publisher: string,
+  name: string,
+  version?: string,
+): Promise<ExtensionMetadata> {
+  return queryGalleryApi(
+    GALLERY_API_URL,
+    "marketplace",
+    "VS Code Marketplace",
+    publisher,
+    name,
+    version,
+  );
 }
 
 /**
@@ -332,80 +353,7 @@ export async function queryCursor(
   name: string,
   version?: string,
 ): Promise<ExtensionMetadata> {
-  const extensionId = `${publisher}.${name}`;
-
-  const requestBody = {
-    filters: [
-      {
-        criteria: [{ filterType: 7, value: extensionId }],
-        pageSize: 1,
-        pageNumber: 1,
-      },
-    ],
-    flags: 0x200 | 0x80 | 0x1, // Include versions, files, and statistics
-  };
-
-  const response = await fetch(CURSOR_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: `application/json;api-version=${GALLERY_API_VERSION}`,
-    },
-    body: JSON.stringify(requestBody),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Cursor API error: ${response.status} ${response.statusText}`);
-  }
-
-  const data = validateGalleryResponse(await response.json(), "Cursor Marketplace");
-  const ext = data.results[0]?.extensions[0];
-
-  if (!ext) {
-    throw new Error(`Extension not found on Cursor: ${extensionId}`);
-  }
-
-  const versions = ext.versions ?? [];
-
-  // Find the requested version or use latest
-  let targetVersion = versions[0];
-  if (version) {
-    const found = versions.find((v) => v.version === version);
-    if (!found) {
-      throw new Error(
-        `Version ${version} not found for ${extensionId}. Latest: ${versions[0]?.version}`,
-      );
-    }
-    targetVersion = found;
-  }
-
-  if (!targetVersion) {
-    throw new Error(`No versions available for ${extensionId}`);
-  }
-
-  // Get install count from statistics
-  const installStat = ext.statistics?.find((s) => s.statisticName === "install");
-
-  const result: ExtensionMetadata = {
-    extensionId,
-    publisher: ext.publisher.publisherName,
-    name: ext.extensionName,
-    version: targetVersion.version,
-    lastUpdated: targetVersion.lastUpdated,
-    registry: "cursor",
-  };
-
-  if (ext.displayName) {
-    result.displayName = ext.displayName;
-  }
-  if (ext.shortDescription) {
-    result.description = ext.shortDescription;
-  }
-  if (installStat?.value !== undefined) {
-    result.installCount = installStat.value;
-  }
-
-  return result;
+  return queryGalleryApi(CURSOR_API_URL, "cursor", "Cursor Marketplace", publisher, name, version);
 }
 
 /**
@@ -433,16 +381,11 @@ export function getCursorDownloadUrl(publisher: string, name: string, version: s
   return `https://marketplace.cursorapi.com/_apis/public/gallery/publishers/${publisher}/vsextensions/${name}/${version}/vspackage`;
 }
 
-/**
- * Get the download URL for a VSIX package
- * @deprecated Use getMarketplaceDownloadUrl or getOpenVSXDownloadUrl instead
- */
-export function getDownloadUrl(publisher: string, name: string, version: string): string {
-  return getMarketplaceDownloadUrl(publisher, name, version);
-}
+/** Maximum download size: 500 MB */
+const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
 
 /**
- * Download a VSIX from a URL
+ * Download a VSIX from a URL with size limit enforcement.
  */
 async function downloadVsixFromUrl(url: string, destPath: string): Promise<void> {
   const response = await fetch(url);
@@ -454,14 +397,39 @@ async function downloadVsixFromUrl(url: string, destPath: string): Promise<void>
     throw new Error("Empty response body");
   }
 
-  // Ensure destination directory exists
+  // Check Content-Length if available
+  const contentLength = response.headers.get("content-length");
+  if (contentLength) {
+    const size = parseInt(contentLength, 10);
+    if (size > MAX_DOWNLOAD_BYTES) {
+      throw new Error(`Download too large: ${size} bytes ` + `(max ${MAX_DOWNLOAD_BYTES} bytes)`);
+    }
+  }
+
   await mkdir(dirname(destPath), { recursive: true });
 
-  // Stream the response to a file
+  // Stream with byte counter to enforce limit
+  let bytesWritten = 0;
   const nodeStream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream);
   const fileStream = createWriteStream(destPath);
 
-  await pipeline(nodeStream, fileStream);
+  const { Transform } = await import("node:stream");
+  const limiter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      bytesWritten += chunk.length;
+      if (bytesWritten > MAX_DOWNLOAD_BYTES) {
+        callback(
+          new Error(
+            `Download exceeded ${MAX_DOWNLOAD_BYTES} ` + `byte limit at ${bytesWritten} bytes`,
+          ),
+        );
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+
+  await pipeline(nodeStream, limiter, fileStream);
 }
 
 /**
@@ -551,8 +519,9 @@ export async function downloadExtension(
     }
   }
 
-  // Download to cache
+  // Download to cache, evicting stale entries first
   await ensureCacheDir(registry);
+  await evictStaleEntries();
   await downloadVsix(metadata.publisher, metadata.name, metadata.version, cachedPath, registry);
 
   return { path: cachedPath, metadata, fromCache: false };

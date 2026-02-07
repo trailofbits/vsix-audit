@@ -160,7 +160,7 @@ export async function clearCache(pattern?: string): Promise<number> {
     // Check if extension matches pattern
     if (pattern) {
       // Escape all regex metacharacters except * (which becomes .*)
-      const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+      const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
       const regexStr = escaped.replace(/\*/g, ".*");
       const regex = new RegExp("^" + regexStr + "$");
       if (!regex.test(extensionId)) {
@@ -177,6 +177,37 @@ export async function clearCache(pattern?: string): Promise<number> {
   }
 
   return deleted;
+}
+
+/** Default TTL for cached extensions: 14 days in milliseconds */
+const DEFAULT_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+/**
+ * Evict cached extensions older than the given TTL.
+ *
+ * Uses file mtime to determine age. Runs opportunistically
+ * and silently ignores errors (files already deleted, etc.).
+ *
+ * @param ttlMs - Max age in milliseconds (default: 14 days)
+ * @returns Number of files evicted
+ */
+export async function evictStaleEntries(ttlMs: number = DEFAULT_TTL_MS): Promise<number> {
+  const extensions = await listCached();
+  const cutoff = Date.now() - ttlMs;
+  let evicted = 0;
+
+  for (const ext of extensions) {
+    if (ext.cachedAt.getTime() < cutoff) {
+      try {
+        await rm(ext.path);
+        evicted++;
+      } catch {
+        // File may have been deleted already
+      }
+    }
+  }
+
+  return evicted;
 }
 
 /**
