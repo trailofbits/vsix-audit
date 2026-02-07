@@ -285,6 +285,42 @@ async function getRuleMeta(
   return result;
 }
 
+const VALID_SEVERITIES = new Set(["low", "medium", "high", "critical"]);
+
+async function buildYaraFinding(
+  match: YaraMatch,
+  ruleSourceMap: Map<string, string>,
+  targetRulesDir: string,
+  tempDir: string,
+): Promise<Finding> {
+  const ruleFile = ruleSourceMap.get(match.rule) ?? "unknown";
+  const rulePath = join(targetRulesDir, ruleFile);
+  const meta = await getRuleMeta(rulePath, match.rule);
+  const relativePath = match.file.replace(tempDir + "/", "");
+  const fileExt = relativePath.slice(relativePath.lastIndexOf(".")).toLowerCase();
+  const severity = VALID_SEVERITIES.has(meta.severity ?? "")
+    ? (meta.severity as Finding["severity"])
+    : "medium";
+
+  return {
+    id: `YARA_${match.rule}`,
+    title: `YARA rule match: ${match.rule}`,
+    description:
+      `YARA rule "${match.rule}" from ${ruleFile} ` +
+      "matched this file. This indicates the file " +
+      "contains patterns associated with known " +
+      "malware or suspicious behavior.",
+    severity,
+    category: "yara",
+    location: { file: relativePath },
+    metadata: {
+      rule: match.rule,
+      ruleFile,
+      fileType: fileExt,
+    },
+  };
+}
+
 /**
  * Run YARA rules against extension contents
  */
@@ -363,30 +399,7 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
       const matches = parseYaraOutput(stdout);
 
       for (const match of matches) {
-        const ruleFile = ruleSourceMap.get(match.rule) ?? "unknown";
-        const rulePath = join(targetRulesDir, ruleFile);
-        const meta = await getRuleMeta(rulePath, match.rule);
-
-        const relativePath = match.file.replace(tempDir + "/", "");
-        const fileExt = relativePath.slice(relativePath.lastIndexOf(".")).toLowerCase();
-
-        findings.push({
-          id: `YARA_${match.rule}`,
-          title: `YARA rule match: ${match.rule}`,
-          description:
-            `YARA rule "${match.rule}" from ${ruleFile} ` +
-            "matched this file. This indicates the file " +
-            "contains patterns associated with known " +
-            "malware or suspicious behavior.",
-          severity: (meta.severity as "low" | "medium" | "high" | "critical") ?? "medium",
-          category: "yara",
-          location: { file: relativePath },
-          metadata: {
-            rule: match.rule,
-            ruleFile,
-            fileType: fileExt,
-          },
-        });
+        findings.push(await buildYaraFinding(match, ruleSourceMap, targetRulesDir, tempDir));
       }
     } catch (error) {
       // YARA-X (yr) exit codes: 0 = success (matches or no matches), 1+ = error.
@@ -398,29 +411,7 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
       if (execError.stdout) {
         const partialMatches = parseYaraOutput(execError.stdout);
         for (const match of partialMatches) {
-          const ruleFile = ruleSourceMap.get(match.rule) ?? "unknown";
-          const rulePath = join(targetRulesDir, ruleFile);
-          const meta = await getRuleMeta(rulePath, match.rule);
-          const relativePath = match.file.replace(tempDir + "/", "");
-          const fileExt = relativePath.slice(relativePath.lastIndexOf(".")).toLowerCase();
-
-          findings.push({
-            id: `YARA_${match.rule}`,
-            title: `YARA rule match: ${match.rule}`,
-            description:
-              `YARA rule "${match.rule}" from ${ruleFile} ` +
-              "matched this file. This indicates the file " +
-              "contains patterns associated with known " +
-              "malware or suspicious behavior.",
-            severity: (meta.severity as "low" | "medium" | "high" | "critical") ?? "medium",
-            category: "yara",
-            location: { file: relativePath },
-            metadata: {
-              rule: match.rule,
-              ruleFile,
-              fileType: fileExt,
-            },
-          });
+          findings.push(await buildYaraFinding(match, ruleSourceMap, targetRulesDir, tempDir));
         }
       }
 
