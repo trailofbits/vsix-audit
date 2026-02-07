@@ -152,6 +152,7 @@ export async function loadZooData(): Promise<ZooData> {
     walletsContent,
     blockchainContent,
     telemetryContent,
+    githubC2Content,
   ] = await Promise.all([
     readFile(join(zooRoot, "blocklist", "extensions.json"), "utf8"),
     readFile(join(zooRoot, "iocs", "hashes.txt"), "utf8"),
@@ -161,6 +162,7 @@ export async function loadZooData(): Promise<ZooData> {
     readFile(join(zooRoot, "iocs", "wallets.txt"), "utf8"),
     readFile(join(zooRoot, "iocs", "blockchain-extensions.txt"), "utf8"),
     readFile(join(zooRoot, "telemetry", "known-services.txt"), "utf8").catch(() => ""),
+    readFile(join(zooRoot, "iocs", "github-c2.txt"), "utf8").catch(() => ""),
   ]);
 
   const blocklistFile = JSON.parse(blocklistContent) as BlocklistFile;
@@ -176,6 +178,7 @@ export async function loadZooData(): Promise<ZooData> {
     wallets: parseWalletFile(walletsContent),
     blockchainAllowlist: parseIOCFile(blockchainContent, (extId) => extId),
     telemetryServices: parseTelemetryServices(telemetryContent),
+    githubC2Accounts: parseIOCFile(githubC2Content, (username) => username.toLowerCase()),
   };
 
   return cachedZooData;

@@ -43,6 +43,7 @@ function makeZooData(maliciousPackages: string[] = []): ZooData {
     wallets: new Set(),
     blockchainAllowlist: new Set(),
     telemetryServices: new Map(),
+    githubC2Accounts: new Set(),
   };
 }
 

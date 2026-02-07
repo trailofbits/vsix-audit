@@ -18,6 +18,13 @@
 172.86.116.178:5918  # FAMOUS CHOLLIMA - BeaverTail socket.io exfiltration
 172.86.116.178:5978  # FAMOUS CHOLLIMA - BeaverTail socket.io exfiltration
 
+# Worms Lurking / GlassWorm-related (Jan 2026)
+217.69.11.57  # WormsLurking - Solana memo payload delivery (angular-studio extension)
+108.61.208.161  # WormsLurking - Data exfiltration endpoint (stolen credentials/wallets)
+
+# Ransomvibe Campaign
+161.35.78.215  # Ransomvibe - susvsex C2 server for encrypted file upload
+
 # HardHatRAT Campaign (Hetzner)
 95.216.37.186:5000  # HardHatRAT - Hetzner - Socket.IO WebSocket C2
 95.216.37.186:3011  # HardHatRAT - Hetzner - HTTP data exfiltration

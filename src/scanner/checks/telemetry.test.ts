@@ -30,6 +30,7 @@ function makeZooData(telemetryServices?: Map<string, TelemetryServiceInfo>): Zoo
     maliciousNpmPackages: new Set(),
     wallets: new Set(),
     blockchainAllowlist: new Set(),
+    githubC2Accounts: new Set(),
     telemetryServices:
       telemetryServices ??
       new Map([

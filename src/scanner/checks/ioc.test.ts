@@ -37,6 +37,7 @@ function makeZooData(overrides: Partial<ZooData> = {}): ZooData {
     wallets: new Set(),
     blockchainAllowlist: new Set(),
     telemetryServices: new Map(),
+    githubC2Accounts: new Set(),
     ...overrides,
   };
 }

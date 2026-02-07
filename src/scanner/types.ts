@@ -129,6 +129,7 @@ export interface ZooData {
   wallets: Set<string>;
   blockchainAllowlist: Set<string>;
   telemetryServices: Map<string, TelemetryServiceInfo>;
+  githubC2Accounts: Set<string>;
 }
 
 export interface BatchScanResult {

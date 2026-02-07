@@ -38,6 +38,16 @@ calendar[.]app[.]google/M2ZCvM8ULL56PD1d6  # GlassWorm - Google Calendar backup 
 199[.]247[.]13[.]106  # GlassWorm - Exfiltration endpoint
 65[.]20[.]99[.]82  # GlassWorm - Data exfiltration /wall endpoint (from stage2.dec.js)
 
+# These Vibes Are Off / ScreenConnect RAT Campaign
+angelic[.]su  # TheseVibesAreOff - ScreenConnect RAT payload delivery
+lmfao[.]su  # TheseVibesAreOff - ScreenConnect RAT variant
+
+# SleepyDuck Campaign
+sleepyduck[.]xyz  # SleepyDuck - Default C2 server for Ethereum contract RAT
+
+# Pokemon/Cryptominer Campaign (DevelopmentInc)
+mock1[.]su  # PokemonMiner - Monero miner payload delivery and mining pool proxy
+
 # Discord Webhook Exfiltration (legitimate service abused)
 discord[.]com/api/webhooks  # Multiple campaigns - Data exfiltration via webhooks
 

@@ -120,6 +120,10 @@ Pre-commit hooks (prek) run hygiene, security, quality, and test checks. Never u
 - Add YARA rules to `zoo/signatures/yara/`
 - Update blocklist in `zoo/blocklist/`
 
+### YARA Rules
+
+**MANDATORY:** Before writing, reviewing, or modifying any YARA rule, invoke `/yara-rule-authoring` first. This skill provides the style guide, YARA-X compatibility requirements, performance guidance, and linting scripts that all rules must follow. Do not author YARA rules from memory alone.
+
 ### Samples (in vsix-zoo)
 
 When adding samples to the zoo:
