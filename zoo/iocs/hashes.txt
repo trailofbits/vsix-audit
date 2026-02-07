@@ -40,6 +40,12 @@ bb68992f6aa2d3f316322e88d9e71491a38e95fd3a27f48084c66b9c210bd17d  # GlassWorm - 
 68e5fb92a7d7d182306a025010c77ae2cd89c39031cced13f9686a9f34671041  # GlassWorm - f_ex86.node.decoded (Rust DLL, pre-decryption)
 a9a6a03bd6958710aeacc2a23860a7f7f0d09497fef85fe658ac5406734061f8  # GlassWorm - priskinski.theme-allhallowseve-remake-1.0.0.vsix (ReversingLabs Dec2025)
 
+# SnowShoNo Campaign (ScreenConnect MSI)
+290027e4e32cf4983ccaa9811b3090c7397a3711d23e426ab144bec1167c456b  # SnowShoNo - ScreenConnect MSI installer payload
+
+# Pokemon/Cryptominer Campaign (Oct 2025)
+f92824508a829846cebd427a073336be7b298b13691e28bde0e8c667fb0db436  # PokemonMiner - Monero miner executable (45/70 VT detections)
+
 # Zoo samples (GitHub sources)
 2cdaee2863396e558f17503ad290163d513acbc3c2ca2dbfa6852c2e064ca9f1  # SnowShoNo - PowerShell downloader (obfuscated)
 6674b3505ac23b2354230d691b9e18c2dda74a66f76bb0df724286cb9b23581c  # ECM3401 - Extension Attack Suite .vsix

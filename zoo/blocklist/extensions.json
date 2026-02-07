@@ -1,7 +1,7 @@
 {
   "$schema": "../schemas/blocklist.schema.json",
-  "version": "1.1.0",
-  "lastUpdated": "2026-01-27",
+  "version": "1.2.0",
+  "lastUpdated": "2026-02-06",
   "extensions": [
     {
       "id": "IconKiefApp.material-icon-theme",
@@ -128,7 +128,7 @@
       "id": "juan-bianco.solidity-vlang",
       "name": "Solidity (SleepyDuck)",
       "reason": "SleepyDuck RAT - Ethereum smart contract C2",
-      "campaign": "WhiteCobra",
+      "campaign": "SleepyDuck",
       "platform": "openvsx",
       "addedDate": "2025-11-03",
       "reference": "https://www.bleepingcomputer.com/news/security/fake-solidity-vscode-extension-on-open-vsx-backdoors-developers/"
@@ -196,6 +196,612 @@
       "campaign": "MUT-9332",
       "addedDate": "2025-05-23",
       "reference": "https://securityonline.info/malicious-vs-code-extensions-deliver-spyware-steal-crypto-credentials/"
+    },
+    {
+      "id": "ai-driven-dev.ai-driven-dev",
+      "name": "AI Driven Dev",
+      "reason": "GlassWorm wave 2 - Solana C2, invisible Unicode obfuscation",
+      "campaign": "GlassWorm",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://www.koi.ai/blog/glassworm-returns-new-wave-openvsx-malware-expose-attacker-infrastructure"
+    },
+    {
+      "id": "adhamu.history-in-sublime-merge",
+      "name": "History in Sublime Merge",
+      "reason": "GlassWorm wave 2 - Solana C2, invisible Unicode obfuscation",
+      "campaign": "GlassWorm",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://www.koi.ai/blog/glassworm-returns-new-wave-openvsx-malware-expose-attacker-infrastructure"
+    },
+    {
+      "id": "yasuyuky.transient-emacs",
+      "name": "Transient Emacs",
+      "reason": "GlassWorm wave 2 - Solana C2, invisible Unicode obfuscation",
+      "campaign": "GlassWorm",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://www.koi.ai/blog/glassworm-returns-new-wave-openvsx-malware-expose-attacker-infrastructure"
+    },
+    {
+      "id": "prisma-inc.prisma-studio-assistance",
+      "name": "Prisma Studio Assistance",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "prettier-vsc.vsce-prettier",
+      "name": "Prettier (fake)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "flutcode.flutter-extension",
+      "name": "Flutter Extension (fake)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "csvmech.csvrainbow",
+      "name": "CSV Rainbow (fake)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "codevsce.codelddb-vscode",
+      "name": "CodeLLDB (fake)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "saoudrizvsce.claude-devsce",
+      "name": "Claude Dev (fake)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "saoudrizvsce.claude-dev",
+      "name": "Claude Dev (fake, OpenVSX)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "clangdcode.clangd-vsce",
+      "name": "Clangd (fake)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "cweijamysq.sync-settings-vscode",
+      "name": "Sync Settings (fake)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "bphpburnsus.iconesvscode",
+      "name": "VSCode Icons (fake)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "bphpburn.icons-vscode",
+      "name": "VSCode Icons (fake, OpenVSX)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "klustfix.kluster-code-verify",
+      "name": "Kluster Code Verify",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "vims-vsce.vscode-vim",
+      "name": "Vim (fake)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "yamlcode.yaml-vscode-extension",
+      "name": "YAML (fake)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "solblanco.svetle-vsce",
+      "name": "Svelte (fake)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "vsceue.volar-vscode",
+      "name": "Volar (fake)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "redmat.vscode-quarkus-pro",
+      "name": "Quarkus Pro (fake)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "msjsdreact.react-native-vsce",
+      "name": "React Native (fake)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "tailwind-nuxt.tailwindcss-for-react",
+      "name": "Tailwind CSS for React (fake)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "vitalik.solidity",
+      "name": "Solidity (fake vitalik)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://thehackernews.com/2025/12/glassworm-returns-with-24-malicious.html"
+    },
+    {
+      "id": "SolidityAI.Solidity",
+      "name": "Solidity Language (ScreenConnect RAT)",
+      "reason": "ScreenConnect RAT delivery via PowerShell IEX cradle",
+      "campaign": "TheseVibesAreOff",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://secureannex.com/blog/these-vibes-are-off/"
+    },
+    {
+      "id": "MarkSchmidtWrites.flutter-tool",
+      "name": "Flutter Tool (ScreenConnect RAT)",
+      "reason": "ScreenConnect RAT delivery via PowerShell IEX cradle",
+      "campaign": "TheseVibesAreOff",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://secureannex.com/blog/these-vibes-are-off/"
+    },
+    {
+      "id": "YosuaMichael.ZuraVSCode",
+      "name": "Zura VSCode (ScreenConnect RAT)",
+      "reason": "ScreenConnect RAT delivery via PowerShell IEX cradle",
+      "campaign": "TheseVibesAreOff",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://secureannex.com/blog/these-vibes-are-off/"
+    },
+    {
+      "id": "AnshumanSinha.sql-formatter-vsc",
+      "name": "SQL Formatter (ScreenConnect RAT)",
+      "reason": "ScreenConnect RAT delivery via PowerShell IEX cradle",
+      "campaign": "TheseVibesAreOff",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://secureannex.com/blog/these-vibes-are-off/"
+    },
+    {
+      "id": "SolarisAI.solaris-ai",
+      "name": "Solaris AI (ScreenConnect RAT)",
+      "reason": "ScreenConnect RAT delivery via PowerShell IEX cradle",
+      "campaign": "TheseVibesAreOff",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://secureannex.com/blog/these-vibes-are-off/"
+    },
+    {
+      "id": "HurryCode.HurryCode",
+      "name": "HurryCode (ScreenConnect RAT)",
+      "reason": "ScreenConnect RAT delivery via PowerShell IEX cradle",
+      "campaign": "TheseVibesAreOff",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://secureannex.com/blog/these-vibes-are-off/"
+    },
+    {
+      "id": "AnshumanSinha.solidity-debugging",
+      "name": "Solidity Debugging (ScreenConnect RAT)",
+      "reason": "ScreenConnect RAT delivery via PowerShell IEX cradle",
+      "campaign": "TheseVibesAreOff",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://secureannex.com/blog/these-vibes-are-off/"
+    },
+    {
+      "id": "weiweigao.gpu-shader-language-support",
+      "name": "GPU Shader Language Support (ScreenConnect RAT)",
+      "reason": "ScreenConnect RAT delivery via PowerShell IEX cradle",
+      "campaign": "TheseVibesAreOff",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://secureannex.com/blog/these-vibes-are-off/"
+    },
+    {
+      "id": "mark233smith.evernote-sync",
+      "name": "Evernote Sync (ScreenConnect RAT)",
+      "reason": "ScreenConnect RAT delivery via PowerShell IEX cradle",
+      "campaign": "TheseVibesAreOff",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://secureannex.com/blog/these-vibes-are-off/"
+    },
+    {
+      "id": "mycompiler.vscode-mycompiler",
+      "name": "MyCompiler (ScreenConnect RAT)",
+      "reason": "ScreenConnect RAT delivery via PowerShell IEX cradle",
+      "campaign": "TheseVibesAreOff",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://secureannex.com/blog/these-vibes-are-off/"
+    },
+    {
+      "id": "nicedoc.nicedoc-vscode",
+      "name": "NiceDoc (ScreenConnect RAT)",
+      "reason": "ScreenConnect RAT delivery via PowerShell IEX cradle",
+      "campaign": "TheseVibesAreOff",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://secureannex.com/blog/these-vibes-are-off/"
+    },
+    {
+      "id": "juanbianco.solibidity",
+      "name": "Solibidity (SleepyDuck typosquat)",
+      "reason": "SleepyDuck RAT variant - typosquat of juan-bianco.solidity-vlang",
+      "campaign": "SleepyDuck",
+      "platform": "openvsx",
+      "addedDate": "2026-02-06",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware"
+    },
+    {
+      "id": "angular-studio.ng-angular-extension",
+      "name": "Angular Language Service (fake)",
+      "reason": "GlassWorm stealer - Solana Etherhiding C2, NPM/GitHub credential theft, 60+ wallet types",
+      "campaign": "GlassWorm",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/worms-lurking"
+    },
+    {
+      "id": "developmentinc.pokemon",
+      "name": "Pokemon Theme (cryptominer)",
+      "reason": "Monero cryptominer - downloads miner from mock1[.]su",
+      "campaign": "PokemonMiner",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/pokemon-or-cryptominer"
+    },
+    {
+      "id": "developmentinc.cfx-lua-vs",
+      "name": "CFX Lua VS (cryptominer)",
+      "reason": "Monero cryptominer - downloads miner from mock1[.]su",
+      "campaign": "PokemonMiner",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/pokemon-or-cryptominer"
+    },
+    {
+      "id": "developmentinc.torizon-vs",
+      "name": "Torizon VS (cryptominer)",
+      "reason": "Monero cryptominer - downloads miner from mock1[.]su",
+      "campaign": "PokemonMiner",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/pokemon-or-cryptominer"
+    },
+    {
+      "id": "developmentinc.minecraftsnippets",
+      "name": "Minecraft Snippets (cryptominer)",
+      "reason": "Monero cryptominer - downloads miner from mock1[.]su",
+      "campaign": "PokemonMiner",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/pokemon-or-cryptominer"
+    },
+    {
+      "id": "developmentinc.kombai-vs",
+      "name": "Kombai VS (cryptominer)",
+      "reason": "Monero cryptominer - downloads miner from mock1[.]su",
+      "campaign": "PokemonMiner",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/pokemon-or-cryptominer"
+    },
+    {
+      "id": "ShowSnowcrypto.SnowShoNo",
+      "name": "Solidity Language Support (SnowShoNo)",
+      "reason": "ScreenConnect RAT - obfuscated PowerShell downloads from niggboo[.]com",
+      "campaign": "SnowShoNo",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/these-vibes-are-off/"
+    },
+    {
+      "id": "soliditysupport.solid",
+      "name": "Solidity Language (ScreenConnect RAT)",
+      "reason": "ScreenConnect RAT delivery via PowerShell from angelic[.]su",
+      "campaign": "TheseVibesAreOff",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/these-vibes-are-off/"
+    },
+    {
+      "id": "ethereum.solidity-ethereum",
+      "name": "Solidity Ethereum (Solidity squatter)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "ethfoundry.solidityethereum",
+      "name": "Solidity Ethereum (Solidity squatter)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "juan-blanco.solidity",
+      "name": "Solidity (juan-blanco typosquat)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "nomicfdn.hardhat-solidity",
+      "name": "Hardhat Solidity (nomic typosquat)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "solidityai.solid",
+      "name": "Solid (SolidityAI variant)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "chaindevtools.solidity-pro",
+      "name": "Solidity Pro (Solidity squatter)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "nomic-foundation.hardhat-solidity",
+      "name": "Hardhat Solidity (nomic-foundation typosquat)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "nomic-fdn.hardhat-solidity",
+      "name": "Hardhat Solidity (nomic-fdn typosquat)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "juan-blanco.vscode-solidity",
+      "name": "VSCode Solidity (juan-blanco typosquat)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "juanfblanco.solidity-ethereum-vsc",
+      "name": "Solidity Ethereum VSC (typosquat)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "kineticsquid.solidity-ethereum-vsc",
+      "name": "Solidity Ethereum VSC (kineticsquid)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "nomic-fdn.solidity-hardhat",
+      "name": "Solidity Hardhat (nomic-fdn typosquat)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "solidity-syntax.solidity-lang",
+      "name": "Solidity Language (solidity-syntax)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "juanblonco.solidity",
+      "name": "Solidity (juanblonco typosquat)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "soldevdesigne.pythonweb",
+      "name": "PythonWeb (Solidity campaign anomaly)",
+      "reason": "Published by Solidity squatter operator on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "nethereum.solidity",
+      "name": "Solidity (nethereum typosquat)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "juanbianco.solidity-lang",
+      "name": "Solidity Language (juanbianco typosquat)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "juanrblanco.solidity-lang",
+      "name": "Solidity Language (juanrblanco typosquat)",
+      "reason": "Solidity typosquat malware on OpenVSX",
+      "campaign": "SoliditySquatters",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/sleepyduck-malware/"
+    },
+    {
+      "id": "dart-vsc.code-dart",
+      "name": "Dart VSCode (GlassWorm wave 3)",
+      "reason": "GlassWorm wave 3 - staging/download count manipulation",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/glassworm-continued"
+    },
+    {
+      "id": "lyywemhan.code-formatter-and-minifier-vscode",
+      "name": "Code Formatter & Minifier (GlassWorm wave 3)",
+      "reason": "GlassWorm wave 3 - staging/download count manipulation",
+      "campaign": "GlassWorm",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/glassworm-continued"
+    },
+    {
+      "id": "svltsweet.svetle-for-cursor",
+      "name": "Svelte for Cursor (GlassWorm wave 3)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/glassworm-continued"
+    },
+    {
+      "id": "solblanco.svelte-vscode",
+      "name": "Svelte for VS Code (GlassWorm wave 3)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/glassworm-continued"
+    },
+    {
+      "id": "eamodas.shiny-vscode",
+      "name": "Shiny (GlassWorm wave 3)",
+      "reason": "GlassWorm wave 3 - staging/download count manipulation",
+      "campaign": "GlassWorm",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/glassworm-continued"
+    },
+    {
+      "id": "msjsdreact.react-native-vscode",
+      "name": "React Native VSCode (GlassWorm wave 3)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/glassworm-continued"
+    },
+    {
+      "id": "clangdcode.clangd-vscode",
+      "name": "clangd-vscode (GlassWorm wave 3)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/glassworm-continued"
+    },
+    {
+      "id": "csvmech.csv-sql-tsv-rainbow",
+      "name": "CSV Rainbow (GlassWorm wave 3, OpenVSX variant)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/glassworm-continued"
+    },
+    {
+      "id": "iconkief.icon-theme-material",
+      "name": "Icon Theme Material (GlassWorm wave 3, OpenVSX variant)",
+      "reason": "GlassWorm wave 3 - Rust implant with Solana C2",
+      "campaign": "GlassWorm",
+      "platform": "openvsx",
+      "addedDate": "2026-02-07",
+      "reference": "https://secureannex.com/blog/glassworm-continued"
     }
   ]
 }

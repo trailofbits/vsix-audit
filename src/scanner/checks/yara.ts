@@ -285,6 +285,42 @@ async function getRuleMeta(
   return result;
 }
 
+const VALID_SEVERITIES = new Set(["low", "medium", "high", "critical"]);
+
+async function buildYaraFinding(
+  match: YaraMatch,
+  ruleSourceMap: Map<string, string>,
+  targetRulesDir: string,
+  tempDir: string,
+): Promise<Finding> {
+  const ruleFile = ruleSourceMap.get(match.rule) ?? "unknown";
+  const rulePath = join(targetRulesDir, ruleFile);
+  const meta = await getRuleMeta(rulePath, match.rule);
+  const relativePath = match.file.replace(tempDir + "/", "");
+  const fileExt = relativePath.slice(relativePath.lastIndexOf(".")).toLowerCase();
+  const severity = VALID_SEVERITIES.has(meta.severity ?? "")
+    ? (meta.severity as Finding["severity"])
+    : "medium";
+
+  return {
+    id: `YARA_${match.rule}`,
+    title: `YARA rule match: ${match.rule}`,
+    description:
+      `YARA rule "${match.rule}" from ${ruleFile} ` +
+      "matched this file. This indicates the file " +
+      "contains patterns associated with known " +
+      "malware or suspicious behavior.",
+    severity,
+    category: "yara",
+    location: { file: relativePath },
+    metadata: {
+      rule: match.rule,
+      ruleFile,
+      fileType: fileExt,
+    },
+  };
+}
+
 /**
  * Run YARA rules against extension contents
  */
@@ -363,45 +399,37 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
       const matches = parseYaraOutput(stdout);
 
       for (const match of matches) {
-        const ruleFile = ruleSourceMap.get(match.rule) ?? "unknown";
-        const rulePath = join(targetRulesDir, ruleFile);
-        const meta = await getRuleMeta(rulePath, match.rule);
-
-        const relativePath = match.file.replace(tempDir + "/", "");
-        const fileExt = relativePath.slice(relativePath.lastIndexOf(".")).toLowerCase();
-
-        findings.push({
-          id: `YARA_${match.rule}`,
-          title: `YARA rule match: ${match.rule}`,
-          description:
-            `YARA rule "${match.rule}" from ${ruleFile} ` +
-            "matched this file. This indicates the file " +
-            "contains patterns associated with known " +
-            "malware or suspicious behavior.",
-          severity: (meta.severity as "low" | "medium" | "high" | "critical") ?? "medium",
-          category: "yara",
-          location: { file: relativePath },
-          metadata: {
-            rule: match.rule,
-            ruleFile,
-            fileType: fileExt,
-          },
-        });
+        findings.push(await buildYaraFinding(match, ruleSourceMap, targetRulesDir, tempDir));
       }
     } catch (error) {
-      const isNoMatch = error instanceof Error && error.message.includes("exit code 1");
-      if (!isNoMatch) {
-        findings.push({
-          id: "YARA_SCAN_ERROR",
-          title: "YARA scan failed",
-          description: "YARA scan error. Rules were not applied, " + "reducing detection coverage.",
-          severity: "low",
-          category: "yara",
-          metadata: {
-            error: error instanceof Error ? error.message : String(error),
-          },
-        });
+      // YARA-X (yr) exit codes: 0 = success (matches or no matches), 1+ = error.
+      // execFileAsync throws on any non-zero exit code. Unlike legacy YARA,
+      // YARA-X does NOT use exit code 1 for "no matches" — it always means
+      // an actual error (bad rules, missing files, etc.).
+      // Recover any partial matches from stdout before reporting the error.
+      const execError = error as { stdout?: string; stderr?: string; code?: number };
+      if (execError.stdout) {
+        const partialMatches = parseYaraOutput(execError.stdout);
+        for (const match of partialMatches) {
+          findings.push(await buildYaraFinding(match, ruleSourceMap, targetRulesDir, tempDir));
+        }
       }
+
+      findings.push({
+        id: "YARA_SCAN_ERROR",
+        title: "YARA scan encountered errors",
+        description:
+          "YARA-X reported errors during scan. " +
+          "Some rules may not have been applied, " +
+          "reducing detection coverage.",
+        severity: "low",
+        category: "yara",
+        metadata: {
+          error: error instanceof Error ? error.message : String(error),
+          stderr: execError.stderr ?? "",
+          exitCode: execError.code,
+        },
+      });
     }
   } finally {
     // Clean up temp directory

@@ -276,11 +276,58 @@ export function checkWallets(
   return findings;
 }
 
+export function checkGithubC2(contents: VsixContents, githubC2Accounts: Set<string>): Finding[] {
+  if (githubC2Accounts.size === 0) return [];
+
+  const findings: Finding[] = [];
+
+  for (const [filename, buffer] of contents.files) {
+    if (!isScannable(filename, SCANNABLE_EXTENSIONS_IOC)) continue;
+
+    const content = contents.stringContents?.get(filename) ?? buffer.toString("utf8");
+    const lineStarts = computeLineStarts(content);
+
+    for (const account of githubC2Accounts) {
+      // Match GitHub API URLs or raw content URLs containing the username
+      const patterns = [
+        `api.github.com/repos/${account}/`,
+        `raw.githubusercontent.com/${account}/`,
+        `github.com/${account}/`,
+      ];
+      for (const pattern of patterns) {
+        const idx = content.indexOf(pattern);
+        if (idx === -1) continue;
+
+        const line = findLineNumberByString(content, pattern, lineStarts);
+        findings.push({
+          id: "KNOWN_GITHUB_C2",
+          title: "Known GitHub C2 account reference",
+          description:
+            `File "${filename}" references GitHub account ` +
+            `"${account}" which is associated with malware C2. ` +
+            "Malware uses GitHub repos to poll for commands.",
+          severity: "critical",
+          category: "ioc",
+          location: line !== undefined ? { file: filename, line } : { file: filename },
+          metadata: {
+            account,
+            matched: pattern,
+          },
+        });
+        break; // One finding per account per file
+      }
+    }
+  }
+
+  return findings;
+}
+
 export function checkIocs(contents: VsixContents, zooData: ZooData): Finding[] {
   return [
     ...checkHashes(contents, zooData.hashes),
     ...checkDomains(contents, zooData.domains),
     ...checkIps(contents, zooData.ips),
     ...checkWallets(contents, zooData.wallets, zooData.blockchainAllowlist),
+    ...checkGithubC2(contents, zooData.githubC2Accounts),
   ];
 }

@@ -1,0 +1,11 @@
+# GitHub Accounts Used for C2
+# Format: USERNAME  # Campaign - Notes
+#
+# These GitHub accounts/repos are used by malware for:
+# - C2 command polling via repository content
+# - Payload hosting in repos or gists
+# - Configuration updates via commits
+#
+# Scanner checks for GitHub API URLs containing these usernames
+
+aykhanmv  # Ransomvibe/susvsex - C2 commands via GitHub repo polling

