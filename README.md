@@ -39,6 +39,7 @@ Matches against curated threat intelligence from `zoo/iocs/`.
 | Malware hashes | SHA256 hash of files matches known samples                          | Critical |
 | C2 domains     | Domain extraction matched against blocklist                         | Critical |
 | C2 IPs         | IPv4 extraction (excludes private ranges) matched against blocklist | Critical |
+| GitHub C2      | GitHub API/raw URLs referencing known C2 accounts                   | Critical |
 | Crypto wallets | BTC (legacy/SegWit/Bech32), ETH, Monero, Solana address patterns    | High     |
 
 ### AST Analysis (`ast.ts`)
@@ -78,15 +79,19 @@ External YARA-X engine for complex pattern matching. Rules loaded from `zoo/sign
 | Rule File                     | Detects                                                        |
 | ----------------------------- | -------------------------------------------------------------- |
 | `blockchain_c2.yar`           | Solana RPC C2, memo parsing, blockchain-based command channels |
+| `blockchain_c2_extended.yar`  | Ethereum smart contract C2 via ethers.js                       |
 | `code_execution.yar`          | `eval`, `Function` constructor, `child_process` patterns       |
 | `credential_harvesting.yar`   | NPM/GitHub/SSH credential theft, `.npmrc` access               |
 | `crypto_wallet_targeting.yar` | MetaMask, Phantom, Exodus wallet extension targeting           |
 | `data_exfiltration.yar`       | Discord webhooks, SSH key theft, browser data exfil            |
 | `google_calendar_c2.yar`      | Google Calendar API abuse for C2 communication                 |
 | `multi_stage_attacks.yar`     | Dropper chains, reverse shells, keylogger patterns             |
+| `native_addon_loader.yar`     | Suspicious .node native addon loading patterns                 |
 | `obfuscation_patterns.yar`    | Hex variables, `fromCharCode`, packed/encoded code             |
+| `persistence_macos.yar`       | LaunchAgent persistence, Apple masquerading, Login Items       |
 | `powershell_attacks.yar`      | Hidden windows, `-ExecutionPolicy Bypass`, AMSI evasion        |
 | `rat_capabilities.yar`        | SOCKS proxy, VNC, remote command execution                     |
+| `rmm_tool_delivery.yar`       | ScreenConnect, AnyDesk, TeamViewer delivery via extensions     |
 | `self_propagation.yar`        | GlassWorm-style worm propagation via extension modification    |
 | `unicode_stealth.yar`         | Invisible Unicode, variation selectors, homoglyphs             |
 
@@ -246,7 +251,7 @@ The `zoo/` directory contains threat intelligence for detection:
 | `zoo/signatures/` | YARA rules for credential harvesting, RAT behavior, self-propagation  |
 | `zoo/telemetry/`  | Known telemetry service domains (analytics, crash-reporting, APM)     |
 
-**IOCs sourced from:** GlassWorm, Evelyn, TigerJack, OctoRAT, WhiteCobra, Shiba, MUT-9332, FAMOUS CHOLLIMA, ReversingLabs-Dec2025
+**IOCs sourced from:** GlassWorm, Evelyn, TigerJack, OctoRAT, WhiteCobra, Shiba, MUT-9332, FAMOUS CHOLLIMA, HardHatRAT, SnowShoNo, SleepyDuck, PokemonMiner, TheseVibesAreOff, SoliditySquatters, ReversingLabs-Dec2025
 
 ### Malware Samples (for development)
 
