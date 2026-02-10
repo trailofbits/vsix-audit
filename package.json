@@ -44,7 +44,7 @@
     "prepublishOnly": "npm run check && npm run build"
   },
   "dependencies": {
-    "commander": "14.0.2",
+    "commander": "14.0.3",
     "oxc-parser": "0.111.0",
     "picocolors": "1.1.1"
   },
