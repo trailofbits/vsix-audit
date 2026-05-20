@@ -35,8 +35,7 @@ rule LOADER_JS_Download_Write_Execute_Jan25 {
     // Temp/hidden location indicators (require these for dropper pattern)
     $temp1 = "/tmp/" ascii wide
     $temp2 = "\\Temp\\" ascii wide
-    $temp3 = "os.tmpdir" ascii wide
-    $temp4 = "TEMP" ascii wide
+    $temp3 = "TEMP" ascii wide
 
     // Base64 decode before write (payload decoding)
     $decode1 = "atob(" ascii wide
@@ -56,7 +55,7 @@ rule LOADER_JS_Download_Write_Execute_Jan25 {
     // Require all three stages PLUS dropper indicator
     any of ($dl*) and any of ($write*) and any of ($exec*) and
     (
-      any of ($temp*) or  // Writing to temp directory
+      any of ($temp*) or  // Writing to explicit temp directory
       any of ($decode*) or  // Decoding payload before write
       any of ($chmod*) or  // Making file executable
       any of ($hidden*)  // Writing to hidden location
@@ -315,8 +314,6 @@ rule MAL_JS_GlassWorm_Extension_Modification_Jan25 {
     // Extension paths
     $path1 = ".vscode/extensions" ascii wide
     $path2 = ".vscode-server/extensions" ascii wide
-    $path3 = "extensions/" ascii wide
-
     // File modification
     $mod1 = "writeFileSync" ascii wide
     $mod2 = "writeFile" ascii wide
@@ -327,5 +324,5 @@ rule MAL_JS_GlassWorm_Extension_Modification_Jan25 {
     $file3 = ".vsix" ascii wide
 
   condition:
-    any of ($path*) and any of ($mod*) and any of ($file*)
+    ($path1 or $path2) and any of ($mod*) and any of ($file*)
 }

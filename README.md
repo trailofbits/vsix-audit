@@ -194,6 +194,8 @@ Downloaded extensions are cached for faster subsequent scans:
 
 Extensions are organized by registry (`marketplace/`, `openvsx/`, `cursor/`).
 
+Set `VSIX_AUDIT_CACHE_DIR` to override the cache location, which is useful for CI and sandboxed environments.
+
 **Cache management commands:**
 
 ```sh
