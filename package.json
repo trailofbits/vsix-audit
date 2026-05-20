@@ -45,14 +45,14 @@
   },
   "dependencies": {
     "@types/yauzl": "2.10.3",
-    "commander": "14.0.2",
-    "oxc-parser": "0.111.0",
+    "commander": "14.0.3",
+    "oxc-parser": "0.112.0",
     "picocolors": "1.1.1",
     "yauzl": "3.3.0"
   },
   "devDependencies": {
-    "@types/node": "25.0.10",
-    "oxlint": "1.42.0",
+    "@types/node": "25.2.0",
+    "oxlint": "1.43.0",
     "typescript": "5.9.3",
     "vitest": "4.0.18"
   },
