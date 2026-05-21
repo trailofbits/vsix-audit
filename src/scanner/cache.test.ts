@@ -1,6 +1,7 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearCache,
@@ -11,6 +12,8 @@ import {
   isCached,
   listCached,
 } from "./cache.js";
+
+const CACHE_DIR_ENV_VAR = "VSIX_AUDIT_CACHE_DIR";
 
 describe("getCacheDir", () => {
   const originalEnv = process.env;
@@ -65,6 +68,11 @@ describe("getCacheDir", () => {
     const dir = getCacheDir();
     expect(dir).toContain("vsix-audit");
   });
+
+  it("respects explicit cache override", () => {
+    process.env[CACHE_DIR_ENV_VAR] = "/tmp/vsix-audit-cache";
+    expect(getCacheDir()).toBe("/tmp/vsix-audit-cache");
+  });
 });
 
 describe("getCachedPath", () => {
@@ -98,16 +106,20 @@ describe("getCachedPath", () => {
 
 describe("cache operations", () => {
   let testCacheDir: string;
+  const originalCacheDir = process.env[CACHE_DIR_ENV_VAR];
 
   beforeEach(async () => {
-    // Create a temporary test cache directory
-    testCacheDir = join(getCacheDir(), "_test_" + Date.now());
-    await mkdir(testCacheDir, { recursive: true });
+    testCacheDir = await mkdtemp(join(tmpdir(), "vsix-audit-cache-test-"));
+    process.env[CACHE_DIR_ENV_VAR] = testCacheDir;
   });
 
   afterEach(async () => {
-    // Clean up test directory
     await rm(testCacheDir, { recursive: true, force: true });
+    if (originalCacheDir === undefined) {
+      delete process.env[CACHE_DIR_ENV_VAR];
+    } else {
+      process.env[CACHE_DIR_ENV_VAR] = originalCacheDir;
+    }
   });
 
   describe("isCached", () => {
@@ -119,10 +131,8 @@ describe("cache operations", () => {
 
   describe("listCached", () => {
     it("returns empty array when cache is empty", async () => {
-      // This tests against the real cache dir, which may have extensions
-      // We just verify it returns an array
       const result = await listCached();
-      expect(Array.isArray(result)).toBe(true);
+      expect(result).toEqual([]);
     });
   });
 
@@ -160,29 +170,38 @@ describe("cache operations", () => {
 
 describe("cache with test files", () => {
   let testCacheDir: string;
+  const originalCacheDir = process.env[CACHE_DIR_ENV_VAR];
 
   beforeEach(async () => {
-    // Create a unique test cache by manipulating env
-    testCacheDir = join(getCacheDir(), "_integration_test_" + Date.now());
+    testCacheDir = await mkdtemp(join(tmpdir(), "vsix-audit-cache-integration-"));
+    process.env[CACHE_DIR_ENV_VAR] = testCacheDir;
   });
 
   afterEach(async () => {
     await rm(testCacheDir, { recursive: true, force: true });
+    if (originalCacheDir === undefined) {
+      delete process.env[CACHE_DIR_ENV_VAR];
+    } else {
+      process.env[CACHE_DIR_ENV_VAR] = originalCacheDir;
+    }
   });
 
   it("lists extensions in cache directory", async () => {
-    // Create test structure
     const marketplaceDir = join(testCacheDir, "marketplace");
     await mkdir(marketplaceDir, { recursive: true });
 
-    // Create a fake vsix file
     const testVsix = join(marketplaceDir, "test-pub.test-ext-1.0.0.vsix");
     await writeFile(testVsix, "fake vsix content");
 
-    // Since we can't easily mock getCacheDir in this test,
-    // we verify the parsing logic works by checking the file exists
-    const { stat } = await import("node:fs/promises");
-    const fileStat = await stat(testVsix);
-    expect(fileStat.size).toBeGreaterThan(0);
+    const cached = await listCached();
+    expect(cached).toHaveLength(1);
+    expect(cached[0]).toMatchObject({
+      registry: "marketplace",
+      publisher: "test-pub",
+      name: "test-ext",
+      version: "1.0.0",
+      path: testVsix,
+    });
+    expect(cached[0]?.size).toBeGreaterThan(0);
   });
 });

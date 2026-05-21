@@ -431,13 +431,43 @@ describe("extractVsix", () => {
     }
   });
 
+  it("uses the last duplicate entry for the same normalized path", async () => {
+    const manifest = JSON.stringify({
+      name: "duplicate-entry-ext",
+      publisher: "test",
+      version: "1.0.0",
+    });
+
+    const zipBuffer = createTestZip(
+      [
+        { name: "extension/package.json", content: manifest },
+        { name: "extension/main.js", content: 'console.log("first");' },
+        { name: "extension/main.js", content: 'console.log("second");' },
+      ],
+      { useDataDescriptor: false },
+    );
+
+    const vsixPath = join(tmpdir(), `test-duplicate-entry-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.files.get("main.js")?.toString()).toBe('console.log("second");');
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
   it("throws on invalid ZIP without EOCD", async () => {
     const invalidZip = Buffer.from("not a valid zip file");
     const vsixPath = join(tmpdir(), `test-invalid-${Date.now()}.vsix`);
     await writeFile(vsixPath, invalidZip);
 
     try {
-      await expect(extractVsix(vsixPath)).rejects.toThrow("End of central directory not found");
+      await expect(extractVsix(vsixPath)).rejects.toThrow(
+        "End of central directory record signature not found",
+      );
     } finally {
       await rm(vsixPath, { force: true });
     }

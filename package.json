@@ -44,15 +44,17 @@
     "prepublishOnly": "npm run check && npm run build"
   },
   "dependencies": {
+    "@types/yauzl": "2.10.3",
     "commander": "14.0.3",
     "oxc-parser": "0.120.0",
-    "picocolors": "1.1.1"
+    "picocolors": "1.1.1",
+    "yauzl": "3.3.0"
   },
   "devDependencies": {
-    "@types/node": "25.2.0",
+    "@types/node": "25.5.0",
     "oxlint": "1.43.0",
     "typescript": "5.9.3",
-    "vitest": "4.0.18"
+    "vitest": "4.1.0"
   },
   "engines": {
     "node": ">=22"
