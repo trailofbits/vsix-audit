@@ -17,10 +17,9 @@ rule SUSP_JS_Eval_Base64_Jan25 {
     // Base64 decode patterns
     $decode1 = "atob(" ascii wide
     $decode2 = /Buffer\.from\([^,]+,\s*["']base64["']\)/ ascii wide
-    $decode3 = "base64" ascii wide
 
   condition:
-    $eval and any of ($decode*)
+    $eval and ($decode1 or $decode2)
 }
 
 rule SUSP_JS_Function_Constructor_Jan25 {
@@ -52,8 +51,7 @@ rule SUSP_JS_Eval_Charcode_Jan25 {
 
     // String construction
     $build1 = "String.fromCharCode" ascii wide
-    $build2 = "charCodeAt" ascii wide
-    $build3 = /\\x[0-9a-fA-F]{2}/ ascii wide
+    $build2 = /\\x[0-9a-fA-F]{2}(\\x[0-9a-fA-F]{2}){4,}/ ascii wide
 
   condition:
     $eval and any of ($build*)
