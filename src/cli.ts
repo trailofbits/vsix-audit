@@ -96,7 +96,7 @@ cli
   .option("-j, --jobs <n>", "Number of parallel scans (default: 4)", "4")
   .option(
     "-m, --module <names>",
-    "Run only specific modules (comma-separated: package,obfuscation,ast,ioc,yara)",
+    "Run only specific modules (comma-separated: package,obfuscation,ast,ioc,yara,telemetry)",
   )
   .option("--profile", "Show detailed timing breakdown for each module")
   .action(async (target: string, options: CliScanOptions) => {

@@ -286,6 +286,51 @@ async function getRuleMeta(
 }
 
 const VALID_SEVERITIES = new Set(["low", "medium", "high", "critical"]);
+const DEPENDENCY_PATH_SUPPRESSED_RULES = new Set([
+  "LOADER_JS_Download_Write_Execute_Jan25",
+  "STEALER_JS_Credential_File_Exfil_Jan25",
+  "SUSP_JS_Eval_Base64_Jan25",
+  "SUSP_JS_Eval_Charcode_Jan25",
+  "SUSP_JS_Obfuscation_Eval_Jan25",
+  "SUSP_JS_Function_Constructor_Jan25",
+  "SUSP_JS_Child_Process_Variable_Jan25",
+  "SUSP_JS_Decimal_Byte_Array_Jan25",
+  "SUSP_JS_Hex_Escape_Chain_Jan25",
+  "SUSP_JS_String_Array_Rotation_Jan25",
+]);
+const GENERATED_PATH_SUPPRESSED_RULES = new Set([
+  "LOADER_JS_Download_Write_Execute_Jan25",
+  "RAT_JS_GlassWorm_Remote_Exec_Jan25",
+  "STEALER_JS_Credential_File_Exfil_Jan25",
+  "SUSP_JS_Eval_Base64_Jan25",
+  "SUSP_JS_Eval_Charcode_Jan25",
+  "SUSP_JS_Obfuscation_Eval_Jan25",
+  "SUSP_JS_Function_Constructor_Jan25",
+  "SUSP_JS_Child_Process_Variable_Jan25",
+  "SUSP_JS_Decimal_Byte_Array_Jan25",
+  "SUSP_JS_Hex_Escape_Chain_Jan25",
+  "SUSP_JS_String_Array_Rotation_Jan25",
+]);
+
+function shouldSuppressYaraMatch(rule: string, relativePath: string): boolean {
+  const normalizedPath = relativePath.replace(/\\/g, "/");
+  const isDependencyPath =
+    normalizedPath.startsWith("node_modules/") || normalizedPath.includes("/node_modules/");
+  const isGeneratedPath =
+    normalizedPath.startsWith("dist/") ||
+    normalizedPath.startsWith("out/") ||
+    normalizedPath.startsWith("build/") ||
+    normalizedPath.startsWith("lib/");
+
+  if (
+    (isDependencyPath && DEPENDENCY_PATH_SUPPRESSED_RULES.has(rule)) ||
+    (isGeneratedPath && GENERATED_PATH_SUPPRESSED_RULES.has(rule))
+  ) {
+    return true;
+  }
+
+  return false;
+}
 
 async function buildYaraFinding(
   match: YaraMatch,
@@ -399,6 +444,10 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
       const matches = parseYaraOutput(stdout);
 
       for (const match of matches) {
+        const relativePath = match.file.replace(tempDir + "/", "");
+        if (shouldSuppressYaraMatch(match.rule, relativePath)) {
+          continue;
+        }
         findings.push(await buildYaraFinding(match, ruleSourceMap, targetRulesDir, tempDir));
       }
     } catch (error) {
@@ -411,6 +460,10 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
       if (execError.stdout) {
         const partialMatches = parseYaraOutput(execError.stdout);
         for (const match of partialMatches) {
+          const relativePath = match.file.replace(tempDir + "/", "");
+          if (shouldSuppressYaraMatch(match.rule, relativePath)) {
+            continue;
+          }
           findings.push(await buildYaraFinding(match, ruleSourceMap, targetRulesDir, tempDir));
         }
       }
