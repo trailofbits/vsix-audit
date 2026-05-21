@@ -46,7 +46,7 @@
   "dependencies": {
     "@types/yauzl": "2.10.3",
     "commander": "14.0.3",
-    "oxc-parser": "0.112.0",
+    "oxc-parser": "0.120.0",
     "picocolors": "1.1.1",
     "yauzl": "3.3.0"
   },
