@@ -128,7 +128,7 @@ rule SUSP_JS_Obfuscation_Eval_Jan25 {
   strings:
     // Obfuscation indicators
     $obf1 = /_0x[a-fA-F0-9]{4,}/ ascii wide
-    $obf2 = /\\x[a-fA-F0-9]{2}/ ascii wide
+    $obf2 = /\\x[0-9a-fA-F]{2}(\\x[0-9a-fA-F]{2}){4,}/ ascii wide
     $obf3 = "String.fromCharCode" ascii wide
 
     // Eval patterns
