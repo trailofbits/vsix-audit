@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { Registry } from "./types.js";
 
 const APP_NAME = "vsix-audit";
+const CACHE_DIR_ENV_VAR = "VSIX_AUDIT_CACHE_DIR";
 
 export interface CachedExtension {
   registry: Registry;
@@ -18,10 +19,16 @@ export interface CachedExtension {
 /**
  * Get the XDG-compliant cache directory for vsix-audit
  *
+ * - Override: $VSIX_AUDIT_CACHE_DIR
  * - macOS: ~/Library/Caches/vsix-audit/
  * - Linux: $XDG_CACHE_HOME/vsix-audit/ or ~/.cache/vsix-audit/
  */
 export function getCacheDir(): string {
+  const override = process.env[CACHE_DIR_ENV_VAR];
+  if (override) {
+    return override;
+  }
+
   const os = platform();
 
   if (os === "darwin") {

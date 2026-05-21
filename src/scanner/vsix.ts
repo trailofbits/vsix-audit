@@ -1,13 +1,10 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { inflateRawSync } from "node:zlib";
+import * as yauzl from "yauzl";
 import type { VsixContents, VsixManifest } from "./types.js";
 
 const VSIX_EXTENSION_PREFIX = "extension/";
-const LOCAL_FILE_HEADER = 0x04034b50;
-const CENTRAL_DIR_HEADER = 0x02014b50;
-const END_OF_CENTRAL_DIR = 0x06054b50;
 
 /** Maximum uncompressed size for a single entry (500 MB). */
 export const MAX_ENTRY_SIZE = 500 * 1024 * 1024;
@@ -28,194 +25,155 @@ function isPathSafe(path: string): boolean {
   return !normalized.some((segment) => segment === ".." || segment.startsWith(".."));
 }
 
-interface ZipEntry {
-  name: string;
-  compressedSize: number;
-  uncompressedSize: number;
-  compressionMethod: number;
-  dataOffset: number;
+function openZipFile(vsixPath: string): Promise<yauzl.ZipFile> {
+  return new Promise((resolve, reject) => {
+    yauzl.open(
+      vsixPath,
+      {
+        autoClose: false,
+        lazyEntries: true,
+        decodeStrings: true,
+        validateEntrySizes: false,
+      },
+      (error, zipFile) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (!zipFile) {
+          reject(new Error("Invalid ZIP: failed to open archive"));
+          return;
+        }
+        resolve(zipFile);
+      },
+    );
+  });
 }
 
-interface CentralDirEntry {
-  fileName: string;
-  compressedSize: number;
-  uncompressedSize: number;
-  compressionMethod: number;
-  localHeaderOffset: number;
-}
+function collectZipEntries(zipFile: yauzl.ZipFile): Promise<yauzl.Entry[]> {
+  return new Promise((resolve, reject) => {
+    const entries: yauzl.Entry[] = [];
 
-/**
- * Find the End of Central Directory record by searching backwards from end of file.
- * The EOCD is at least 22 bytes and can have a variable-length comment.
- */
-function findEndOfCentralDir(buffer: Buffer): number {
-  // EOCD is minimum 22 bytes, max comment is 65535 bytes
-  const minEocdOffset = Math.max(0, buffer.length - 22 - 65535);
-
-  for (let i = buffer.length - 22; i >= minEocdOffset; i--) {
-    if (buffer.readUInt32LE(i) === END_OF_CENTRAL_DIR) {
-      return i;
-    }
-  }
-
-  throw new Error("Invalid ZIP: End of central directory not found");
-}
-
-/**
- * Parse the central directory to get accurate file sizes.
- * Central directory always has correct sizes, even when local headers use data descriptors.
- */
-function parseCentralDirectory(buffer: Buffer): Map<string, CentralDirEntry> {
-  const eocdOffset = findEndOfCentralDir(buffer);
-  const cdEntryCount = buffer.readUInt16LE(eocdOffset + 10);
-  const cdOffset = buffer.readUInt32LE(eocdOffset + 16);
-
-  const entries = new Map<string, CentralDirEntry>();
-  let offset = cdOffset;
-
-  for (let i = 0; i < cdEntryCount; i++) {
-    if (offset + 46 > buffer.length) {
-      throw new Error("Invalid ZIP: Central directory entry extends beyond file");
-    }
-
-    if (buffer.readUInt32LE(offset) !== CENTRAL_DIR_HEADER) {
-      throw new Error(`Invalid ZIP: Expected central directory header at offset ${offset}`);
-    }
-
-    const compressionMethod = buffer.readUInt16LE(offset + 10);
-    const compressedSize = buffer.readUInt32LE(offset + 20);
-    const uncompressedSize = buffer.readUInt32LE(offset + 24);
-    const fileNameLength = buffer.readUInt16LE(offset + 28);
-    const extraLength = buffer.readUInt16LE(offset + 30);
-    const commentLength = buffer.readUInt16LE(offset + 32);
-    const localHeaderOffset = buffer.readUInt32LE(offset + 42);
-
-    if (offset + 46 + fileNameLength > buffer.length) {
-      throw new Error("Invalid ZIP: File name extends beyond file");
-    }
-
-    const fileName = buffer.toString("utf8", offset + 46, offset + 46 + fileNameLength);
-
-    // Skip directories (names ending with /)
-    if (!fileName.endsWith("/")) {
-      entries.set(fileName, {
-        fileName,
-        compressedSize,
-        uncompressedSize,
-        compressionMethod,
-        localHeaderOffset,
-      });
-    }
-
-    offset += 46 + fileNameLength + extraLength + commentLength;
-  }
-
-  return entries;
-}
-
-/**
- * Parse ZIP entries using the central directory for accurate sizes.
- * This handles ZIP files with data descriptors (bit 3 set) where local headers have size 0.
- */
-function parseZipEntries(buffer: Buffer): ZipEntry[] {
-  const centralDir = parseCentralDirectory(buffer);
-  const entries: ZipEntry[] = [];
-
-  for (const [fileName, cdEntry] of centralDir) {
-    const offset = cdEntry.localHeaderOffset;
-
-    if (offset + 30 > buffer.length) {
-      throw new Error(`Invalid ZIP: Local header for ${fileName} extends beyond file`);
-    }
-
-    if (buffer.readUInt32LE(offset) !== LOCAL_FILE_HEADER) {
-      throw new Error(`Invalid ZIP: Expected local file header for ${fileName}`);
-    }
-
-    const fileNameLength = buffer.readUInt16LE(offset + 26);
-    const extraFieldLength = buffer.readUInt16LE(offset + 28);
-    const dataOffset = offset + 30 + fileNameLength + extraFieldLength;
-
-    entries.push({
-      name: fileName,
-      compressedSize: cdEntry.compressedSize,
-      uncompressedSize: cdEntry.uncompressedSize,
-      compressionMethod: cdEntry.compressionMethod,
-      dataOffset,
+    zipFile.once("error", reject);
+    zipFile.on("entry", (entry) => {
+      entries.push(entry);
+      zipFile.readEntry();
     });
-  }
-
-  return entries;
+    zipFile.once("end", () => resolve(entries));
+    zipFile.readEntry();
+  });
 }
 
-function extractEntry(buffer: Buffer, entry: ZipEntry): Buffer {
-  const compressedData = buffer.subarray(entry.dataOffset, entry.dataOffset + entry.compressedSize);
+function openZipEntryStream(
+  zipFile: yauzl.ZipFile,
+  entry: yauzl.Entry,
+): Promise<NodeJS.ReadableStream> {
+  return new Promise((resolve, reject) => {
+    zipFile.openReadStream(entry, (error, stream) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      if (!stream) {
+        reject(new Error(`Failed to read ZIP entry "${entry.fileName}"`));
+        return;
+      }
+      resolve(stream);
+    });
+  });
+}
 
-  if (entry.compressionMethod === 0) {
-    return compressedData;
-  } else if (entry.compressionMethod === 8) {
-    return inflateRawSync(compressedData);
-  } else {
-    throw new Error(`Unsupported compression method: ${entry.compressionMethod}`);
+async function readZipEntry(entry: yauzl.Entry, zipFile: yauzl.ZipFile): Promise<Buffer> {
+  const stream = await openZipEntryStream(zipFile, entry);
+  const chunks: Buffer[] = [];
+  let actualSize = 0;
+
+  for await (const chunk of stream) {
+    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    actualSize += data.length;
+    if (actualSize > MAX_ENTRY_SIZE) {
+      throw new Error(`ZIP entry "${entry.fileName}" exceeds ${MAX_ENTRY_SIZE} byte limit`);
+    }
+    chunks.push(data);
   }
+
+  return Buffer.concat(chunks);
 }
 
 export async function extractVsix(vsixPath: string): Promise<VsixContents> {
-  const buffer = await readFile(vsixPath);
-  const entries = parseZipEntries(buffer);
+  const zipFile = await openZipFile(vsixPath);
   const files = new Map<string, Buffer>();
   const warnings: string[] = [];
 
   let manifest: VsixManifest | undefined;
   let totalExtractedSize = 0;
 
-  for (const entry of entries) {
-    if (!isPathSafe(entry.name)) {
-      throw new Error(`Invalid VSIX: path traversal detected in "${entry.name}"`);
+  try {
+    const entries = await collectZipEntries(zipFile);
+
+    for (const entry of entries) {
+      if (entry.fileName.endsWith("/")) {
+        continue;
+      }
+
+      if (!isPathSafe(entry.fileName)) {
+        throw new Error(`Invalid VSIX: path traversal detected in "${entry.fileName}"`);
+      }
+
+      if (entry.uncompressedSize > MAX_ENTRY_SIZE) {
+        warnings.push(
+          `Skipped "${entry.fileName}": declared size ` +
+            `${entry.uncompressedSize} exceeds ` +
+            `${MAX_ENTRY_SIZE} byte limit`,
+        );
+        continue;
+      }
+
+      if (
+        entry.compressedSize > 0 &&
+        entry.uncompressedSize / entry.compressedSize > MAX_COMPRESSION_RATIO
+      ) {
+        warnings.push(
+          `Skipped "${entry.fileName}": compression ratio ` +
+            `${Math.round(entry.uncompressedSize / entry.compressedSize)}:1 ` +
+            `exceeds ${MAX_COMPRESSION_RATIO}:1 limit`,
+        );
+        continue;
+      }
+
+      if (totalExtractedSize + entry.uncompressedSize > MAX_TOTAL_SIZE) {
+        warnings.push(
+          `Skipped "${entry.fileName}": total extracted size would ` +
+            `exceed ${MAX_TOTAL_SIZE} byte limit`,
+        );
+        continue;
+      }
+
+      totalExtractedSize += entry.uncompressedSize;
+      let content: Buffer;
+      try {
+        content = await readZipEntry(entry, zipFile);
+      } catch (error) {
+        warnings.push(
+          `Skipped "${entry.fileName}": failed to extract entry ` +
+            `(${error instanceof Error ? error.message : String(error)})`,
+        );
+        continue;
+      }
+
+      let relativePath = entry.fileName;
+      if (relativePath.startsWith(VSIX_EXTENSION_PREFIX)) {
+        relativePath = relativePath.slice(VSIX_EXTENSION_PREFIX.length);
+      }
+
+      files.set(relativePath, content);
+
+      if (relativePath === "package.json") {
+        manifest = JSON.parse(content.toString("utf8")) as VsixManifest;
+      }
     }
-
-    if (entry.uncompressedSize > MAX_ENTRY_SIZE) {
-      warnings.push(
-        `Skipped "${entry.name}": declared size ` +
-          `${entry.uncompressedSize} exceeds ` +
-          `${MAX_ENTRY_SIZE} byte limit`,
-      );
-      continue;
-    }
-
-    if (
-      entry.compressedSize > 0 &&
-      entry.uncompressedSize / entry.compressedSize > MAX_COMPRESSION_RATIO
-    ) {
-      warnings.push(
-        `Skipped "${entry.name}": compression ratio ` +
-          `${Math.round(entry.uncompressedSize / entry.compressedSize)}:1 ` +
-          `exceeds ${MAX_COMPRESSION_RATIO}:1 limit`,
-      );
-      continue;
-    }
-
-    if (totalExtractedSize + entry.uncompressedSize > MAX_TOTAL_SIZE) {
-      warnings.push(
-        `Skipped "${entry.name}": total extracted size would ` +
-          `exceed ${MAX_TOTAL_SIZE} byte limit`,
-      );
-      continue;
-    }
-
-    const content = extractEntry(buffer, entry);
-    totalExtractedSize += entry.uncompressedSize;
-
-    let relativePath = entry.name;
-    if (relativePath.startsWith(VSIX_EXTENSION_PREFIX)) {
-      relativePath = relativePath.slice(VSIX_EXTENSION_PREFIX.length);
-    }
-
-    files.set(relativePath, content);
-
-    if (relativePath === "package.json") {
-      manifest = JSON.parse(content.toString("utf8")) as VsixManifest;
-    }
+  } finally {
+    zipFile.close();
   }
 
   if (!manifest) {

@@ -116,6 +116,12 @@ const NEVER_IN_CLEAN_FINDINGS = new Set([
   "MALICIOUS_NPM_PACKAGE",
   "BIDI_OVERRIDE",
   "INVISIBLE_CODE_EXECUTION",
+  "YARA_LOADER_JS_Download_Write_Execute_Jan25",
+  "YARA_RAT_JS_GlassWorm_Remote_Exec_Jan25",
+  "YARA_STEALER_JS_Credential_File_Exfil_Jan25",
+  "YARA_SUSP_JS_Eval_Base64_Jan25",
+  "YARA_SUSP_JS_Eval_Charcode_Jan25",
+  "YARA_SUSP_JS_Obfuscation_Eval_Jan25",
 ]);
 
 const defaultOptions: ScanOptions = {
