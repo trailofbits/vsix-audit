@@ -1,10 +1,32 @@
-import type { BlocklistEntry, Finding, VsixContents, VsixManifest, ZooData } from "../types.js";
+import type {
+  BlocklistEntry,
+  Finding,
+  MaliciousNpmVersionAdvisory,
+  VsixContents,
+  VsixManifest,
+  ZooData,
+} from "../types.js";
 
 interface PackageJson {
   name?: string;
+  version?: string;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   scripts?: Record<string, string>;
+}
+
+type PackageVersionEvidenceSource =
+  | "package-lock"
+  | "npm-shrinkwrap"
+  | "package-lock-v1"
+  | "npm-shrinkwrap-v1"
+  | "bundled-node-module";
+
+interface InstalledPackageEvidence {
+  name: string;
+  version: string;
+  source: PackageVersionEvidenceSource;
+  file: string;
 }
 
 // Known-good packages that are NOT typosquats despite edit distance
@@ -374,6 +396,239 @@ export function checkMaliciousPackages(
   return findings;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getStringField(record: Record<string, unknown>, field: string): string | null {
+  const value = record[field];
+  return typeof value === "string" ? value : null;
+}
+
+function isDevOnlyEntry(record: Record<string, unknown>, inheritedDev = false): boolean {
+  return inheritedDev || record["dev"] === true || record["devOptional"] === true;
+}
+
+function packageNameFromNodeModulesPath(path: string): string | null {
+  const marker = "node_modules/";
+  const markerIndex = path.lastIndexOf(marker);
+  if (markerIndex === -1) return null;
+
+  const parts = path.slice(markerIndex + marker.length).split("/");
+  const first = parts[0];
+  if (!first) return null;
+
+  if (first.startsWith("@")) {
+    const second = parts[1];
+    return second ? `${first}/${second}` : null;
+  }
+
+  return first;
+}
+
+function addEvidence(
+  evidenceByPackageVersion: Map<string, InstalledPackageEvidence>,
+  evidence: InstalledPackageEvidence,
+): void {
+  const key = `${evidence.name.toLowerCase()}@${evidence.version}`;
+  const existing = evidenceByPackageVersion.get(key);
+
+  if (!existing || evidence.source === "bundled-node-module") {
+    evidenceByPackageVersion.set(key, evidence);
+  }
+}
+
+function collectPackageLockEvidence(
+  lockfileName: "package-lock.json" | "npm-shrinkwrap.json",
+  content: string,
+  findings: Finding[],
+): InstalledPackageEvidence[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch (error) {
+    findings.push({
+      id: "PARSE_FAILURE_PACKAGE_LOCK",
+      title: "Malformed npm lockfile",
+      description:
+        `${lockfileName} could not be parsed. ` +
+        "Version-aware malicious npm package checks are skipped for this lockfile.",
+      severity: "low",
+      category: "pattern",
+      location: { file: lockfileName },
+      metadata: {
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
+    return [];
+  }
+
+  if (!isRecord(parsed)) return [];
+
+  const source: PackageVersionEvidenceSource =
+    lockfileName === "package-lock.json" ? "package-lock" : "npm-shrinkwrap";
+  const v1Source: PackageVersionEvidenceSource =
+    lockfileName === "package-lock.json" ? "package-lock-v1" : "npm-shrinkwrap-v1";
+  const evidence: InstalledPackageEvidence[] = [];
+
+  const packages = parsed["packages"];
+  if (isRecord(packages)) {
+    for (const [path, entry] of Object.entries(packages)) {
+      if (path === "" || !isRecord(entry) || isDevOnlyEntry(entry)) continue;
+
+      const name = packageNameFromNodeModulesPath(path);
+      const version = getStringField(entry, "version");
+      if (!name || !version) continue;
+
+      evidence.push({
+        name: name.toLowerCase(),
+        version,
+        source,
+        file: lockfileName,
+      });
+    }
+  }
+
+  const dependencies = parsed["dependencies"];
+  if (isRecord(dependencies)) {
+    collectPackageLockV1Dependencies(dependencies, v1Source, false, evidence);
+  }
+
+  return evidence;
+}
+
+function collectPackageLockV1Dependencies(
+  dependencies: Record<string, unknown>,
+  source: PackageVersionEvidenceSource,
+  inheritedDev: boolean,
+  evidence: InstalledPackageEvidence[],
+): void {
+  for (const [name, entry] of Object.entries(dependencies)) {
+    if (!isRecord(entry)) continue;
+
+    const devOnly = isDevOnlyEntry(entry, inheritedDev);
+    const version = getStringField(entry, "version");
+
+    if (!devOnly && version) {
+      evidence.push({
+        name: name.toLowerCase(),
+        version,
+        source,
+        file: source.startsWith("package-lock") ? "package-lock.json" : "npm-shrinkwrap.json",
+      });
+    }
+
+    const nested = entry["dependencies"];
+    if (isRecord(nested)) {
+      collectPackageLockV1Dependencies(nested, source, devOnly, evidence);
+    }
+  }
+}
+
+function collectBundledPackageEvidence(contents: VsixContents): InstalledPackageEvidence[] {
+  const evidence: InstalledPackageEvidence[] = [];
+
+  for (const [filename, buffer] of contents.files) {
+    if (!filename.includes("node_modules/") || !filename.endsWith("/package.json")) continue;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(buffer.toString("utf8"));
+    } catch {
+      continue;
+    }
+
+    if (!isRecord(parsed)) continue;
+
+    const fallbackName = packageNameFromNodeModulesPath(filename);
+    const name = getStringField(parsed, "name") ?? fallbackName;
+    const version = getStringField(parsed, "version");
+    if (!name || !version) continue;
+
+    evidence.push({
+      name: name.toLowerCase(),
+      version,
+      source: "bundled-node-module",
+      file: filename,
+    });
+  }
+
+  return evidence;
+}
+
+function collectInstalledPackageEvidence(
+  contents: VsixContents,
+  findings: Finding[],
+): InstalledPackageEvidence[] {
+  const evidenceByPackageVersion = new Map<string, InstalledPackageEvidence>();
+
+  for (const lockfileName of ["package-lock.json", "npm-shrinkwrap.json"] as const) {
+    const lockfile = contents.files.get(lockfileName);
+    if (!lockfile) continue;
+
+    for (const evidence of collectPackageLockEvidence(
+      lockfileName,
+      lockfile.toString("utf8"),
+      findings,
+    )) {
+      addEvidence(evidenceByPackageVersion, evidence);
+    }
+  }
+
+  for (const evidence of collectBundledPackageEvidence(contents)) {
+    addEvidence(evidenceByPackageVersion, evidence);
+  }
+
+  return [...evidenceByPackageVersion.values()];
+}
+
+export function checkMaliciousPackageVersions(
+  contents: VsixContents,
+  maliciousVersionAdvisories: Map<string, MaliciousNpmVersionAdvisory[]>,
+): Finding[] {
+  const findings: Finding[] = [];
+  if (maliciousVersionAdvisories.size === 0) return findings;
+
+  const installedPackages = collectInstalledPackageEvidence(contents, findings);
+
+  for (const installed of installedPackages) {
+    const advisories = maliciousVersionAdvisories.get(installed.name);
+    if (!advisories) continue;
+
+    for (const advisory of advisories) {
+      if (!advisory.affectedVersions.includes(installed.version)) continue;
+
+      findings.push({
+        id: "MALICIOUS_NPM_PACKAGE_VERSION",
+        title: "Known malicious npm package version",
+        description:
+          `Dependency "${installed.name}" resolves to known malicious version ` +
+          `${installed.version} (${advisory.advisory}): ${advisory.reason}.`,
+        severity: "critical",
+        category: "dependency",
+        location: {
+          file: installed.file,
+        },
+        metadata: {
+          package: installed.name,
+          version: installed.version,
+          advisory: advisory.advisory,
+          campaign: advisory.campaign,
+          references: advisory.references,
+          evidenceSource: installed.source,
+          matched: `${installed.name}@${installed.version}`,
+          redFlags: [
+            "Exact resolved version matches a known malicious npm release",
+            "Legitimate package name was compromised at this specific version",
+          ],
+        },
+      });
+    }
+  }
+
+  return findings;
+}
+
 export function checkTyposquattingPackages(packageJson: PackageJson): Finding[] {
   const findings: Finding[] = [];
   const allDeps = {
@@ -502,6 +757,7 @@ export function checkPackage(contents: VsixContents, zooData: ZooData): Finding[
     }
 
     findings.push(...checkMaliciousPackages(packageJson, zooData.maliciousNpmPackages));
+    findings.push(...checkMaliciousPackageVersions(contents, zooData.maliciousNpmVersions));
     findings.push(...checkTyposquattingPackages(packageJson));
     findings.push(...checkLifecycleScripts(packageJson));
   }

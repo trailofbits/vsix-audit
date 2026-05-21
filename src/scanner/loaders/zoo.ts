@@ -1,7 +1,13 @@
 import { access, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BlocklistEntry, TelemetryCategory, TelemetryServiceInfo, ZooData } from "../types.js";
+import type {
+  BlocklistEntry,
+  MaliciousNpmVersionAdvisory,
+  TelemetryCategory,
+  TelemetryServiceInfo,
+  ZooData,
+} from "../types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -41,6 +47,10 @@ async function findZooRoot(): Promise<string> {
 
 interface BlocklistFile {
   extensions: BlocklistEntry[];
+}
+
+interface MaliciousNpmVersionsFile {
+  packages?: MaliciousNpmVersionAdvisory[];
 }
 
 function defangDomain(domain: string): string {
@@ -134,6 +144,31 @@ function parseTelemetryServices(content: string): Map<string, TelemetryServiceIn
   return result;
 }
 
+function parseMaliciousNpmVersions(
+  content: string,
+): Map<string, MaliciousNpmVersionAdvisory[]> {
+  const result = new Map<string, MaliciousNpmVersionAdvisory[]>();
+  const parsed = JSON.parse(content) as MaliciousNpmVersionsFile;
+
+  for (const entry of parsed.packages ?? []) {
+    const name = entry.name.toLowerCase();
+    const advisory: MaliciousNpmVersionAdvisory = {
+      name,
+      affectedVersions: entry.affectedVersions,
+      advisory: entry.advisory,
+      reason: entry.reason,
+      ...(entry.campaign ? { campaign: entry.campaign } : {}),
+      ...(entry.references ? { references: entry.references } : {}),
+    };
+
+    const existing = result.get(name) ?? [];
+    existing.push(advisory);
+    result.set(name, existing);
+  }
+
+  return result;
+}
+
 let cachedZooData: ZooData | undefined;
 
 export async function loadZooData(): Promise<ZooData> {
@@ -153,6 +188,7 @@ export async function loadZooData(): Promise<ZooData> {
     blockchainContent,
     telemetryContent,
     githubC2Content,
+    npmVersionsContent,
   ] = await Promise.all([
     readFile(join(zooRoot, "blocklist", "extensions.json"), "utf8"),
     readFile(join(zooRoot, "iocs", "hashes.txt"), "utf8"),
@@ -163,6 +199,9 @@ export async function loadZooData(): Promise<ZooData> {
     readFile(join(zooRoot, "iocs", "blockchain-extensions.txt"), "utf8"),
     readFile(join(zooRoot, "telemetry", "known-services.txt"), "utf8").catch(() => ""),
     readFile(join(zooRoot, "iocs", "github-c2.txt"), "utf8").catch(() => ""),
+    readFile(join(zooRoot, "iocs", "malicious-npm-versions.json"), "utf8").catch(
+      () => '{"packages":[]}',
+    ),
   ]);
 
   const blocklistFile = JSON.parse(blocklistContent) as BlocklistFile;
@@ -175,6 +214,7 @@ export async function loadZooData(): Promise<ZooData> {
     domains: parseIOCFile(domainsContent, (domain) => defangDomain(domain).toLowerCase()),
     ips: parseIOCFile(ipsContent, (ipWithPort) => ipWithPort.split(":")[0] ?? null),
     maliciousNpmPackages: parseIOCFile(npmContent, (pkg) => pkg.toLowerCase()),
+    maliciousNpmVersions: parseMaliciousNpmVersions(npmVersionsContent),
     wallets: parseWalletFile(walletsContent),
     blockchainAllowlist: parseIOCFile(blockchainContent, (extId) => extId),
     telemetryServices: parseTelemetryServices(telemetryContent),

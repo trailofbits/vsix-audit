@@ -112,6 +112,15 @@ export interface BlocklistEntry {
   reference?: string;
 }
 
+export interface MaliciousNpmVersionAdvisory {
+  name: string;
+  affectedVersions: string[];
+  advisory: string;
+  reason: string;
+  campaign?: string;
+  references?: string[];
+}
+
 export type TelemetryCategory = "analytics" | "crash-reporting" | "apm";
 
 export interface TelemetryServiceInfo {
@@ -126,6 +135,7 @@ export interface ZooData {
   domains: Set<string>;
   ips: Set<string>;
   maliciousNpmPackages: Set<string>;
+  maliciousNpmVersions: Map<string, MaliciousNpmVersionAdvisory[]>;
   wallets: Set<string>;
   blockchainAllowlist: Set<string>;
   telemetryServices: Map<string, TelemetryServiceInfo>;

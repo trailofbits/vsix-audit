@@ -1,0 +1,143 @@
+{
+  "packages": [
+    {
+      "name": "debug",
+      "affectedVersions": ["4.4.2"],
+      "advisory": "GHSA-4x49-vf9v-38px",
+      "campaign": "Qix npm account takeover",
+      "reason": "Compromised npm release with malware payload that targeted cryptocurrency transactions in browser bundles",
+      "references": [
+        "https://github.com/advisories/GHSA-4x49-vf9v-38px"
+      ]
+    },
+    {
+      "name": "chalk",
+      "affectedVersions": ["5.6.1"],
+      "advisory": "GHSA-2v46-p5h4-248w",
+      "campaign": "Qix npm account takeover",
+      "reason": "Compromised npm release with embedded malicious code that hijacked browser traffic and cryptocurrency wallet activity",
+      "references": [
+        "https://github.com/advisories/GHSA-2v46-p5h4-248w"
+      ]
+    },
+    {
+      "name": "@ctrl/tinycolor",
+      "affectedVersions": ["4.1.1", "4.1.2"],
+      "advisory": "MAL-2025-47141",
+      "campaign": "Shai-Hulud",
+      "reason": "Compromised npm releases containing Shai-Hulud worm payloads for credential theft and propagation",
+      "references": [
+        "https://advisories.gitlab.com/npm/%40ctrl/tinycolor/MAL-2025-47141/",
+        "https://security.snyk.io/vuln/SNYK-JS-CTRLTINYCOLOR-12704830"
+      ]
+    },
+    {
+      "name": "@bitwarden/cli",
+      "affectedVersions": ["2026.4.0"],
+      "advisory": "Bitwarden-2026-04-22",
+      "campaign": "Checkmarx / Mini Shai-Hulud",
+      "reason": "Compromised npm release briefly distributed through the Bitwarden CLI npm delivery path",
+      "references": [
+        "https://community.bitwarden.com/t/bitwarden-statement-on-checkmarx-supply-chain-incident/96127",
+        "https://www.paloaltonetworks.com/blog/cloud-security/bitwardencli-supply-chain-attack/"
+      ]
+    },
+    {
+      "name": "nx",
+      "affectedVersions": [
+        "20.9.0",
+        "20.10.0",
+        "20.11.0",
+        "20.12.0",
+        "21.5.0",
+        "21.6.0",
+        "21.7.0",
+        "21.8.0"
+      ],
+      "advisory": "GHSA-cxm3-wv7p-598c",
+      "campaign": "s1ngularity",
+      "reason": "Malicious Nx releases scanned files and credentials and exfiltrated data through GitHub repositories",
+      "references": [
+        "https://github.com/advisories/GHSA-cxm3-wv7p-598c",
+        "https://nx.dev/blog/s1ngularity-postmortem"
+      ]
+    },
+    {
+      "name": "@nx/devkit",
+      "affectedVersions": ["20.9.0", "21.5.0"],
+      "advisory": "GHSA-cxm3-wv7p-598c",
+      "campaign": "s1ngularity",
+      "reason": "Malicious Nx package release associated with the s1ngularity supply chain compromise",
+      "references": [
+        "https://github.com/advisories/GHSA-cxm3-wv7p-598c",
+        "https://nx.dev/blog/s1ngularity-postmortem"
+      ]
+    },
+    {
+      "name": "@nx/js",
+      "affectedVersions": ["20.9.0", "21.5.0"],
+      "advisory": "GHSA-cxm3-wv7p-598c",
+      "campaign": "s1ngularity",
+      "reason": "Malicious Nx package release associated with the s1ngularity supply chain compromise",
+      "references": [
+        "https://github.com/advisories/GHSA-cxm3-wv7p-598c",
+        "https://nx.dev/blog/s1ngularity-postmortem"
+      ]
+    },
+    {
+      "name": "@nx/workspace",
+      "affectedVersions": ["20.9.0", "21.5.0"],
+      "advisory": "GHSA-cxm3-wv7p-598c",
+      "campaign": "s1ngularity",
+      "reason": "Malicious Nx package release associated with the s1ngularity supply chain compromise",
+      "references": [
+        "https://github.com/advisories/GHSA-cxm3-wv7p-598c",
+        "https://nx.dev/blog/s1ngularity-postmortem"
+      ]
+    },
+    {
+      "name": "@nx/node",
+      "affectedVersions": ["20.9.0", "21.5.0"],
+      "advisory": "GHSA-cxm3-wv7p-598c",
+      "campaign": "s1ngularity",
+      "reason": "Malicious Nx package release associated with the s1ngularity supply chain compromise",
+      "references": [
+        "https://github.com/advisories/GHSA-cxm3-wv7p-598c",
+        "https://nx.dev/blog/s1ngularity-postmortem"
+      ]
+    },
+    {
+      "name": "@nx/eslint",
+      "affectedVersions": ["21.5.0"],
+      "advisory": "GHSA-cxm3-wv7p-598c",
+      "campaign": "s1ngularity",
+      "reason": "Malicious Nx package release associated with the s1ngularity supply chain compromise",
+      "references": [
+        "https://github.com/advisories/GHSA-cxm3-wv7p-598c",
+        "https://nx.dev/blog/s1ngularity-postmortem"
+      ]
+    },
+    {
+      "name": "@nx/key",
+      "affectedVersions": ["3.2.0"],
+      "advisory": "GHSA-cxm3-wv7p-598c",
+      "campaign": "s1ngularity",
+      "reason": "Malicious Nx package release associated with the s1ngularity supply chain compromise",
+      "references": [
+        "https://github.com/advisories/GHSA-cxm3-wv7p-598c",
+        "https://nx.dev/blog/s1ngularity-postmortem"
+      ]
+    },
+    {
+      "name": "@nx/enterprise-cloud",
+      "affectedVersions": ["3.2.0"],
+      "advisory": "GHSA-cxm3-wv7p-598c",
+      "campaign": "s1ngularity",
+      "reason": "Malicious Nx package release associated with the s1ngularity supply chain compromise",
+      "references": [
+        "https://github.com/advisories/GHSA-cxm3-wv7p-598c",
+        "https://nx.dev/blog/s1ngularity-postmortem"
+      ]
+    }
+  ]
+}

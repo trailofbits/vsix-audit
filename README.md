@@ -26,7 +26,8 @@ Examines `package.json` and extension manifest for suspicious configurations.
 | Wildcard activation    | `activationEvents: ["*"]` - runs on every action                                | High            |
 | Startup activation     | `onStartupFinished` - runs at VS Code launch                                    | Medium          |
 | Theme with code        | Theme extension that has a `main` entry point                                   | High            |
-| Malicious npm packages | Dependencies matching known malware packages                                    | Critical        |
+| Malicious npm packages | Dependencies matching known malware package names                               | Critical        |
+| Malicious npm versions | Resolved/bundled dependency versions matching known compromised releases        | Critical        |
 | Typosquatting          | Dependencies within edit distance 1-2 of popular packages (lodash, axios, etc.) | High            |
 | Lifecycle scripts      | `preinstall`/`postinstall` scripts with suspicious patterns                     | Critical/Medium |
 
@@ -247,7 +248,7 @@ The `zoo/` directory contains threat intelligence for detection:
 | Directory         | Contents                                                              |
 | ----------------- | --------------------------------------------------------------------- |
 | `zoo/blocklist/`  | Known malicious extension IDs with campaign attribution               |
-| `zoo/iocs/`       | SHA256 hashes, C2 domains/IPs, crypto wallets, malicious npm packages |
+| `zoo/iocs/`       | SHA256 hashes, C2 domains/IPs, crypto wallets, malicious npm packages and versions |
 | `zoo/signatures/` | YARA rules for credential harvesting, RAT behavior, self-propagation  |
 | `zoo/telemetry/`  | Known telemetry service domains (analytics, crash-reporting, APM)     |
 
