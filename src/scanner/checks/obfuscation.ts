@@ -217,7 +217,7 @@ const CYRILLIC_LOOKALIKE_REGEX =
 
 // Additional invisible/confusable characters
 const OTHER_INVISIBLE_REGEX =
-  /[\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180E\u2060-\u2064\u206A-\u206F]/g;
+  /(?:\u00AD|\u034F|\u115F|\u1160|\u17B4|\u17B5|\u180E|[\u2060-\u2064]|[\u206A-\u206F])/g;
 
 function detectUnicodePattern(
   content: string,
