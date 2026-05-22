@@ -9,6 +9,7 @@ import type { Finding, Severity, VsixContents } from "../types.js";
 import {
   computeLineStarts,
   findLineNumberByIndex,
+  getStringContent,
   offsetToColumn,
   offsetToLine,
 } from "../utils.js";
@@ -130,7 +131,7 @@ function checkEntropy(contents: VsixContents): Finding[] {
     // Skip node_modules - third-party deps generate many false positives
     if (isNodeModules(filename)) continue;
 
-    const content = contents.stringContents?.get(filename) ?? buffer.toString("utf8");
+    const content = getStringContent(contents, filename, buffer);
 
     // Skip bundled code - minification naturally increases entropy
     const bundlerInfo = detectBundler(
@@ -481,7 +482,7 @@ function checkUnicodeHiding(contents: VsixContents): Finding[] {
   for (const [filename, buffer] of contents.files) {
     if (!isScannable(filename, SCANNABLE_EXTENSIONS_UNICODE)) continue;
 
-    const content = contents.stringContents?.get(filename) ?? buffer.toString("utf8");
+    const content = getStringContent(contents, filename, buffer);
     const bundlerInfo = detectBundler(
       content,
       filename,

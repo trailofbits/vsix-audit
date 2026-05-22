@@ -29,6 +29,9 @@ Examines `package.json` and extension manifest for suspicious configurations.
 | Malicious npm packages | Dependencies matching known malware packages                                    | Critical        |
 | Typosquatting          | Dependencies within edit distance 1-2 of popular packages (lodash, axios, etc.) | High            |
 | Lifecycle scripts      | `preinstall`/`postinstall` scripts with suspicious patterns                     | Critical/Medium |
+| Hidden task execution  | VS Code tasks executed with suppressed task UI                                  | High            |
+| GitHub SHA execution   | `npx`/`npm exec` against `github:owner/repo#sha`                                | Critical        |
+| Startup execution      | `onStartupFinished` paired with task/process launch behavior                    | High            |
 
 ### Indicators of Compromise (`ioc.ts`)
 
@@ -182,6 +185,14 @@ Displays: name, publisher, version, activation events, entry points, contributio
 | `--no-cache`             | Bypass cache, download fresh                                                     |
 | `--force`                | Re-download even if cached                                                       |
 | `--all-registries`       | Scan from all registries (Marketplace + OpenVSX + Cursor)                        |
+| `--strict`               | Exit with an error if scan coverage is degraded                                  |
+| `--require-yara`         | Exit with an error if YARA scanning cannot run                                   |
+
+### Coverage Degradation
+
+`vsix-audit` reports coverage problems as findings and in JSON metadata. Examples include skipped ZIP entries, duplicate normalized archive paths, manifest entry points that were missing or skipped, AST parser recovery errors, and unavailable scanner modules.
+
+Use `--strict` for production gating when an incomplete scan should fail closed. Use `--require-yara` when YARA coverage is mandatory in CI.
 
 ### Extension Cache
 
@@ -241,6 +252,8 @@ vsix-audit cache clear ms-python.*
 | 0    | No findings       |
 | 1    | Findings detected |
 | 2    | Error during scan |
+
+In `--strict` mode, exit code `2` is also used for degraded scanner coverage. With `--require-yara`, exit code `2` is used when YARA scanning cannot run.
 
 ## Threat Intelligence
 

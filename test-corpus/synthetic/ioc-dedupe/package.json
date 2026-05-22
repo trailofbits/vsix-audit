@@ -1,0 +1,6 @@
+{
+  "name": "ioc-dedupe",
+  "version": "1.0.0",
+  "publisher": "test",
+  "main": "./main.js"
+}

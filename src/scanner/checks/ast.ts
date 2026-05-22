@@ -12,7 +12,7 @@ import type { BundlerInfo } from "../bundler.js";
 import { detectBundler, hasGenuineObfuscation } from "../bundler.js";
 import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "../constants.js";
 import type { Finding, Severity, VsixContents } from "../types.js";
-import { computeLineStarts, offsetToColumn, offsetToLine } from "../utils.js";
+import { computeLineStarts, getStringContent, offsetToColumn, offsetToLine } from "../utils.js";
 
 interface ASTPattern {
   id: string;
@@ -427,9 +427,22 @@ function analyzeFile(
     return findings;
   }
 
-  // If there are errors, skip this file (error recovery mode)
   if (result.errors.length > 0) {
-    return findings;
+    findings.push({
+      id: "PARSE_FAILURE_AST",
+      title: "AST parse recovery encountered errors",
+      description:
+        "File parsed with recoverable AST errors. " +
+        "AST-based checks may be incomplete for this file, " +
+        "which can hide suspicious control flow.",
+      severity: "low",
+      category: "pattern",
+      location: { file: filename },
+      metadata: {
+        errorCount: result.errors.length,
+        error: String(result.errors[0]),
+      },
+    });
   }
 
   const bundlerInfo = detectBundler(content, filename, bundlerCache);
@@ -523,7 +536,7 @@ export function checkAST(contents: VsixContents): Finding[] {
     const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
     if (![".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"].includes(ext)) continue;
 
-    const content = contents.stringContents?.get(filename) ?? buffer.toString("utf8");
+    const content = getStringContent(contents, filename, buffer);
 
     const bundlerCache = contents.cache as Map<string, BundlerInfo> | undefined;
     findings.push(...analyzeFile(filename, content, bundlerCache));

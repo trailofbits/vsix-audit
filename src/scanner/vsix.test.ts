@@ -454,6 +454,7 @@ describe("extractVsix", () => {
       const contents = await extractVsix(vsixPath);
 
       expect(contents.files.get("main.js")?.toString()).toBe('console.log("second");');
+      expect(contents.archiveWarnings?.some((w) => w.id === "ARCHIVE_DUPLICATE_PATH")).toBe(true);
     } finally {
       await rm(vsixPath, { force: true });
     }
@@ -513,6 +514,35 @@ describe("extractVsix", () => {
       expect(contents.manifest.version).toBe("1.0.0");
       expect(contents.files.has("package.json")).toBe(true);
       expect(contents.files.has("main.js")).toBe(true);
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("warns when non-standard prefix normalization creates a duplicate path", async () => {
+    const manifest = JSON.stringify({
+      name: "weird-prefix-duplicate-ext",
+      publisher: "test",
+      version: "1.0.0",
+    });
+
+    const zipBuffer = createTestZip(
+      [
+        { name: "weird-prefix-duplicate-ext-1.0.0/package.json", content: manifest },
+        { name: "weird-prefix-duplicate-ext-1.0.0/main.js", content: 'console.log("first");' },
+        { name: "main.js", content: 'console.log("second");' },
+      ],
+      { useDataDescriptor: false },
+    );
+
+    const vsixPath = join(tmpdir(), `test-weird-prefix-duplicate-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.files.get("main.js")?.toString()).toBe('console.log("second");');
+      expect(contents.archiveWarnings?.some((w) => w.id === "ARCHIVE_DUPLICATE_PATH")).toBe(true);
     } finally {
       await rm(vsixPath, { force: true });
     }

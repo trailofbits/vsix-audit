@@ -7,7 +7,7 @@ import type {
   VsixManifest,
   ZooData,
 } from "../types.js";
-import { computeLineStarts, findLineNumberByString } from "../utils.js";
+import { computeLineStarts, findLineNumberByString, getStringContent } from "../utils.js";
 
 /**
  * Known telemetry SDK packages and their service info.
@@ -536,10 +536,7 @@ export function checkTelemetry(contents: VsixContents, zooData: ZooData): Findin
     const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
     if (![".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"].includes(ext)) continue;
 
-    allFileContents.set(
-      filename,
-      contents.stringContents?.get(filename) ?? buffer.toString("utf8"),
-    );
+    allFileContents.set(filename, getStringContent(contents, filename, buffer));
   }
 
   // Track services seen across all files to avoid duplicate findings

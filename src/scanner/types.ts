@@ -1,5 +1,11 @@
 export type Severity = "low" | "medium" | "high" | "critical";
 
+export const SEVERITIES = ["low", "medium", "high", "critical"] as const;
+
+export type OutputFormat = "text" | "json" | "sarif";
+
+export const OUTPUT_FORMATS = ["text", "json", "sarif"] as const;
+
 export type Registry = "marketplace" | "openvsx" | "cursor";
 
 export const MODULE_NAMES = ["package", "obfuscation", "ast", "ioc", "yara", "telemetry"] as const;
@@ -12,11 +18,13 @@ export interface ModuleTimings {
 }
 
 export interface ScanOptions {
-  output: "text" | "json" | "sarif";
+  output: OutputFormat;
   severity: Severity;
   network: boolean;
   modules?: ModuleName[];
   profile?: boolean;
+  strict?: boolean;
+  requireYara?: boolean;
 }
 
 export interface FindingMetadata {
@@ -63,7 +71,35 @@ export interface ScanResult {
     scanDuration: number;
     registry?: Registry;
     timings?: ModuleTimings;
+    coverage?: CoverageMetadata;
   };
+}
+
+export interface CoverageMetadata {
+  degraded: boolean;
+  warnings: string[];
+  unavailableModules?: ModuleName[];
+}
+
+export interface ArchiveWarning {
+  id: string;
+  title: string;
+  message: string;
+  severity: Severity;
+  entryName: string;
+  normalizedPath?: string;
+  reason: string;
+}
+
+export interface ArtifactEntry {
+  originalPath: string;
+  path?: string;
+  size: number;
+  compressedSize?: number;
+  uncompressedSize?: number;
+  sha256?: string;
+  skipped: boolean;
+  skipReason?: string;
 }
 
 export interface VsixManifest {
@@ -96,6 +132,8 @@ export interface VsixContents {
   files: Map<string, Buffer>;
   basePath: string;
   warnings?: string[];
+  archiveWarnings?: ArchiveWarning[];
+  artifacts?: ArtifactEntry[];
   /** Pre-computed UTF-8 string contents, keyed by filename */
   stringContents?: Map<string, string>;
   /** Shared cache for memoized per-file computations */

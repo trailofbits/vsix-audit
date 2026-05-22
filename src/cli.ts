@@ -13,7 +13,12 @@ import {
 import { clearCache, getCacheDir, getCachedVersions, listCached } from "./scanner/cache.js";
 import { extractCapabilities, type Capabilities } from "./scanner/capabilities.js";
 import { downloadExtension, parseExtensionId } from "./scanner/download.js";
-import { MODULE_NAMES, scanDirectory, scanExtension } from "./scanner/index.js";
+import {
+  MODULE_NAMES,
+  scanDirectory,
+  scanExtension,
+  validateScanOptions,
+} from "./scanner/index.js";
 import type { Registry, ScanOptions, ScanResult } from "./scanner/types.js";
 import { loadExtension } from "./scanner/vsix.js";
 
@@ -32,6 +37,8 @@ interface CliScanOptions extends ScanOptions {
   jobs?: string;
   module?: string;
   profile?: boolean;
+  strict?: boolean;
+  requireYara?: boolean;
 }
 
 interface CliDownloadOptions {
@@ -73,6 +80,14 @@ function isExtensionId(target: string): boolean {
   }
 }
 
+function hasCoverageExitFailure(result: ScanResult, options: ScanOptions): boolean {
+  const coverage = result.metadata.coverage;
+  if (!coverage) return false;
+  if (options.strict && coverage.degraded) return true;
+  if (options.requireYara && coverage.unavailableModules?.includes("yara")) return true;
+  return false;
+}
+
 export const cli = new Command()
   .name("vsix-audit")
   .description("Security scanner for VS Code extensions")
@@ -99,6 +114,8 @@ cli
     "Run only specific modules (comma-separated: package,obfuscation,ast,ioc,yara,telemetry)",
   )
   .option("--profile", "Show detailed timing breakdown for each module")
+  .option("--strict", "Exit with an error if scanner coverage is degraded")
+  .option("--require-yara", "Exit with an error if YARA scanning cannot run")
   .action(async (target: string, options: CliScanOptions) => {
     try {
       const useCache = options.noCache !== true;
@@ -124,8 +141,11 @@ cli
         severity: options.severity,
         network: options.network,
         ...(options.profile ? { profile: true } : {}),
+        ...(options.strict ? { strict: true } : {}),
+        ...(options.requireYara ? { requireYara: true } : {}),
         ...(modules ? { modules: modules as import("./scanner/types.js").ModuleName[] } : {}),
       };
+      validateScanOptions(scanOptions);
 
       // Handle --all-registries mode for extension IDs
       if (options.allRegistries && isExtensionId(target)) {
@@ -166,6 +186,10 @@ cli
         outputResults(results, options.output ?? "text", VERSION);
 
         const hasFindings = results.some((r) => r.findings.length > 0);
+        const hasCoverageFailure = results.some((r) => hasCoverageExitFailure(r, scanOptions));
+        if (hasCoverageFailure) {
+          process.exit(2);
+        }
         process.exit(hasFindings ? 1 : 0);
         return;
       }
@@ -243,7 +267,9 @@ cli
         outputBatchResult(batchResult, options.output ?? "text", VERSION);
 
         // Exit codes: 0=clean, 1=findings, 2=errors only
-        if (batchResult.summary.totalFindings > 0) {
+        if (batchResult.results.some((result) => hasCoverageExitFailure(result, scanOptions))) {
+          process.exit(2);
+        } else if (batchResult.summary.totalFindings > 0) {
           process.exit(1);
         } else if (batchResult.summary.failedFiles > 0 && batchResult.summary.scannedFiles === 0) {
           process.exit(2);
@@ -272,6 +298,9 @@ cli
 
       const result = await scanExtension(scanTarget, scanOptions);
       outputResult(result, scanOptions.output ?? "text", VERSION);
+      if (hasCoverageExitFailure(result, scanOptions)) {
+        process.exit(2);
+      }
       process.exit(result.findings.length > 0 ? 1 : 0);
     } catch (error) {
       console.error(pc.red("Error:"), error instanceof Error ? error.message : error);

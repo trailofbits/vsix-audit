@@ -483,9 +483,9 @@ describe("checkAST", () => {
       const content = `function broken( { eval(code) }`;
       const contents = makeContents({ "broken.js": content });
 
-      // Should not throw, just return empty findings
       const findings = checkAST(contents);
       expect(Array.isArray(findings)).toBe(true);
+      expect(findings.some((f) => f.id === "PARSE_FAILURE_AST")).toBe(true);
     });
 
     it("handles empty files", () => {
