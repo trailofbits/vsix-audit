@@ -19,14 +19,16 @@ import { loadZooData } from "./loaders/zoo.js";
 import type {
   BatchScanResult,
   CheckSummary,
+  CoverageMetadata,
   Finding,
   ModuleTimings,
+  OutputFormat,
   ScanOptions,
   ScanResult,
   Severity,
   VsixContents,
 } from "./types.js";
-import { MODULE_NAMES } from "./types.js";
+import { MODULE_NAMES, OUTPUT_FORMATS, SEVERITIES } from "./types.js";
 import type { ModuleName } from "./types.js";
 import { loadExtension } from "./vsix.js";
 
@@ -56,12 +58,47 @@ function filterBySeverity(findings: Finding[], minSeverity: Severity): Finding[]
   return findings.filter((f) => SEVERITY_ORDER[f.severity] >= minLevel);
 }
 
+const FINGERPRINT_METADATA_KEYS = [
+  "sha256",
+  "domain",
+  "ip",
+  "wallet",
+  "rule",
+  "command",
+  "repo",
+  "ref",
+  "entryName",
+  "normalizedPath",
+  "matched",
+  "codeSnippet",
+];
+
+function findingEvidenceFingerprint(finding: Finding): string {
+  const metadata = finding.metadata;
+  if (!metadata) return "";
+
+  const values: string[] = [];
+  for (const key of FINGERPRINT_METADATA_KEYS) {
+    const value = metadata[key];
+    if (value !== undefined && value !== null) {
+      values.push(`${key}=${String(value)}`);
+    }
+  }
+
+  return values.join("|");
+}
+
 function deduplicateFindings(findings: Finding[]): Finding[] {
   const seen = new Set<string>();
   const result: Finding[] = [];
 
   for (const finding of findings) {
-    const key = `${finding.id}:${finding.location?.file ?? ""}:${finding.location?.line ?? ""}`;
+    const key = [
+      finding.id,
+      finding.location?.file ?? "",
+      finding.location?.line ?? "",
+      findingEvidenceFingerprint(finding),
+    ].join(":");
     if (!seen.has(key)) {
       seen.add(key);
       result.push(finding);
@@ -100,7 +137,78 @@ function shouldRunModule(name: ModuleName, options: ScanOptions): boolean {
   return options.modules.includes(name);
 }
 
+function isOutputFormat(value: unknown): value is OutputFormat {
+  return typeof value === "string" && OUTPUT_FORMATS.includes(value as OutputFormat);
+}
+
+function isSeverity(value: unknown): value is Severity {
+  return typeof value === "string" && SEVERITIES.includes(value as Severity);
+}
+
+export function validateScanOptions(options: ScanOptions): void {
+  if (!isOutputFormat(options.output)) {
+    throw new Error(
+      `Invalid output format: ${String(options.output)}. Valid formats: ${OUTPUT_FORMATS.join(", ")}`,
+    );
+  }
+
+  if (!isSeverity(options.severity)) {
+    throw new Error(
+      `Invalid severity: ${String(options.severity)}. Valid severities: ${SEVERITIES.join(", ")}`,
+    );
+  }
+
+  if (options.modules) {
+    const invalidModules = options.modules.filter(
+      (moduleName) => !MODULE_NAMES.includes(moduleName),
+    );
+    if (invalidModules.length > 0) {
+      throw new Error(
+        `Invalid module(s): ${invalidModules.join(", ")}. Valid modules: ${MODULE_NAMES.join(", ")}`,
+      );
+    }
+  }
+
+  if (options.requireYara && options.modules && !options.modules.includes("yara")) {
+    throw new Error("--require-yara cannot be used when the module filter excludes yara");
+  }
+}
+
+function archiveWarningsToFindings(contents: VsixContents): Finding[] {
+  return (contents.archiveWarnings ?? []).map((warning) => ({
+    id: warning.id,
+    title: warning.title,
+    description: warning.message,
+    severity: warning.severity,
+    category: "archive",
+    location: {
+      file: warning.normalizedPath ?? warning.entryName,
+    },
+    metadata: {
+      entryName: warning.entryName,
+      normalizedPath: warning.normalizedPath,
+      reason: warning.reason,
+    },
+  }));
+}
+
+function makeCoverageMetadata(
+  warnings: string[],
+  unavailableModules: ModuleName[],
+): CoverageMetadata {
+  const metadata: CoverageMetadata = {
+    degraded: warnings.length > 0 || unavailableModules.length > 0,
+    warnings,
+  };
+  if (unavailableModules.length > 0) {
+    metadata.unavailableModules = unavailableModules;
+  }
+  return metadata;
+}
+
 export async function scanExtension(target: string, options: ScanOptions): Promise<ScanResult> {
+  validateScanOptions(options);
+
   const startTime = performance.now();
   const timings: ModuleTimings = { load: 0, total: 0 };
 
@@ -118,23 +226,23 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
 
   let findings: Finding[] = [];
   const inventory: CheckSummary[] = [];
+  const coverageWarnings: string[] = [];
+  const unavailableModules: ModuleName[] = [];
 
-  // Check YARA availability upfront
-  const yaraAvailable = await isYaraAvailable();
-  const yaraRulesDir = await getDefaultYaraRulesDir();
-  const yaraRules = yaraAvailable ? await listYaraRules(yaraRulesDir) : [];
+  const runYara = shouldRunModule("yara", options);
+  const yaraAvailable = runYara ? await isYaraAvailable() : false;
+  const yaraRulesDir = runYara && yaraAvailable ? await getDefaultYaraRulesDir() : "";
+  const yaraRules = runYara && yaraAvailable ? await listYaraRules(yaraRulesDir) : [];
 
   // Initialize per-scan caches
   contents.cache = new Map();
+  contents.stringContents = new Map();
 
-  // Pre-compute string contents to avoid redundant conversions
-  const stringContents = new Map<string, string>();
-  for (const [filename, buffer] of contents.files) {
-    if (isScannable(filename, SCANNABLE_EXTENSIONS_UNICODE)) {
-      stringContents.set(filename, buffer.toString("utf8"));
-    }
+  const archiveFindings = archiveWarningsToFindings(contents);
+  findings.push(...archiveFindings);
+  for (const warning of contents.archiveWarnings ?? []) {
+    coverageWarnings.push(warning.message);
   }
-  contents.stringContents = stringContents;
 
   // Count files by type for inventory
   const codeFileCount = countScannableFiles(contents, SCANNABLE_EXTENSIONS_PATTERN);
@@ -195,7 +303,7 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
     });
   }
 
-  if (shouldRunModule("yara", options)) {
+  if (runYara) {
     if (yaraAvailable) {
       modules.push({
         name: "yara",
@@ -209,6 +317,19 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
         },
       });
     } else {
+      coverageWarnings.push("YARA module requested but YARA-X executable 'yr' is not installed");
+      unavailableModules.push("yara");
+      findings.push({
+        id: "YARA_NOT_INSTALLED",
+        title: "YARA-X scanner not available",
+        description:
+          "YARA-X is not installed. Install with 'brew install yara-x' to enable advanced malware detection using signature rules.",
+        severity: "low",
+        category: "yara",
+        metadata: {
+          suggestion: "brew install yara-x",
+        },
+      });
       inventory.push({
         name: "YARA",
         enabled: false,
@@ -244,6 +365,7 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
   findings = sortFindings(findings);
 
   timings.total = performance.now() - startTime;
+  const coverage = makeCoverageMetadata(coverageWarnings, unavailableModules);
 
   return {
     extension: {
@@ -257,6 +379,7 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
     metadata: {
       scannedAt: new Date().toISOString(),
       scanDuration: Math.round(timings.total),
+      coverage,
       ...(options.profile ? { timings } : {}),
     },
   };

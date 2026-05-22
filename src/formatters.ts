@@ -198,6 +198,17 @@ export function printTextReport(result: ScanResult): void {
     printTimings(result.metadata.timings);
   }
 
+  if (result.metadata.coverage?.degraded) {
+    console.log(pc.yellow("Coverage degraded:"));
+    for (const warning of result.metadata.coverage.warnings.slice(0, 10)) {
+      console.log(`  ${pc.yellow("⚠")} ${warning}`);
+    }
+    if (result.metadata.coverage.warnings.length > 10) {
+      console.log(`  ${pc.dim(`... and ${result.metadata.coverage.warnings.length - 10} more`)}`);
+    }
+    console.log();
+  }
+
   if (result.findings.length === 0) {
     console.log(pc.green("✓ No security issues found"));
     return;

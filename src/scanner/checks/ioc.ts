@@ -1,6 +1,6 @@
 import { isScannable, SCANNABLE_EXTENSIONS_IOC } from "../constants.js";
 import type { Finding, VsixContents, ZooData } from "../types.js";
-import { computeLineStarts, findLineNumberByString } from "../utils.js";
+import { computeLineStarts, findLineNumberByString, getStringContent } from "../utils.js";
 import { computeSha256 } from "../vsix.js";
 
 function extractDomains(content: string): string[] {
@@ -89,7 +89,7 @@ export function checkDomains(contents: VsixContents, knownDomains: Set<string>):
   for (const [filename, buffer] of contents.files) {
     if (!isScannable(filename, SCANNABLE_EXTENSIONS_IOC)) continue;
 
-    const content = contents.stringContents?.get(filename) ?? buffer.toString("utf8");
+    const content = getStringContent(contents, filename, buffer);
     const foundDomains = extractDomains(content);
     const lineStarts = computeLineStarts(content);
 
@@ -120,7 +120,7 @@ export function checkIps(contents: VsixContents, knownIps: Set<string>): Finding
   for (const [filename, buffer] of contents.files) {
     if (!isScannable(filename, SCANNABLE_EXTENSIONS_IOC)) continue;
 
-    const content = contents.stringContents?.get(filename) ?? buffer.toString("utf8");
+    const content = getStringContent(contents, filename, buffer);
     const foundIps = extractIps(content);
     const lineStarts = computeLineStarts(content);
 
@@ -219,7 +219,7 @@ export function checkWallets(
   for (const [filename, buffer] of contents.files) {
     if (!isScannable(filename, SCANNABLE_EXTENSIONS_IOC)) continue;
 
-    const content = contents.stringContents?.get(filename) ?? buffer.toString("utf8");
+    const content = getStringContent(contents, filename, buffer);
     const lineStarts = computeLineStarts(content);
     // Track wallets already found in this file to avoid duplicate findings
     // (e.g., BTC addresses matching both BTC and SOL patterns)
@@ -284,7 +284,7 @@ export function checkGithubC2(contents: VsixContents, githubC2Accounts: Set<stri
   for (const [filename, buffer] of contents.files) {
     if (!isScannable(filename, SCANNABLE_EXTENSIONS_IOC)) continue;
 
-    const content = contents.stringContents?.get(filename) ?? buffer.toString("utf8");
+    const content = getStringContent(contents, filename, buffer);
     const lineStarts = computeLineStarts(content);
 
     for (const account of githubC2Accounts) {

@@ -2,7 +2,13 @@ import { createHash } from "node:crypto";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import * as yauzl from "yauzl";
-import type { VsixContents, VsixManifest } from "./types.js";
+import type {
+  ArchiveWarning,
+  ArtifactEntry,
+  Severity,
+  VsixContents,
+  VsixManifest,
+} from "./types.js";
 
 const VSIX_EXTENSION_PREFIX = "extension/";
 
@@ -15,14 +21,61 @@ export const MAX_TOTAL_SIZE = 1024 * 1024 * 1024;
 /** Maximum compression ratio before flagging as suspicious. */
 export const MAX_COMPRESSION_RATIO = 100;
 
-/**
- * Validate that a ZIP entry path is safe (no path traversal).
- * Prevents zip slip attacks by rejecting paths with ".." segments.
- */
-function isPathSafe(path: string): boolean {
-  if (path.includes("\\")) return false;
-  const normalized = path.split("/").filter((p) => p !== ".");
-  return !normalized.some((segment) => segment === ".." || segment.startsWith(".."));
+function makeArchiveWarning(
+  id: string,
+  title: string,
+  entryName: string,
+  reason: string,
+  severity: Severity,
+  normalizedPath?: string,
+): ArchiveWarning {
+  const pathText = normalizedPath ? ` (${normalizedPath})` : "";
+  const warning: ArchiveWarning = {
+    id,
+    title,
+    entryName,
+    reason,
+    severity,
+    message: `${title}: ${entryName}${pathText}: ${reason}`,
+  };
+  if (normalizedPath !== undefined) {
+    warning.normalizedPath = normalizedPath;
+  }
+  return warning;
+}
+
+function normalizeZipEntryPath(entryName: string): { path: string } | { reason: string } {
+  if (entryName.length === 0) {
+    return { reason: "empty ZIP entry path" };
+  }
+  if (entryName.includes("\0")) {
+    return { reason: "NUL byte in ZIP entry path" };
+  }
+  if (entryName.includes("\\")) {
+    return { reason: "backslash in ZIP entry path" };
+  }
+  if (entryName.startsWith("/")) {
+    return { reason: "absolute ZIP entry path" };
+  }
+  if (/^[A-Za-z]:/.test(entryName)) {
+    return { reason: "drive-letter ZIP entry path" };
+  }
+
+  const segments = entryName.split("/").filter((part) => part !== "" && part !== ".");
+  if (segments.length === 0) {
+    return { reason: "empty ZIP entry path after normalization" };
+  }
+  for (const segment of segments) {
+    if (segment === ".." || segment.startsWith("..")) {
+      return { reason: "path traversal segment in ZIP entry path" };
+    }
+  }
+
+  return { path: segments.join("/") };
+}
+
+function toExtensionRelativePath(path: string): string {
+  return path.startsWith(VSIX_EXTENSION_PREFIX) ? path.slice(VSIX_EXTENSION_PREFIX.length) : path;
 }
 
 function openZipFile(vsixPath: string): Promise<yauzl.ZipFile> {
@@ -103,7 +156,8 @@ async function readZipEntry(entry: yauzl.Entry, zipFile: yauzl.ZipFile): Promise
 export async function extractVsix(vsixPath: string): Promise<VsixContents> {
   const zipFile = await openZipFile(vsixPath);
   const files = new Map<string, Buffer>();
-  const warnings: string[] = [];
+  const archiveWarnings: ArchiveWarning[] = [];
+  const artifacts: ArtifactEntry[] = [];
 
   let manifest: VsixManifest | undefined;
   let totalExtractedSize = 0;
@@ -116,15 +170,50 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
         continue;
       }
 
-      if (!isPathSafe(entry.fileName)) {
-        throw new Error(`Invalid VSIX: path traversal detected in "${entry.fileName}"`);
+      const normalizedEntry = normalizeZipEntryPath(entry.fileName);
+      if ("reason" in normalizedEntry) {
+        artifacts.push({
+          originalPath: entry.fileName,
+          size: 0,
+          compressedSize: entry.compressedSize,
+          uncompressedSize: entry.uncompressedSize,
+          skipped: true,
+          skipReason: normalizedEntry.reason,
+        });
+        archiveWarnings.push(
+          makeArchiveWarning(
+            "ARCHIVE_INVALID_PATH",
+            "Invalid ZIP entry path",
+            entry.fileName,
+            normalizedEntry.reason,
+            "high",
+          ),
+        );
+        continue;
       }
 
+      const relativePath = toExtensionRelativePath(normalizedEntry.path);
+
       if (entry.uncompressedSize > MAX_ENTRY_SIZE) {
-        warnings.push(
-          `Skipped "${entry.fileName}": declared size ` +
-            `${entry.uncompressedSize} exceeds ` +
-            `${MAX_ENTRY_SIZE} byte limit`,
+        const reason = `declared size ${entry.uncompressedSize} exceeds ${MAX_ENTRY_SIZE} byte limit`;
+        artifacts.push({
+          originalPath: entry.fileName,
+          path: relativePath,
+          size: 0,
+          compressedSize: entry.compressedSize,
+          uncompressedSize: entry.uncompressedSize,
+          skipped: true,
+          skipReason: reason,
+        });
+        archiveWarnings.push(
+          makeArchiveWarning(
+            "ARCHIVE_SKIPPED_ENTRY",
+            "Skipped ZIP entry",
+            entry.fileName,
+            reason,
+            "high",
+            relativePath,
+          ),
         );
         continue;
       }
@@ -133,18 +222,51 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
         entry.compressedSize > 0 &&
         entry.uncompressedSize / entry.compressedSize > MAX_COMPRESSION_RATIO
       ) {
-        warnings.push(
-          `Skipped "${entry.fileName}": compression ratio ` +
-            `${Math.round(entry.uncompressedSize / entry.compressedSize)}:1 ` +
-            `exceeds ${MAX_COMPRESSION_RATIO}:1 limit`,
+        const reason =
+          `compression ratio ${Math.round(entry.uncompressedSize / entry.compressedSize)}:1 ` +
+          `exceeds ${MAX_COMPRESSION_RATIO}:1 limit`;
+        artifacts.push({
+          originalPath: entry.fileName,
+          path: relativePath,
+          size: 0,
+          compressedSize: entry.compressedSize,
+          uncompressedSize: entry.uncompressedSize,
+          skipped: true,
+          skipReason: reason,
+        });
+        archiveWarnings.push(
+          makeArchiveWarning(
+            "ARCHIVE_SKIPPED_ENTRY",
+            "Skipped ZIP entry",
+            entry.fileName,
+            reason,
+            "high",
+            relativePath,
+          ),
         );
         continue;
       }
 
       if (totalExtractedSize + entry.uncompressedSize > MAX_TOTAL_SIZE) {
-        warnings.push(
-          `Skipped "${entry.fileName}": total extracted size would ` +
-            `exceed ${MAX_TOTAL_SIZE} byte limit`,
+        const reason = `total extracted size would exceed ${MAX_TOTAL_SIZE} byte limit`;
+        artifacts.push({
+          originalPath: entry.fileName,
+          path: relativePath,
+          size: 0,
+          compressedSize: entry.compressedSize,
+          uncompressedSize: entry.uncompressedSize,
+          skipped: true,
+          skipReason: reason,
+        });
+        archiveWarnings.push(
+          makeArchiveWarning(
+            "ARCHIVE_SKIPPED_ENTRY",
+            "Skipped ZIP entry",
+            entry.fileName,
+            reason,
+            "high",
+            relativePath,
+          ),
         );
         continue;
       }
@@ -154,18 +276,52 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
       try {
         content = await readZipEntry(entry, zipFile);
       } catch (error) {
-        warnings.push(
-          `Skipped "${entry.fileName}": failed to extract entry ` +
-            `(${error instanceof Error ? error.message : String(error)})`,
+        const reason = `failed to extract entry (${error instanceof Error ? error.message : String(error)})`;
+        artifacts.push({
+          originalPath: entry.fileName,
+          path: relativePath,
+          size: 0,
+          compressedSize: entry.compressedSize,
+          uncompressedSize: entry.uncompressedSize,
+          skipped: true,
+          skipReason: reason,
+        });
+        archiveWarnings.push(
+          makeArchiveWarning(
+            "ARCHIVE_SKIPPED_ENTRY",
+            "Skipped ZIP entry",
+            entry.fileName,
+            reason,
+            "high",
+            relativePath,
+          ),
         );
         continue;
       }
 
-      let relativePath = entry.fileName;
-      if (relativePath.startsWith(VSIX_EXTENSION_PREFIX)) {
-        relativePath = relativePath.slice(VSIX_EXTENSION_PREFIX.length);
+      const sha256 = computeSha256(content);
+      if (files.has(relativePath)) {
+        archiveWarnings.push(
+          makeArchiveWarning(
+            "ARCHIVE_DUPLICATE_PATH",
+            "Duplicate normalized ZIP path",
+            entry.fileName,
+            "multiple ZIP entries normalize to the same extension path; the last entry is used",
+            "high",
+            relativePath,
+          ),
+        );
       }
 
+      artifacts.push({
+        originalPath: entry.fileName,
+        path: relativePath,
+        size: content.length,
+        compressedSize: entry.compressedSize,
+        uncompressedSize: entry.uncompressedSize,
+        sha256,
+        skipped: false,
+      });
       files.set(relativePath, content);
 
       if (relativePath === "package.json") {
@@ -177,17 +333,22 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
   }
 
   if (!manifest) {
-    manifest = findManifestWithNonStandardPrefix(files);
+    manifest = findManifestWithNonStandardPrefix(files, artifacts, archiveWarnings);
   }
 
   if (!manifest) {
     throw new Error("Invalid VSIX: missing package.json");
   }
 
+  archiveWarnings.push(...findManifestReferenceWarnings(manifest, files, archiveWarnings));
+  const warnings = archiveWarnings.map((warning) => warning.message);
+
   return {
     manifest,
     files,
     basePath: vsixPath,
+    artifacts,
+    ...(archiveWarnings.length > 0 ? { archiveWarnings } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
@@ -197,7 +358,11 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
  * (e.g. "publisher.name-version/" instead of "extension/")
  * and re-normalize all paths.
  */
-function findManifestWithNonStandardPrefix(files: Map<string, Buffer>): VsixManifest | undefined {
+function findManifestWithNonStandardPrefix(
+  files: Map<string, Buffer>,
+  artifacts: ArtifactEntry[],
+  archiveWarnings: ArchiveWarning[],
+): VsixManifest | undefined {
   for (const [path, content] of files) {
     const match = path.match(/^([^/]+)\/package\.json$/);
     if (!match) {
@@ -208,16 +373,37 @@ function findManifestWithNonStandardPrefix(files: Map<string, Buffer>): VsixMani
     const normalized = new Map<string, Buffer>();
 
     for (const [p, c] of files) {
-      if (p.startsWith(prefix)) {
-        normalized.set(p.slice(prefix.length), c);
-      } else {
-        normalized.set(p, c);
+      const normalizedPath = p.startsWith(prefix) ? p.slice(prefix.length) : p;
+      if (normalized.has(normalizedPath)) {
+        archiveWarnings.push(
+          makeArchiveWarning(
+            "ARCHIVE_DUPLICATE_PATH",
+            "Duplicate normalized ZIP path",
+            p,
+            "multiple ZIP entries normalize to the same extension path after prefix normalization; the last entry is used",
+            "high",
+            normalizedPath,
+          ),
+        );
       }
+
+      normalized.set(normalizedPath, c);
     }
 
     files.clear();
     for (const [p, c] of normalized) {
       files.set(p, c);
+    }
+
+    for (const artifact of artifacts) {
+      if (artifact.path?.startsWith(prefix)) {
+        artifact.path = artifact.path.slice(prefix.length);
+      }
+    }
+    for (const warning of archiveWarnings) {
+      if (warning.normalizedPath?.startsWith(prefix)) {
+        warning.normalizedPath = warning.normalizedPath.slice(prefix.length);
+      }
     }
 
     return JSON.parse(content.toString("utf8")) as VsixManifest;
@@ -226,8 +412,88 @@ function findManifestWithNonStandardPrefix(files: Map<string, Buffer>): VsixMani
   return undefined;
 }
 
+function normalizeManifestReference(reference: string): string | null {
+  const withoutFragment = reference.split("#")[0]?.split("?")[0] ?? "";
+  const trimmed = withoutFragment.replace(/^\.\//, "");
+  const normalized = normalizeZipEntryPath(trimmed);
+  if ("reason" in normalized) {
+    return null;
+  }
+  return toExtensionRelativePath(normalized.path);
+}
+
+function collectManifestReferences(manifest: VsixManifest): Array<{ path: string; kind: string }> {
+  const refs: Array<{ path: string; kind: string }> = [];
+  const addRef = (value: unknown, kind: string) => {
+    if (typeof value !== "string" || value.length === 0) return;
+    const normalized = normalizeManifestReference(value);
+    if (normalized) {
+      refs.push({ path: normalized, kind });
+    } else {
+      refs.push({ path: value, kind: `${kind}:invalid` });
+    }
+  };
+
+  addRef(manifest.main, "main");
+  addRef(manifest.browser, "browser");
+
+  for (const theme of manifest.contributes?.themes ?? []) {
+    addRef(theme.path, "theme");
+  }
+  for (const iconTheme of manifest.contributes?.iconThemes ?? []) {
+    addRef(iconTheme.path, "iconTheme");
+  }
+
+  return refs;
+}
+
+function findManifestReferenceWarnings(
+  manifest: VsixManifest,
+  files: Map<string, Buffer>,
+  archiveWarnings: ArchiveWarning[],
+): ArchiveWarning[] {
+  const warnings: ArchiveWarning[] = [];
+
+  for (const ref of collectManifestReferences(manifest)) {
+    if (ref.kind.endsWith(":invalid")) {
+      warnings.push(
+        makeArchiveWarning(
+          "ARCHIVE_INVALID_MANIFEST_REFERENCE",
+          "Invalid manifest file reference",
+          ref.path,
+          `manifest ${ref.kind.slice(0, -8)} reference is not a safe relative path`,
+          "high",
+          ref.path,
+        ),
+      );
+      continue;
+    }
+
+    if (files.has(ref.path)) {
+      continue;
+    }
+
+    const skipped = archiveWarnings.find((warning) => warning.normalizedPath === ref.path);
+    warnings.push(
+      makeArchiveWarning(
+        skipped ? "ARCHIVE_REFERENCED_FILE_SKIPPED" : "ARCHIVE_REFERENCED_FILE_MISSING",
+        skipped ? "Manifest-referenced file was skipped" : "Manifest-referenced file is missing",
+        ref.path,
+        skipped
+          ? `manifest ${ref.kind} reference points to an entry skipped during extraction`
+          : `manifest ${ref.kind} reference does not exist in the archive`,
+        ref.kind === "main" || ref.kind === "browser" ? "critical" : "high",
+        ref.path,
+      ),
+    );
+  }
+
+  return warnings;
+}
+
 export async function loadDirectory(dirPath: string): Promise<VsixContents> {
   const files = new Map<string, Buffer>();
+  const artifacts: ArtifactEntry[] = [];
 
   async function walkDir(dir: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true });
@@ -245,6 +511,13 @@ export async function loadDirectory(dirPath: string): Promise<VsixContents> {
         const relativePath = relative(dirPath, fullPath);
         const content = await readFile(fullPath);
         files.set(relativePath, content);
+        artifacts.push({
+          originalPath: relativePath,
+          path: relativePath,
+          size: content.length,
+          sha256: computeSha256(content),
+          skipped: false,
+        });
       }
     }
   }
@@ -262,6 +535,7 @@ export async function loadDirectory(dirPath: string): Promise<VsixContents> {
     manifest,
     files,
     basePath: dirPath,
+    artifacts,
   };
 }
 

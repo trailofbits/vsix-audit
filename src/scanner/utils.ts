@@ -2,6 +2,8 @@
  * Shared utility functions for scanner checks.
  */
 
+import type { VsixContents } from "./types.js";
+
 /**
  * Pre-compute line start offsets for binary search.
  * Returns array where index i is the character offset
@@ -78,4 +80,16 @@ export function findLineNumberByIndex(
 ): number {
   const starts = lineStarts ?? computeLineStarts(content);
   return offsetToLine(index, starts);
+}
+
+export function getStringContent(contents: VsixContents, filename: string, buffer: Buffer): string {
+  contents.stringContents ??= new Map();
+  const cached = contents.stringContents.get(filename);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const content = buffer.toString("utf8");
+  contents.stringContents.set(filename, content);
+  return content;
 }

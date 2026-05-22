@@ -1,6 +1,6 @@
 import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "../constants.js";
 import type { BlocklistEntry, Finding, VsixContents, VsixManifest, ZooData } from "../types.js";
-import { computeLineStarts, findLineNumberByIndex } from "../utils.js";
+import { computeLineStarts, findLineNumberByIndex, getStringContent } from "../utils.js";
 
 interface PackageJson {
   name?: string;
@@ -484,7 +484,7 @@ function checkExecutionPatterns(contents: VsixContents): Finding[] {
   for (const [filename, buffer] of contents.files) {
     if (!isScannable(filename, SCANNABLE_EXTENSIONS_PATTERN)) continue;
 
-    const content = contents.stringContents?.get(filename) ?? buffer.toString("utf8");
+    const content = getStringContent(contents, filename, buffer);
     const lineStarts = computeLineStarts(content);
 
     const taskExecutionMatch = TASK_EXECUTION_PATTERN.exec(content);
