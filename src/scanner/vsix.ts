@@ -78,6 +78,10 @@ function toExtensionRelativePath(path: string): string {
   return path.startsWith(VSIX_EXTENSION_PREFIX) ? path.slice(VSIX_EXTENSION_PREFIX.length) : path;
 }
 
+function portablePathCollisionKey(path: string): string {
+  return path.normalize("NFC").toLowerCase();
+}
+
 function openZipFile(vsixPath: string): Promise<yauzl.ZipFile> {
   return new Promise((resolve, reject) => {
     yauzl.open(
@@ -85,7 +89,8 @@ function openZipFile(vsixPath: string): Promise<yauzl.ZipFile> {
       {
         autoClose: false,
         lazyEntries: true,
-        decodeStrings: true,
+        decodeStrings: false,
+        strictFileNames: false,
         validateEntrySizes: false,
       },
       (error, zipFile) => {
@@ -101,6 +106,11 @@ function openZipFile(vsixPath: string): Promise<yauzl.ZipFile> {
       },
     );
   });
+}
+
+function getZipEntryName(entry: yauzl.Entry): string {
+  const fileName = (entry as yauzl.Entry & { fileName: string | Buffer }).fileName;
+  return Buffer.isBuffer(fileName) ? fileName.toString("utf8") : fileName;
 }
 
 function collectZipEntries(zipFile: yauzl.ZipFile): Promise<yauzl.Entry[]> {
@@ -128,7 +138,7 @@ function openZipEntryStream(
         return;
       }
       if (!stream) {
-        reject(new Error(`Failed to read ZIP entry "${entry.fileName}"`));
+        reject(new Error(`Failed to read ZIP entry "${getZipEntryName(entry)}"`));
         return;
       }
       resolve(stream);
@@ -145,7 +155,7 @@ async function readZipEntry(entry: yauzl.Entry, zipFile: yauzl.ZipFile): Promise
     const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     actualSize += data.length;
     if (actualSize > MAX_ENTRY_SIZE) {
-      throw new Error(`ZIP entry "${entry.fileName}" exceeds ${MAX_ENTRY_SIZE} byte limit`);
+      throw new Error(`ZIP entry "${getZipEntryName(entry)}" exceeds ${MAX_ENTRY_SIZE} byte limit`);
     }
     chunks.push(data);
   }
@@ -161,19 +171,22 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
 
   let manifest: VsixManifest | undefined;
   let totalExtractedSize = 0;
+  const portablePathKeys = new Map<string, string>();
 
   try {
     const entries = await collectZipEntries(zipFile);
 
     for (const entry of entries) {
-      if (entry.fileName.endsWith("/")) {
+      const entryName = getZipEntryName(entry);
+
+      if (entryName.endsWith("/")) {
         continue;
       }
 
-      const normalizedEntry = normalizeZipEntryPath(entry.fileName);
+      const normalizedEntry = normalizeZipEntryPath(entryName);
       if ("reason" in normalizedEntry) {
         artifacts.push({
-          originalPath: entry.fileName,
+          originalPath: entryName,
           size: 0,
           compressedSize: entry.compressedSize,
           uncompressedSize: entry.uncompressedSize,
@@ -184,7 +197,7 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
           makeArchiveWarning(
             "ARCHIVE_INVALID_PATH",
             "Invalid ZIP entry path",
-            entry.fileName,
+            entryName,
             normalizedEntry.reason,
             "high",
           ),
@@ -193,11 +206,27 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
       }
 
       const relativePath = toExtensionRelativePath(normalizedEntry.path);
+      const portablePathKey = portablePathCollisionKey(relativePath);
+      const portablePathMatch = portablePathKeys.get(portablePathKey);
+      if (portablePathMatch && portablePathMatch !== relativePath) {
+        archiveWarnings.push(
+          makeArchiveWarning(
+            "ARCHIVE_PORTABLE_PATH_COLLISION",
+            "Portable filesystem path collision",
+            entryName,
+            `entry collides with "${portablePathMatch}" after Unicode/case normalization`,
+            "high",
+            relativePath,
+          ),
+        );
+      } else {
+        portablePathKeys.set(portablePathKey, relativePath);
+      }
 
       if (entry.uncompressedSize > MAX_ENTRY_SIZE) {
         const reason = `declared size ${entry.uncompressedSize} exceeds ${MAX_ENTRY_SIZE} byte limit`;
         artifacts.push({
-          originalPath: entry.fileName,
+          originalPath: entryName,
           path: relativePath,
           size: 0,
           compressedSize: entry.compressedSize,
@@ -209,7 +238,7 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
           makeArchiveWarning(
             "ARCHIVE_SKIPPED_ENTRY",
             "Skipped ZIP entry",
-            entry.fileName,
+            entryName,
             reason,
             "high",
             relativePath,
@@ -226,7 +255,7 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
           `compression ratio ${Math.round(entry.uncompressedSize / entry.compressedSize)}:1 ` +
           `exceeds ${MAX_COMPRESSION_RATIO}:1 limit`;
         artifacts.push({
-          originalPath: entry.fileName,
+          originalPath: entryName,
           path: relativePath,
           size: 0,
           compressedSize: entry.compressedSize,
@@ -238,7 +267,7 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
           makeArchiveWarning(
             "ARCHIVE_SKIPPED_ENTRY",
             "Skipped ZIP entry",
-            entry.fileName,
+            entryName,
             reason,
             "high",
             relativePath,
@@ -250,7 +279,7 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
       if (totalExtractedSize + entry.uncompressedSize > MAX_TOTAL_SIZE) {
         const reason = `total extracted size would exceed ${MAX_TOTAL_SIZE} byte limit`;
         artifacts.push({
-          originalPath: entry.fileName,
+          originalPath: entryName,
           path: relativePath,
           size: 0,
           compressedSize: entry.compressedSize,
@@ -262,7 +291,7 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
           makeArchiveWarning(
             "ARCHIVE_SKIPPED_ENTRY",
             "Skipped ZIP entry",
-            entry.fileName,
+            entryName,
             reason,
             "high",
             relativePath,
@@ -278,7 +307,7 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
       } catch (error) {
         const reason = `failed to extract entry (${error instanceof Error ? error.message : String(error)})`;
         artifacts.push({
-          originalPath: entry.fileName,
+          originalPath: entryName,
           path: relativePath,
           size: 0,
           compressedSize: entry.compressedSize,
@@ -290,7 +319,7 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
           makeArchiveWarning(
             "ARCHIVE_SKIPPED_ENTRY",
             "Skipped ZIP entry",
-            entry.fileName,
+            entryName,
             reason,
             "high",
             relativePath,
@@ -305,7 +334,7 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
           makeArchiveWarning(
             "ARCHIVE_DUPLICATE_PATH",
             "Duplicate normalized ZIP path",
-            entry.fileName,
+            entryName,
             "multiple ZIP entries normalize to the same extension path; the last entry is used",
             "high",
             relativePath,
@@ -314,7 +343,7 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
       }
 
       artifacts.push({
-        originalPath: entry.fileName,
+        originalPath: entryName,
         path: relativePath,
         size: content.length,
         compressedSize: entry.compressedSize,

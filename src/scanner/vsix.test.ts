@@ -30,8 +30,8 @@ function createTestZip(
     const compressed = deflateRawSync(content);
     const fileName = Buffer.from(file.name, "utf8");
 
-    // General purpose bit flag: bit 3 = data descriptor follows compressed data
-    const gpBitFlag = useDataDescriptor ? 0x0008 : 0x0000;
+    // General purpose bit flag: bit 3 = data descriptor, bit 11 = UTF-8 names.
+    const gpBitFlag = (useDataDescriptor ? 0x0008 : 0x0000) | 0x0800;
 
     // Local file header (30 bytes + filename)
     const localHeader = Buffer.alloc(30 + fileName.length);
@@ -455,6 +455,209 @@ describe("extractVsix", () => {
 
       expect(contents.files.get("main.js")?.toString()).toBe('console.log("second");');
       expect(contents.archiveWarnings?.some((w) => w.id === "ARCHIVE_DUPLICATE_PATH")).toBe(true);
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("warns when dot segments create a duplicate normalized path", async () => {
+    const manifest = JSON.stringify({
+      name: "dot-segment-duplicate-ext",
+      publisher: "test",
+      version: "1.0.0",
+    });
+
+    const zipBuffer = createTestZip(
+      [
+        { name: "extension/package.json", content: manifest },
+        { name: "extension/./main.js", content: 'console.log("first");' },
+        { name: "extension/main.js", content: 'console.log("second");' },
+      ],
+      { useDataDescriptor: false },
+    );
+
+    const vsixPath = join(tmpdir(), `test-dot-duplicate-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.files.get("main.js")?.toString()).toBe('console.log("second");');
+      expect(contents.archiveWarnings?.some((w) => w.id === "ARCHIVE_DUPLICATE_PATH")).toBe(true);
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("warns and skips unsafe ZIP entry paths", async () => {
+    const manifest = JSON.stringify({
+      name: "unsafe-path-ext",
+      publisher: "test",
+      version: "1.0.0",
+    });
+
+    const zipBuffer = createTestZip(
+      [
+        { name: "extension/package.json", content: manifest },
+        { name: "extension/../evil.js", content: "traversal" },
+        { name: "/extension/absolute.js", content: "absolute" },
+        { name: "extension\\backslash.js", content: "backslash" },
+        { name: "C:/extension/drive.js", content: "drive" },
+      ],
+      { useDataDescriptor: false },
+    );
+
+    const vsixPath = join(tmpdir(), `test-unsafe-paths-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+      const invalidWarnings = contents.archiveWarnings?.filter(
+        (warning) => warning.id === "ARCHIVE_INVALID_PATH",
+      );
+
+      expect(contents.files.has("evil.js")).toBe(false);
+      expect(contents.files.has("absolute.js")).toBe(false);
+      expect(contents.files.has("extension\\backslash.js")).toBe(false);
+      expect(contents.files.has("drive.js")).toBe(false);
+      expect(invalidWarnings).toHaveLength(4);
+      expect(invalidWarnings?.map((warning) => warning.reason)).toEqual(
+        expect.arrayContaining([
+          "path traversal segment in ZIP entry path",
+          "absolute ZIP entry path",
+          "backslash in ZIP entry path",
+          "drive-letter ZIP entry path",
+        ]),
+      );
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("warns when manifest main points to a missing file", async () => {
+    const manifest = JSON.stringify({
+      name: "missing-main-ext",
+      publisher: "test",
+      version: "1.0.0",
+      main: "main.js",
+    });
+
+    const zipBuffer = createTestZip([{ name: "extension/package.json", content: manifest }], {
+      useDataDescriptor: false,
+    });
+
+    const vsixPath = join(tmpdir(), `test-missing-main-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(
+        contents.archiveWarnings?.some((w) => w.id === "ARCHIVE_REFERENCED_FILE_MISSING"),
+      ).toBe(true);
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("warns when manifest main points to a skipped ZIP entry", async () => {
+    const manifest = JSON.stringify({
+      name: "skipped-main-ext",
+      publisher: "test",
+      version: "1.0.0",
+      main: "main.js",
+    });
+
+    const zipBuffer = createSpoofedZip([
+      { name: "extension/package.json", content: manifest },
+      {
+        name: "extension/main.js",
+        content: "small",
+        spoofedUncompressedSize: MAX_ENTRY_SIZE + 1,
+      },
+    ]);
+
+    const vsixPath = join(tmpdir(), `test-skipped-main-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.files.has("main.js")).toBe(false);
+      expect(contents.archiveWarnings?.some((w) => w.id === "ARCHIVE_SKIPPED_ENTRY")).toBe(true);
+      expect(
+        contents.archiveWarnings?.some((w) => w.id === "ARCHIVE_REFERENCED_FILE_SKIPPED"),
+      ).toBe(true);
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("warns when paths collide on case-insensitive filesystems", async () => {
+    const manifest = JSON.stringify({
+      name: "case-collision-ext",
+      publisher: "test",
+      version: "1.0.0",
+    });
+
+    const zipBuffer = createTestZip(
+      [
+        { name: "extension/package.json", content: manifest },
+        { name: "extension/Main.js", content: 'console.log("upper");' },
+        { name: "extension/main.js", content: 'console.log("lower");' },
+      ],
+      { useDataDescriptor: false },
+    );
+
+    const vsixPath = join(tmpdir(), `test-case-collision-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+      const collision = contents.archiveWarnings?.find(
+        (warning) => warning.id === "ARCHIVE_PORTABLE_PATH_COLLISION",
+      );
+
+      expect(contents.files.has("Main.js")).toBe(true);
+      expect(contents.files.has("main.js")).toBe(true);
+      expect(collision?.normalizedPath).toBe("main.js");
+      expect(collision?.reason).toContain("Main.js");
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("warns when paths collide after Unicode normalization", async () => {
+    const manifest = JSON.stringify({
+      name: "unicode-collision-ext",
+      publisher: "test",
+      version: "1.0.0",
+    });
+    const decomposed = "cafe\u0301.js";
+    const composed = "caf\u00e9.js";
+
+    const zipBuffer = createTestZip(
+      [
+        { name: "extension/package.json", content: manifest },
+        { name: `extension/${decomposed}`, content: 'console.log("decomposed");' },
+        { name: `extension/${composed}`, content: 'console.log("composed");' },
+      ],
+      { useDataDescriptor: false },
+    );
+
+    const vsixPath = join(tmpdir(), `test-unicode-collision-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+      const collision = contents.archiveWarnings?.find(
+        (warning) => warning.id === "ARCHIVE_PORTABLE_PATH_COLLISION",
+      );
+
+      expect(contents.files.has(decomposed)).toBe(true);
+      expect(contents.files.has(composed)).toBe(true);
+      expect(collision?.normalizedPath).toBe(composed);
+      expect(collision?.reason).toContain(decomposed);
     } finally {
       await rm(vsixPath, { force: true });
     }
