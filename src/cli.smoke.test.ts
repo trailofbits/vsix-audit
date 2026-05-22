@@ -95,9 +95,13 @@ function createDeflatedZip(files: Array<{ name: string; content: string }>): Buf
 
 async function runCli(args: string[]): Promise<CliResult> {
   return await new Promise((resolvePromise, reject) => {
+    const env: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" };
+    delete env["VSIX_AUDIT_ZOO_PATH"];
+    delete env["VSIX_AUDIT_CACHE_DIR"];
+
     const child = spawn(process.execPath, [CLI_PATH, ...args], {
       cwd: REPO_ROOT,
-      env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
+      env,
     });
 
     let stdout = "";
