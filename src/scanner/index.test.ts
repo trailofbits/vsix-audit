@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { scanExtension } from "./index.js";
@@ -18,6 +20,46 @@ describe("scanExtension", () => {
     await expect(scanExtension("nonexistent.vsix", defaultOptions)).rejects.toThrow(
       "Target not found: nonexistent.vsix",
     );
+  });
+
+  it("disables threat intelligence without disabling generic detections", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vsix-audit-no-intel-"));
+    try {
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({
+          name: "no-intel-fixture",
+          publisher: "test",
+          version: "1.0.0",
+          main: "main.js",
+          dependencies: {
+            "vscode-darcula": "1.0.0",
+          },
+        }),
+      );
+      await writeFile(
+        join(dir, "main.js"),
+        [
+          'const c2 = "niggboo.com";',
+          'const cmd = "npx github:nrwl/nx#0123456789abcdef0123456789abcdef01234567";',
+          "console.log(c2, cmd);",
+        ].join("\n"),
+      );
+
+      const withIntel = await scanExtension(dir, defaultOptions);
+      const withoutIntel = await scanExtension(dir, { ...defaultOptions, intel: "none" });
+
+      expect(withIntel.findings.some((f) => f.id === "KNOWN_C2_DOMAIN")).toBe(true);
+      expect(withIntel.findings.some((f) => f.id === "MALICIOUS_NPM_PACKAGE")).toBe(true);
+      expect(withIntel.findings.some((f) => f.id === "GITHUB_SHA_EXECUTION")).toBe(true);
+
+      expect(withoutIntel.metadata.intel).toBe("none");
+      expect(withoutIntel.findings.some((f) => f.id === "KNOWN_C2_DOMAIN")).toBe(false);
+      expect(withoutIntel.findings.some((f) => f.id === "MALICIOUS_NPM_PACKAGE")).toBe(false);
+      expect(withoutIntel.findings.some((f) => f.id === "GITHUB_SHA_EXECUTION")).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   describe.skipIf(!hasSamples)("zoo sample detection", () => {

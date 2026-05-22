@@ -26,9 +26,10 @@ import type {
   ScanOptions,
   ScanResult,
   Severity,
+  ZooData,
   VsixContents,
 } from "./types.js";
-import { MODULE_NAMES, OUTPUT_FORMATS, SEVERITIES } from "./types.js";
+import { INTEL_MODES, MODULE_NAMES, OUTPUT_FORMATS, SEVERITIES } from "./types.js";
 import type { ModuleName } from "./types.js";
 import { loadExtension } from "./vsix.js";
 
@@ -145,6 +146,12 @@ function isSeverity(value: unknown): value is Severity {
   return typeof value === "string" && SEVERITIES.includes(value as Severity);
 }
 
+function isIntelMode(value: unknown): value is NonNullable<ScanOptions["intel"]> {
+  return (
+    typeof value === "string" && INTEL_MODES.includes(value as NonNullable<ScanOptions["intel"]>)
+  );
+}
+
 export function validateScanOptions(options: ScanOptions): void {
   if (!isOutputFormat(options.output)) {
     throw new Error(
@@ -169,9 +176,30 @@ export function validateScanOptions(options: ScanOptions): void {
     }
   }
 
+  if (options.intel !== undefined && !isIntelMode(options.intel)) {
+    throw new Error(
+      `Invalid intel mode: ${String(options.intel)}. Valid modes: ${INTEL_MODES.join(", ")}`,
+    );
+  }
+
   if (options.requireYara && options.modules && !options.modules.includes("yara")) {
     throw new Error("--require-yara cannot be used when the module filter excludes yara");
   }
+}
+
+function removeThreatIntel(zooData: ZooData): ZooData {
+  return {
+    ...zooData,
+    blocklist: [],
+    hashes: new Set(),
+    domains: new Set(),
+    ips: new Set(),
+    maliciousNpmPackages: new Set(),
+    maliciousNpmVersions: new Map(),
+    wallets: new Set(),
+    blockchainAllowlist: new Set(),
+    githubC2Accounts: new Set(),
+  };
 }
 
 function archiveWarningsToFindings(contents: VsixContents): Finding[] {
@@ -218,8 +246,10 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
   }
 
   const loadStart = performance.now();
-  const [contents, zooData] = await Promise.all([loadExtension(target), loadZooData()]);
+  const [contents, loadedZooData] = await Promise.all([loadExtension(target), loadZooData()]);
   timings.load = performance.now() - loadStart;
+  const intelMode = options.intel ?? "local";
+  const zooData = intelMode === "none" ? removeThreatIntel(loadedZooData) : loadedZooData;
 
   const { manifest } = contents;
   const extensionId = `${manifest.publisher}.${manifest.name}`;
@@ -380,6 +410,7 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
       scannedAt: new Date().toISOString(),
       scanDuration: Math.round(timings.total),
       coverage,
+      intel: intelMode,
       ...(options.profile ? { timings } : {}),
     },
   };
