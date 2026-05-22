@@ -1,8 +1,11 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { checkHashes } from "./checks/ioc.js";
 import { scanExtension } from "./index.js";
+import { loadZooData } from "./loaders/zoo.js";
 import type { ScanOptions } from "./types.js";
+import { loadExtension } from "./vsix.js";
 
 const ZOO_ROOT = join(import.meta.dirname, "..", "..", "zoo");
 const SAMPLES_DIR = process.env["VSIX_ZOO_PATH"] || join(ZOO_ROOT, "samples");
@@ -19,6 +22,7 @@ const hasCleanCorpus = existsSync(CLEAN_DIR);
 interface ExpectedDetection {
   path: string;
   description: string;
+  scanOptions?: Partial<ScanOptions>;
   expectedFindings: {
     id: string;
     severity?: "low" | "medium" | "high" | "critical";
@@ -135,7 +139,10 @@ describe.skipIf(!hasSamples)("Malware Sample Detection Coverage", () => {
     describe(sample.description, () => {
       it(`detects expected findings in ${sample.path}`, async () => {
         const samplePath = join(SAMPLES_DIR, sample.path);
-        const result = await scanExtension(samplePath, defaultOptions);
+        const result = await scanExtension(samplePath, {
+          ...defaultOptions,
+          ...sample.scanOptions,
+        });
 
         const findingIds = new Set(result.findings.map((f) => f.id));
 
@@ -162,7 +169,10 @@ describe.skipIf(!hasSamples)("Malware Sample Detection Coverage", () => {
 
       it(`produces at least one meaningful finding for ${sample.path}`, async () => {
         const samplePath = join(SAMPLES_DIR, sample.path);
-        const result = await scanExtension(samplePath, defaultOptions);
+        const result = await scanExtension(samplePath, {
+          ...defaultOptions,
+          ...sample.scanOptions,
+        });
 
         // Every malware sample should produce at least one finding at medium+ severity
         const meaningfulFindings = result.findings.filter(
@@ -231,7 +241,7 @@ describe.skipIf(!hasSamples)("Detection Quality Assertions", () => {
 
     for (const sample of MALWARE_SAMPLES) {
       const samplePath = join(SAMPLES_DIR, sample.path);
-      const result = await scanExtension(samplePath, defaultOptions);
+      const result = await scanExtension(samplePath, { ...defaultOptions, ...sample.scanOptions });
 
       const yaraIds = result.findings.filter((f) => f.id.startsWith("YARA_")).map((f) => f.id);
 
@@ -283,5 +293,21 @@ describe.skipIf(!hasSamples)("Detection Quality Assertions", () => {
     const blocklistFinding = result.findings.find((f) => f.id === "BLOCKLIST_MATCH");
     expect(blocklistFinding).toBeDefined();
     expect(blocklistFinding?.severity).toBe("critical");
+  }, 30000);
+
+  it("hash matching catches the compromised Nx Console 18.95.0 bundle", async () => {
+    const samplePath = join(SAMPLES_DIR, "malwarebazaar/nrwl.angular-console-18.95.0.vsix");
+    const [contents, zooData] = await Promise.all([loadExtension(samplePath), loadZooData()]);
+    const hashFindings = checkHashes(contents, zooData.hashes);
+
+    const finding = hashFindings.find(
+      (f) =>
+        f.metadata?.["sha256"] ===
+        "b0cefb66b953e5184b6adb3035e9e267335ac5eabfe1848e07834777b9397b74",
+    );
+
+    expect(finding).toBeDefined();
+    expect(finding?.severity).toBe("critical");
+    expect(finding?.location?.file).toBe("main.js");
   }, 30000);
 });
