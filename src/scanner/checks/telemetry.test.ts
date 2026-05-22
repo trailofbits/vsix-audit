@@ -28,6 +28,7 @@ function makeZooData(telemetryServices?: Map<string, TelemetryServiceInfo>): Zoo
     domains: new Set(),
     ips: new Set(),
     maliciousNpmPackages: new Set(),
+    maliciousNpmVersions: new Map(),
     wallets: new Set(),
     blockchainAllowlist: new Set(),
     githubC2Accounts: new Set(),

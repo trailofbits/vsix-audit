@@ -35,6 +35,7 @@ function makeZooData(overrides: Partial<ZooData> = {}): ZooData {
     domains: new Set(),
     ips: new Set(),
     maliciousNpmPackages: new Set(),
+    maliciousNpmVersions: new Map(),
     wallets: new Set(),
     blockchainAllowlist: new Set(),
     telemetryServices: new Map(),
