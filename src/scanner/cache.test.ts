@@ -28,15 +28,6 @@ describe("getCacheDir", () => {
   });
 
   it("returns macOS cache path on darwin", () => {
-    vi.mock("node:os", async () => {
-      const actual = await vi.importActual<typeof import("node:os")>("node:os");
-      return {
-        ...actual,
-        platform: () => "darwin",
-      };
-    });
-
-    // Re-import to get mocked version
     const os = platform();
     if (os === "darwin") {
       const dir = getCacheDir();
