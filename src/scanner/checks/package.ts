@@ -1,4 +1,6 @@
+import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "../constants.js";
 import type { BlocklistEntry, Finding, VsixContents, VsixManifest, ZooData } from "../types.js";
+import { computeLineStarts, findLineNumberByIndex } from "../utils.js";
 
 interface PackageJson {
   name?: string;
@@ -107,6 +109,17 @@ const MALICIOUS_SCRIPT_PATTERNS = [
   { pattern: /\.credentials/i, desc: "Credential file access" },
   { pattern: /keychain|keyring/i, desc: "System keychain access" },
 ];
+
+const TASK_EXECUTION_PATTERN = /\b[\w$.]*executeTask\s*\(/;
+const TASK_CONSTRUCTION_PATTERN = /\bnew\s+[\w$.]*Task\s*\(/;
+const SHELL_EXECUTION_PATTERN = /\b[\w$.]*ShellExecution\s*\(/;
+const PROCESS_LAUNCH_PATTERN =
+  /\b(?:child_process|execFileSync|execFile|execSync|exec|spawnSync|spawn|fork)\b/;
+const HIDDEN_TASK_PATTERN =
+  /presentationOptions\.(?:focus|echo)\s*=\s*(?:false|!1)|presentationOptions\.reveal\s*=\s*(?:[\w$.]*Never|0)/;
+const NPX_EXECUTION_PATTERN = /\b(?:npx|npm\s+(?:exec|x))\b/i;
+const GITHUB_SHA_REF_PATTERN = /github:([a-z0-9_.-]+\/[a-z0-9_.-]+)#([0-9a-f]{7,40}|\$\{[^}]+\})/i;
+const COMMIT_SHA_PATTERN = /\b[0-9a-f]{40}\b/i;
 
 function levenshteinDistance(a: string, b: string): number {
   const matrix: number[][] = [];
@@ -462,6 +475,122 @@ export function checkLifecycleScripts(packageJson: PackageJson): Finding[] {
   return findings;
 }
 
+function checkExecutionPatterns(contents: VsixContents): Finding[] {
+  const findings: Finding[] = [];
+  const startupExecutionFiles: Array<{ filename: string; line?: number; kind: string }> = [];
+  const startsOnStartup =
+    contents.manifest.activationEvents?.includes("onStartupFinished") ?? false;
+
+  for (const [filename, buffer] of contents.files) {
+    if (!isScannable(filename, SCANNABLE_EXTENSIONS_PATTERN)) continue;
+
+    const content = contents.stringContents?.get(filename) ?? buffer.toString("utf8");
+    const lineStarts = computeLineStarts(content);
+
+    const taskExecutionMatch = TASK_EXECUTION_PATTERN.exec(content);
+    const taskConstructionMatch = TASK_CONSTRUCTION_PATTERN.exec(content);
+    const shellExecutionMatch = SHELL_EXECUTION_PATTERN.exec(content);
+    const githubRefMatch = GITHUB_SHA_REF_PATTERN.exec(content);
+    const launchesTask =
+      taskExecutionMatch !== null &&
+      (taskConstructionMatch !== null || shellExecutionMatch !== null);
+    const launchesProcess = launchesTask || PROCESS_LAUNCH_PATTERN.test(content);
+
+    if (launchesTask && HIDDEN_TASK_PATTERN.test(content)) {
+      const taskAnchor = taskExecutionMatch ?? taskConstructionMatch ?? shellExecutionMatch;
+      const line =
+        taskAnchor?.index !== undefined
+          ? findLineNumberByIndex(content, taskAnchor.index, lineStarts)
+          : undefined;
+      findings.push({
+        id: "BACKGROUND_TASK_EXECUTION",
+        title: "Hidden VS Code task execution",
+        description:
+          `File "${filename}" creates and executes a VS Code task while suppressing task UI. ` +
+          "This is a strong indicator of background command execution.",
+        severity: "high",
+        category: "pattern",
+        location: line !== undefined ? { file: filename, line } : { file: filename },
+        metadata: {
+          hiddenTask: true,
+        },
+      });
+    }
+
+    if (NPX_EXECUTION_PATTERN.test(content) && githubRefMatch?.index !== undefined) {
+      const repo = githubRefMatch[1];
+      const ref = githubRefMatch[2];
+      const isInterpolatedRef = ref?.startsWith("${") ?? false;
+      const hasCommitSha = !isInterpolatedRef || COMMIT_SHA_PATTERN.test(content);
+
+      if (repo && ref && hasCommitSha) {
+        const line = findLineNumberByIndex(content, githubRefMatch.index, lineStarts);
+        findings.push({
+          id: "GITHUB_SHA_EXECUTION",
+          title: "Executes npx/npm command from GitHub commit",
+          description:
+            `File "${filename}" executes an npx/npm command against ` +
+            `github:${repo}#${isInterpolatedRef ? "…" : ref}. Running code directly from ` +
+            "a GitHub commit inside extension runtime is highly suspicious.",
+          severity: "critical",
+          category: "pattern",
+          location: { file: filename, line },
+          metadata: {
+            repo,
+            ref: isInterpolatedRef ? "interpolated" : ref,
+            command: githubRefMatch[0],
+          },
+        });
+      }
+    }
+
+    if (startsOnStartup && launchesProcess) {
+      const anchor = taskExecutionMatch ?? shellExecutionMatch;
+      const line =
+        anchor?.index !== undefined
+          ? findLineNumberByIndex(content, anchor.index, lineStarts)
+          : undefined;
+      startupExecutionFiles.push(
+        line !== undefined
+          ? {
+              filename,
+              line,
+              kind: launchesTask ? "task" : "process",
+            }
+          : {
+              filename,
+              kind: launchesTask ? "task" : "process",
+            },
+      );
+    }
+  }
+
+  const startupExecution =
+    startupExecutionFiles.find((entry) => entry.kind === "task") ?? startupExecutionFiles[0];
+  if (startsOnStartup && startupExecution) {
+    findings.push({
+      id: "STARTUP_EXECUTION_CHAIN",
+      title: "Startup activation triggers command execution",
+      description:
+        `Extension activates on "onStartupFinished" and ${startupExecution.kind}-launches ` +
+        `from "${startupExecution.filename}". This combination materially raises the risk ` +
+        "of unattended code execution at editor startup.",
+      severity: "high",
+      category: "manifest",
+      location:
+        startupExecution.line !== undefined
+          ? { file: startupExecution.filename, line: startupExecution.line }
+          : { file: startupExecution.filename },
+      metadata: {
+        activationEvent: "onStartupFinished",
+        executionKind: startupExecution.kind,
+      },
+    });
+  }
+
+  return findings;
+}
+
 // --- Main export ---
 
 export function checkPackage(contents: VsixContents, zooData: ZooData): Finding[] {
@@ -475,6 +604,7 @@ export function checkPackage(contents: VsixContents, zooData: ZooData): Finding[
   findings.push(...checkActivationEvents(manifest));
   findings.push(...checkThemeAbuse(manifest));
   findings.push(...checkSuspiciousPermissions(manifest));
+  findings.push(...checkExecutionPatterns(contents));
 
   // Dependencies checks (parse package.json from files)
   const packageJsonBuffer = contents.files.get("package.json");

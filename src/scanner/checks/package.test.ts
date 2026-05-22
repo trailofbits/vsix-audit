@@ -19,6 +19,7 @@ function makePackageJson(content: object): string {
 function makeContents(
   packageJsonContent: object,
   manifestOverrides: Partial<VsixManifest> = {},
+  extraFiles: Record<string, string> = {},
 ): VsixContents {
   const manifest: VsixManifest = {
     name: "test-extension",
@@ -29,6 +30,9 @@ function makeContents(
 
   const files = new Map<string, Buffer>();
   files.set("package.json", Buffer.from(makePackageJson(packageJsonContent), "utf8"));
+  for (const [filename, content] of Object.entries(extraFiles)) {
+    files.set(filename, Buffer.from(content, "utf8"));
+  }
 
   return { manifest, files, basePath: "/test" };
 }
@@ -590,6 +594,83 @@ describe("checkPackage (integration)", () => {
     expect(findings.some((f) => f.id === "MALICIOUS_NPM_PACKAGE")).toBe(true);
     expect(findings.some((f) => f.id === "TYPOSQUAT_PACKAGE")).toBe(true);
     expect(findings.some((f) => f.id === "MALICIOUS_LIFECYCLE_SCRIPT")).toBe(true);
+  });
+
+  it("flags hidden background task execution", () => {
+    const contents = makeContents(
+      { name: "task-runner" },
+      {},
+      {
+        "main.js": `
+          const task = new vscode.Task(
+            { type: "shell" },
+            vscode.TaskScope.Workspace,
+            "sync",
+            "test",
+            new vscode.ShellExecution("echo hi"),
+          );
+          task.presentationOptions.focus = false;
+          vscode.tasks.executeTask(task);
+        `,
+      },
+    );
+
+    const findings = checkPackage(contents, makeZooData());
+    const finding = findings.find((f) => f.id === "BACKGROUND_TASK_EXECUTION");
+
+    expect(finding).toBeDefined();
+    expect(finding?.severity).toBe("high");
+  });
+
+  it("flags npx execution from a GitHub commit ref", () => {
+    const contents = makeContents(
+      { name: "task-runner" },
+      {},
+      {
+        "main.js": `
+          const sha = "558b09d7ad0d1660e2a0fb8a06da81a6f42e06d2";
+          const cmd = \`npx -y github:nrwl/nx#\${sha}\`;
+          const task = new vscode.Task(
+            { type: "shell" },
+            vscode.TaskScope.Workspace,
+            "sync",
+            "test",
+            new vscode.ShellExecution(cmd),
+          );
+          vscode.tasks.executeTask(task);
+        `,
+      },
+    );
+
+    const findings = checkPackage(contents, makeZooData());
+    const finding = findings.find((f) => f.id === "GITHUB_SHA_EXECUTION");
+
+    expect(finding).toBeDefined();
+    expect(finding?.severity).toBe("critical");
+    expect(finding?.metadata?.["repo"]).toBe("nrwl/nx");
+  });
+
+  it("raises startup severity when code launches a process", () => {
+    const contents = makeContents(
+      { name: "startup-runner" },
+      {
+        activationEvents: ["onStartupFinished"],
+      },
+      {
+        "main.js": `
+          const childProcess = require("node:child_process");
+          childProcess.exec("echo hi");
+        `,
+      },
+    );
+
+    const findings = checkPackage(contents, makeZooData());
+    const startupFinding = findings.find((f) => f.id === "STARTUP_EXECUTION_CHAIN");
+
+    expect(findings.some((f) => f.id === "ACTIVATION_STARTUP")).toBe(true);
+    expect(startupFinding).toBeDefined();
+    expect(startupFinding?.severity).toBe("high");
+    expect(startupFinding?.metadata?.["executionKind"]).toBe("process");
   });
 
   it("returns empty array for clean extension", () => {
