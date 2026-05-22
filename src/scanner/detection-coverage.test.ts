@@ -11,9 +11,11 @@ const ZOO_ROOT = join(import.meta.dirname, "..", "..", "zoo");
 const SAMPLES_DIR = process.env["VSIX_ZOO_PATH"] || join(ZOO_ROOT, "samples");
 const TEST_CORPUS_DIR = join(import.meta.dirname, "..", "..", "test-corpus");
 const CLEAN_DIR = join(TEST_CORPUS_DIR, "clean");
+const TEAMPCP_NX_CONSOLE = "teampcp/nrwl.angular-console-18.95.0.vsix";
 
 const hasSamples = existsSync(join(SAMPLES_DIR, "apollyon"));
 const hasCleanCorpus = existsSync(CLEAN_DIR);
+const hasTeamPcpNxConsole = existsSync(join(SAMPLES_DIR, TEAMPCP_NX_CONSOLE));
 
 /**
  * Expected detections for each malware sample.
@@ -73,6 +75,23 @@ const MALWARE_SAMPLES: ExpectedDetection[] = [
       "YARA_MAL_JS_GlassWorm_Unicode_Stealth_Jan25",
       "YARA_C2_JS_WebSocket_Command_Exec_Jan25",
       "YARA_LOADER_PS_Download_Execute_Jan25",
+    ],
+  },
+  {
+    path: TEAMPCP_NX_CONSOLE,
+    description: "Compromised TeamPCP Nx Console 18.95.0 extension",
+    scanOptions: {
+      modules: ["package", "obfuscation", "ast", "yara", "telemetry"],
+    },
+    expectedFindings: [
+      { id: "GITHUB_SHA_EXECUTION", severity: "critical" },
+      { id: "BACKGROUND_TASK_EXECUTION", severity: "high" },
+      { id: "STARTUP_EXECUTION_CHAIN", severity: "high" },
+    ],
+    optionalFindings: [
+      "YARA_LOADER_JS_Download_Write_Execute_Jan25",
+      "YARA_STEALER_JS_Credential_File_Exfil_Jan25",
+      "YARA_SUSP_JS_Obfuscation_Eval_Jan25",
     ],
   },
 ];
@@ -296,19 +315,55 @@ describe.skipIf(!hasSamples)("Detection Quality Assertions", () => {
     expect(blocklistFinding?.severity).toBe("critical");
   }, 30000);
 
-  it("hash matching catches the compromised Nx Console 18.95.0 bundle", async () => {
-    const samplePath = join(SAMPLES_DIR, "malwarebazaar/nrwl.angular-console-18.95.0.vsix");
+  it.skipIf(!hasTeamPcpNxConsole)(
+    "hash matching catches the compromised Nx Console 18.95.0 bundle",
+    async () => {
+      const samplePath = join(SAMPLES_DIR, TEAMPCP_NX_CONSOLE);
+      const [contents, zooData] = await Promise.all([loadExtension(samplePath), loadZooData()]);
+      const hashFindings = checkHashes(contents, zooData.hashes);
+
+      const finding = hashFindings.find(
+        (f) =>
+          f.metadata?.["sha256"] ===
+          "b0cefb66b953e5184b6adb3035e9e267335ac5eabfe1848e07834777b9397b74",
+      );
+
+      expect(finding).toBeDefined();
+      expect(finding?.severity).toBe("critical");
+      expect(finding?.location?.file).toBe("main.js");
+    },
+    30000,
+  );
+});
+
+describe.skipIf(!hasTeamPcpNxConsole)("TeamPCP Nx Console regression coverage", () => {
+  it("catches the compromised extension without hashes or IOC lists", async () => {
+    const samplePath = join(SAMPLES_DIR, TEAMPCP_NX_CONSOLE);
+    const result = await scanExtension(samplePath, {
+      ...defaultOptions,
+      modules: ["package", "obfuscation", "ast", "yara", "telemetry"],
+    });
+
+    const findingIds = new Set(result.findings.map((f) => f.id));
+
+    expect(findingIds).toContain("GITHUB_SHA_EXECUTION");
+    expect(findingIds).toContain("BACKGROUND_TASK_EXECUTION");
+    expect(findingIds).toContain("STARTUP_EXECUTION_CHAIN");
+    expect(findingIds).not.toContain("KNOWN_MALWARE_HASH");
+    expect(findingIds).not.toContain("KNOWN_C2_DOMAIN");
+    expect(findingIds).not.toContain("KNOWN_C2_IP");
+  }, 30000);
+
+  it("catches the compromised extension with full hash intelligence enabled", async () => {
+    const samplePath = join(SAMPLES_DIR, TEAMPCP_NX_CONSOLE);
     const [contents, zooData] = await Promise.all([loadExtension(samplePath), loadZooData()]);
     const hashFindings = checkHashes(contents, zooData.hashes);
-
-    const finding = hashFindings.find(
-      (f) =>
-        f.metadata?.["sha256"] ===
-        "b0cefb66b953e5184b6adb3035e9e267335ac5eabfe1848e07834777b9397b74",
-    );
-
-    expect(finding).toBeDefined();
-    expect(finding?.severity).toBe("critical");
-    expect(finding?.location?.file).toBe("main.js");
+    expect(
+      hashFindings.some(
+        (f) =>
+          f.metadata?.["sha256"] ===
+          "b0cefb66b953e5184b6adb3035e9e267335ac5eabfe1848e07834777b9397b74",
+      ),
+    ).toBe(true);
   }, 30000);
 });
