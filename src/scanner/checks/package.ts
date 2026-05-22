@@ -726,7 +726,7 @@ export function checkLifecycleScripts(packageJson: PackageJson): Finding[] {
   return findings;
 }
 
-function checkExecutionPatterns(contents: VsixContents): Finding[] {
+export function checkExecutionPatterns(contents: VsixContents): Finding[] {
   const findings: Finding[] = [];
   const startupExecutionFiles: Array<{ filename: string; line?: number; kind: string }> = [];
   const startsOnStartup =
@@ -844,52 +844,81 @@ function checkExecutionPatterns(contents: VsixContents): Finding[] {
 
 // --- Main export ---
 
-export function checkPackage(contents: VsixContents, zooData: ZooData): Finding[] {
+function parsePackageJson(contents: VsixContents): PackageJson | Finding | null {
+  const packageJsonBuffer = contents.files.get("package.json");
+  if (!packageJsonBuffer) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(getStringContent(contents, "package.json", packageJsonBuffer)) as PackageJson;
+  } catch (error) {
+    return {
+      id: "PARSE_FAILURE_PACKAGE",
+      title: "Malformed package.json",
+      description:
+        "package.json could not be parsed. " +
+        "Dependency and package intelligence checks are skipped " +
+        "for this extension.",
+      severity: "low",
+      category: "pattern",
+      location: { file: "package.json" },
+      metadata: {
+        error: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+}
+
+export function checkManifest(contents: VsixContents): Finding[] {
   const { manifest } = contents;
   const findings: Finding[] = [];
 
-  // Blocklist check
-  findings.push(...checkBlocklist(manifest, zooData.blocklist));
-
-  // Manifest checks (use manifest object directly)
   findings.push(...checkActivationEvents(manifest));
   findings.push(...checkThemeAbuse(manifest));
   findings.push(...checkSuspiciousPermissions(manifest));
-  findings.push(...checkExecutionPatterns(contents));
 
-  // Dependencies checks (parse package.json from files)
+  return findings;
+}
+
+export function checkDependencyHeuristics(contents: VsixContents): Finding[] {
+  const parsed = parsePackageJson(contents);
+  if (!parsed) return [];
+  if ("id" in parsed) return [parsed];
+
+  return [...checkTyposquattingPackages(parsed), ...checkLifecycleScripts(parsed)];
+}
+
+export function checkPackageIntel(contents: VsixContents, zooData: ZooData): Finding[] {
+  const findings: Finding[] = [];
+
+  findings.push(...checkBlocklist(contents.manifest, zooData.blocklist));
   findings.push(...checkMaliciousPackageVersions(contents, zooData.maliciousNpmVersions));
 
-  const packageJsonBuffer = contents.files.get("package.json");
-  if (packageJsonBuffer) {
-    let packageJson: PackageJson;
-    try {
-      packageJson = JSON.parse(
-        getStringContent(contents, "package.json", packageJsonBuffer),
-      ) as PackageJson;
-    } catch (error) {
-      findings.push({
-        id: "PARSE_FAILURE_PACKAGE",
-        title: "Malformed package.json",
-        description:
-          "package.json could not be parsed. " +
-          "All dependency checks (typosquatting, " +
-          "lifecycle scripts, blocklist) are skipped " +
-          "for this extension.",
-        severity: "low",
-        category: "pattern",
-        location: { file: "package.json" },
-        metadata: {
-          error: error instanceof Error ? error.message : String(error),
-        },
-      });
-      return findings;
-    }
+  const parsed = parsePackageJson(contents);
+  if (!parsed) return findings;
+  if ("id" in parsed) return [...findings, parsed];
 
-    findings.push(...checkMaliciousPackages(packageJson, zooData.maliciousNpmPackages));
-    findings.push(...checkTyposquattingPackages(packageJson));
-    findings.push(...checkLifecycleScripts(packageJson));
-  }
+  findings.push(...checkMaliciousPackages(parsed, zooData.maliciousNpmPackages));
+
+  return findings;
+}
+
+export function checkPackage(contents: VsixContents, zooData: ZooData): Finding[] {
+  const findings: Finding[] = [];
+
+  findings.push(...checkManifest(contents));
+  findings.push(...checkExecutionPatterns(contents));
+  findings.push(...checkBlocklist(contents.manifest, zooData.blocklist));
+  findings.push(...checkMaliciousPackageVersions(contents, zooData.maliciousNpmVersions));
+
+  const parsed = parsePackageJson(contents);
+  if (!parsed) return findings;
+  if ("id" in parsed) return [...findings, parsed];
+
+  findings.push(...checkMaliciousPackages(parsed, zooData.maliciousNpmPackages));
+  findings.push(...checkTyposquattingPackages(parsed));
+  findings.push(...checkLifecycleScripts(parsed));
 
   return findings;
 }

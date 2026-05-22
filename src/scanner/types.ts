@@ -8,7 +8,18 @@ export const OUTPUT_FORMATS = ["text", "json", "sarif"] as const;
 
 export type Registry = "marketplace" | "openvsx" | "cursor";
 
-export const MODULE_NAMES = ["package", "obfuscation", "ast", "ioc", "yara", "telemetry"] as const;
+export const MODULE_NAMES = [
+  "package",
+  "manifest",
+  "execution",
+  "deps",
+  "intel",
+  "obfuscation",
+  "ast",
+  "ioc",
+  "yara",
+  "telemetry",
+] as const;
 export type ModuleName = (typeof MODULE_NAMES)[number];
 
 export interface ModuleTimings {
