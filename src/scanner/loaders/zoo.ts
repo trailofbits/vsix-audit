@@ -1,7 +1,13 @@
 import { access, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BlocklistEntry, TelemetryCategory, TelemetryServiceInfo, ZooData } from "../types.js";
+import type {
+  BlocklistEntry,
+  MaliciousNpmVersionAdvisory,
+  TelemetryCategory,
+  TelemetryServiceInfo,
+  ZooData,
+} from "../types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -41,6 +47,42 @@ async function findZooRoot(): Promise<string> {
 
 interface BlocklistFile {
   extensions: BlocklistEntry[];
+}
+
+interface MaliciousNpmVersionsFile {
+  packages?: unknown[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function expectStringField(
+  record: Record<string, unknown>,
+  field: string,
+  context: string,
+): string {
+  const value = record[field];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${context}: field "${field}" must be a non-empty string`);
+  }
+  return value;
+}
+
+function expectStringArrayField(
+  record: Record<string, unknown>,
+  field: string,
+  context: string,
+): string[] {
+  const value = record[field];
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    !value.every((item) => typeof item === "string" && item.length > 0)
+  ) {
+    throw new Error(`${context}: field "${field}" must be a non-empty string array`);
+  }
+  return value;
 }
 
 function defangDomain(domain: string): string {
@@ -134,6 +176,61 @@ function parseTelemetryServices(content: string): Map<string, TelemetryServiceIn
   return result;
 }
 
+function parseMaliciousNpmVersions(content: string): Map<string, MaliciousNpmVersionAdvisory[]> {
+  const parsed = JSON.parse(content) as unknown;
+  if (!isRecord(parsed)) {
+    throw new Error("malicious-npm-versions.json must contain a JSON object");
+  }
+
+  const file = parsed as MaliciousNpmVersionsFile;
+  const packages = file.packages ?? [];
+  if (!Array.isArray(packages)) {
+    throw new Error('malicious-npm-versions.json field "packages" must be an array');
+  }
+
+  const result = new Map<string, MaliciousNpmVersionAdvisory[]>();
+  for (const [index, entry] of packages.entries()) {
+    const context = `malicious-npm-versions.json packages[${index}]`;
+    if (!isRecord(entry)) {
+      throw new Error(`${context} must be an object`);
+    }
+
+    const name = expectStringField(entry, "name", context).toLowerCase();
+    const affectedVersions = expectStringArrayField(entry, "affectedVersions", context);
+    const advisory: MaliciousNpmVersionAdvisory = {
+      name,
+      affectedVersions,
+      advisory: expectStringField(entry, "advisory", context),
+      reason: expectStringField(entry, "reason", context),
+    };
+
+    const campaign = entry["campaign"];
+    if (campaign !== undefined) {
+      if (typeof campaign !== "string" || campaign.length === 0) {
+        throw new Error(`${context}: field "campaign" must be a non-empty string when present`);
+      }
+      advisory.campaign = campaign;
+    }
+
+    const references = entry["references"];
+    if (references !== undefined) {
+      if (
+        !Array.isArray(references) ||
+        !references.every((item) => typeof item === "string" && item.length > 0)
+      ) {
+        throw new Error(`${context}: field "references" must be a string array when present`);
+      }
+      advisory.references = references;
+    }
+
+    const existing = result.get(name) ?? [];
+    existing.push(advisory);
+    result.set(name, existing);
+  }
+
+  return result;
+}
+
 let cachedZooData: ZooData | undefined;
 
 export async function loadZooData(): Promise<ZooData> {
@@ -153,6 +250,7 @@ export async function loadZooData(): Promise<ZooData> {
     blockchainContent,
     telemetryContent,
     githubC2Content,
+    npmVersionsContent,
   ] = await Promise.all([
     readFile(join(zooRoot, "blocklist", "extensions.json"), "utf8"),
     readFile(join(zooRoot, "iocs", "hashes.txt"), "utf8"),
@@ -163,6 +261,9 @@ export async function loadZooData(): Promise<ZooData> {
     readFile(join(zooRoot, "iocs", "blockchain-extensions.txt"), "utf8"),
     readFile(join(zooRoot, "telemetry", "known-services.txt"), "utf8").catch(() => ""),
     readFile(join(zooRoot, "iocs", "github-c2.txt"), "utf8").catch(() => ""),
+    readFile(join(zooRoot, "iocs", "malicious-npm-versions.json"), "utf8").catch(
+      () => '{"packages":[]}',
+    ),
   ]);
 
   const blocklistFile = JSON.parse(blocklistContent) as BlocklistFile;
@@ -175,6 +276,7 @@ export async function loadZooData(): Promise<ZooData> {
     domains: parseIOCFile(domainsContent, (domain) => defangDomain(domain).toLowerCase()),
     ips: parseIOCFile(ipsContent, (ipWithPort) => ipWithPort.split(":")[0] ?? null),
     maliciousNpmPackages: parseIOCFile(npmContent, (pkg) => pkg.toLowerCase()),
+    maliciousNpmVersions: parseMaliciousNpmVersions(npmVersionsContent),
     wallets: parseWalletFile(walletsContent),
     blockchainAllowlist: parseIOCFile(blockchainContent, (extId) => extId),
     telemetryServices: parseTelemetryServices(telemetryContent),
