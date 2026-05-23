@@ -190,6 +190,8 @@ Displays: name, publisher, version, activation events, entry points, contributio
 | `--no-cache`             | Bypass cache, download fresh                                                      |
 | `--force`                | Re-download even if cached                                                        |
 | `--all-registries`       | Scan from all registries (Marketplace + OpenVSX + Cursor)                         |
+| `--threat-intel <mode>`  | Threat intelligence mode: `local` or `none` (default: `local`)                    |
+| `--no-threat-intel`      | Disable threat-intelligence datasets while keeping generic detections             |
 | `--strict`               | Exit with an error if scan coverage is degraded                                   |
 | `--require-yara`         | Exit with an error if YARA scanning cannot run                                    |
 

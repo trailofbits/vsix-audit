@@ -22,6 +22,10 @@ export const MODULE_NAMES = [
 ] as const;
 export type ModuleName = (typeof MODULE_NAMES)[number];
 
+export type IntelMode = "local" | "none";
+
+export const INTEL_MODES = ["local", "none"] as const;
+
 export interface ModuleTimings {
   load: number;
   total: number;
@@ -36,6 +40,7 @@ export interface ScanOptions {
   profile?: boolean;
   strict?: boolean;
   requireYara?: boolean;
+  intel?: IntelMode;
 }
 
 export interface FindingMetadata {
@@ -81,6 +86,7 @@ export interface ScanResult {
     scannedAt: string;
     scanDuration: number;
     registry?: Registry;
+    intel?: IntelMode;
     timings?: ModuleTimings;
     coverage?: CoverageMetadata;
   };

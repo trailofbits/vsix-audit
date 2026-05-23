@@ -149,6 +149,9 @@ describe("built CLI smoke tests", () => {
         publisher: "test",
         version: "1.0.0",
         main: "main.js",
+        dependencies: {
+          "vscode-darcula": "1.0.0",
+        },
       }),
     );
     await writeFile(
@@ -241,6 +244,28 @@ describe("built CLI smoke tests", () => {
 
     expect(result.status).toBe(0);
     expect(parsed.findings).toHaveLength(0);
+  });
+
+  it("honors --no-threat-intel without disabling generic detections", async () => {
+    const result = await runCli([
+      "scan",
+      suspiciousExtension,
+      "--output",
+      "json",
+      "--module",
+      "package",
+      "--no-threat-intel",
+    ]);
+    const parsed = JSON.parse(result.stdout) as {
+      metadata: { intel?: string };
+      findings: Array<{ id: string }>;
+    };
+    const ids = parsed.findings.map((finding) => finding.id);
+
+    expect(result.status).toBe(1);
+    expect(parsed.metadata.intel).toBe("none");
+    expect(ids).toContain("GITHUB_SHA_EXECUTION");
+    expect(ids).not.toContain("MALICIOUS_NPM_PACKAGE");
   });
 
   it("returns exit code 2 for strict coverage degradation", async () => {

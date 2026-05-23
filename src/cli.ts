@@ -19,7 +19,7 @@ import {
   scanExtension,
   validateScanOptions,
 } from "./scanner/index.js";
-import type { Registry, ScanOptions, ScanResult } from "./scanner/types.js";
+import type { IntelMode, Registry, ScanOptions, ScanResult } from "./scanner/types.js";
 import { loadExtension } from "./scanner/vsix.js";
 
 const require = createRequire(import.meta.url);
@@ -29,13 +29,14 @@ const { version: VERSION } = require("../package.json") as {
 
 const REGISTRIES: Registry[] = ["marketplace", "openvsx", "cursor"];
 
-interface CliScanOptions extends ScanOptions {
+interface CliScanOptions extends Omit<ScanOptions, "intel"> {
   allRegistries?: boolean;
   noCache?: boolean;
   force?: boolean;
   recursive?: boolean;
   jobs?: string;
   module?: string;
+  threatIntel?: string | false;
   profile?: boolean;
   strict?: boolean;
   requireYara?: boolean;
@@ -113,6 +114,15 @@ cli
     "-m, --module <names>",
     "Run only specific modules (comma-separated: package,manifest,execution,deps,intel,obfuscation,ast,ioc,yara,telemetry)",
   )
+  .option(
+    "--threat-intel <mode>",
+    "Threat intelligence mode (local, none). Use none to evaluate generic detections only.",
+    "local",
+  )
+  .option(
+    "--no-threat-intel",
+    "Disable threat-intelligence datasets while keeping generic detections",
+  )
   .option("--profile", "Show detailed timing breakdown for each module")
   .option("--strict", "Exit with an error if scanner coverage is degraded")
   .option("--require-yara", "Exit with an error if YARA scanning cannot run")
@@ -136,10 +146,13 @@ cli
         }
       }
 
+      const intel = options.threatIntel === false ? "none" : (options.threatIntel ?? "local");
+
       const scanOptions: ScanOptions = {
         output: options.output,
         severity: options.severity,
         network: options.network,
+        intel: intel as IntelMode,
         ...(options.profile ? { profile: true } : {}),
         ...(options.strict ? { strict: true } : {}),
         ...(options.requireYara ? { requireYara: true } : {}),
