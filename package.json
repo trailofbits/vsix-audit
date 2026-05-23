@@ -42,6 +42,8 @@
     "format:check": "oxfmt --check .",
     "typecheck": "tsc --noEmit",
     "corpus:download": "npm run build && node scripts/download-clean-corpus.mjs",
+    "corpus:report": "npm run build && node scripts/report-clean-corpus.mjs",
+    "corpus:check": "npm run build && node scripts/report-clean-corpus.mjs --fail-on-never",
     "check": "npm run typecheck && npm run lint && npm run test && npm run test:cli",
     "prepublishOnly": "npm run check && npm run build"
   },
