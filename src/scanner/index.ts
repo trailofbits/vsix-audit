@@ -2,7 +2,12 @@ import { stat } from "node:fs/promises";
 import { checkAST } from "./checks/ast.js";
 import { checkIocs } from "./checks/ioc.js";
 import { checkObfuscation } from "./checks/obfuscation.js";
-import { checkPackage } from "./checks/package.js";
+import {
+  checkDependencyHeuristics,
+  checkExecutionPatterns,
+  checkManifest,
+  checkPackageIntel,
+} from "./checks/package.js";
 import { checkTelemetry } from "./checks/telemetry.js";
 import {
   checkYara,
@@ -137,6 +142,11 @@ function shouldRunModule(name: ModuleName, options: ScanOptions): boolean {
   return options.modules.includes(name);
 }
 
+function shouldRunPackageSubmodule(name: ModuleName, options: ScanOptions): boolean {
+  if (!options.modules || options.modules.length === 0) return true;
+  return options.modules.includes("package") || options.modules.includes(name);
+}
+
 function isOutputFormat(value: unknown): value is OutputFormat {
   return typeof value === "string" && OUTPUT_FORMATS.includes(value as OutputFormat);
 }
@@ -251,14 +261,51 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
   // Build module registry
   const modules: ScanModule[] = [];
 
-  if (shouldRunModule("package", options)) {
+  if (shouldRunPackageSubmodule("manifest", options)) {
     modules.push({
-      name: "package",
-      run: () => checkPackage(contents, zooData),
+      name: "manifest",
+      run: () => checkManifest(contents),
       inventory: {
-        name: "Package",
+        name: "Manifest",
         enabled: true,
-        description: "Blocklist, manifest analysis, " + "npm dependencies, lifecycle scripts",
+        description: "Activation events, contribution shape, extension permissions",
+      },
+    });
+  }
+
+  if (shouldRunPackageSubmodule("execution", options)) {
+    modules.push({
+      name: "execution",
+      run: () => checkExecutionPatterns(contents),
+      inventory: {
+        name: "Execution",
+        enabled: true,
+        description: "Runtime command, task, and startup execution patterns",
+        filesExamined: codeFileCount,
+      },
+    });
+  }
+
+  if (shouldRunPackageSubmodule("deps", options)) {
+    modules.push({
+      name: "deps",
+      run: () => checkDependencyHeuristics(contents),
+      inventory: {
+        name: "Deps",
+        enabled: true,
+        description: "Dependency typosquatting and npm lifecycle scripts",
+      },
+    });
+  }
+
+  if (shouldRunPackageSubmodule("intel", options)) {
+    modules.push({
+      name: "intel",
+      run: () => checkPackageIntel(contents, zooData),
+      inventory: {
+        name: "Intel",
+        enabled: true,
+        description: "Blocklist and known malicious dependency intelligence",
       },
     });
   }
