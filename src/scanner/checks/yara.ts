@@ -311,6 +311,17 @@ const GENERATED_PATH_SUPPRESSED_RULES = new Set([
   "SUSP_JS_Hex_Escape_Chain_Jan25",
   "SUSP_JS_String_Array_Rotation_Jan25",
 ]);
+const LOW_SIGNAL_CONTEXT_SUPPRESSED_RULES = new Set(["SUSP_JS_WebAssembly_Remote_Jan25"]);
+
+function isDocumentationOrDeclarationPath(normalizedPath: string): boolean {
+  const lowerPath = normalizedPath.toLowerCase();
+  return (
+    lowerPath.endsWith(".md") ||
+    lowerPath.endsWith(".markdown") ||
+    lowerPath.endsWith(".d.ts") ||
+    lowerPath.includes("/readme.")
+  );
+}
 
 function shouldSuppressYaraMatch(rule: string, relativePath: string): boolean {
   const normalizedPath = relativePath.replace(/\\/g, "/");
@@ -325,6 +336,13 @@ function shouldSuppressYaraMatch(rule: string, relativePath: string): boolean {
   if (
     (isDependencyPath && DEPENDENCY_PATH_SUPPRESSED_RULES.has(rule)) ||
     (isGeneratedPath && GENERATED_PATH_SUPPRESSED_RULES.has(rule))
+  ) {
+    return true;
+  }
+
+  if (
+    LOW_SIGNAL_CONTEXT_SUPPRESSED_RULES.has(rule) &&
+    (isDependencyPath || isGeneratedPath || isDocumentationOrDeclarationPath(normalizedPath))
   ) {
     return true;
   }
