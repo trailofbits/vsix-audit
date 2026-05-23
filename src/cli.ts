@@ -227,13 +227,23 @@ cli
           process.exit(2);
         }
 
+        const outputFormat = options.output ?? "text";
+        const machineOutput = outputFormat === "json" || outputFormat === "sarif";
         const isParallel = concurrency > 1;
+        const statusStream = machineOutput ? process.stderr : process.stdout;
+        const statusLog = (...args: unknown[]) => {
+          if (machineOutput) {
+            console.error(...args);
+          } else {
+            console.log(...args);
+          }
+        };
 
-        console.log(pc.cyan("Scanning directory:"), target);
+        statusLog(pc.cyan("Scanning directory:"), target);
         if (isParallel) {
-          console.log(pc.dim(`Parallel mode: ${concurrency} concurrent scans`));
+          statusLog(pc.dim(`Parallel mode: ${concurrency} concurrent scans`));
         }
-        console.log();
+        statusLog();
 
         const batchResult = await scanDirectory(
           target,
@@ -251,16 +261,16 @@ cli
                 // Clear progress line before printing result
                 process.stderr.write("\r\x1b[K");
               } else {
-                process.stdout.write("\r\x1b[K");
+                statusStream.write("\r\x1b[K");
               }
               const count = result.findings.length;
               if (count === 0) {
-                console.log(
+                statusLog(
                   `[${pc.green("OK")}] ${result.extension.name} v${result.extension.version}`,
                 );
               } else {
                 const summary = formatFindingSummary(result.findings);
-                console.log(
+                statusLog(
                   `[${pc.yellow("WARN")}] ${result.extension.name} v${result.extension.version} - ${count} issue(s) (${summary})`,
                 );
               }
@@ -269,15 +279,15 @@ cli
               if (isParallel) {
                 process.stderr.write("\r\x1b[K");
               } else {
-                process.stdout.write("\r\x1b[K");
+                statusStream.write("\r\x1b[K");
               }
-              console.log(`[${pc.red("ERROR")}] ${basename(path)} - Error: ${error}`);
+              statusLog(`[${pc.red("ERROR")}] ${basename(path)} - Error: ${error}`);
             },
           },
           { concurrency },
         );
 
-        outputBatchResult(batchResult, options.output ?? "text", VERSION);
+        outputBatchResult(batchResult, outputFormat, VERSION);
 
         // Exit codes: 0=clean, 1=findings, 2=errors only
         if (batchResult.results.some((result) => hasCoverageExitFailure(result, scanOptions))) {

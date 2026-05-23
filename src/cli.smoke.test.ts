@@ -123,12 +123,14 @@ describe("built CLI smoke tests", () => {
   let tempRoot = "";
   let cleanExtension = "";
   let suspiciousExtension = "";
+  let batchDir = "";
   let degradedVsix = "";
 
   beforeAll(async () => {
     tempRoot = await mkdtemp(join(tmpdir(), "vsix-audit-cli-"));
     cleanExtension = join(tempRoot, "clean");
     suspiciousExtension = join(tempRoot, "suspicious");
+    batchDir = join(tempRoot, "batch");
     degradedVsix = join(tempRoot, "missing-main.vsix");
 
     await mkdir(cleanExtension, { recursive: true });
@@ -170,6 +172,39 @@ describe("built CLI smoke tests", () => {
             version: "1.0.0",
             main: "main.js",
           }),
+        },
+      ]),
+    );
+
+    await mkdir(batchDir, { recursive: true });
+    await writeFile(
+      join(batchDir, "clean.vsix"),
+      createDeflatedZip([
+        {
+          name: "extension/package.json",
+          content: JSON.stringify({
+            name: "clean-batch",
+            publisher: "test",
+            version: "1.0.0",
+          }),
+        },
+      ]),
+    );
+    await writeFile(
+      join(batchDir, "suspicious.vsix"),
+      createDeflatedZip([
+        {
+          name: "extension/package.json",
+          content: JSON.stringify({
+            name: "suspicious-batch",
+            publisher: "test",
+            version: "1.0.0",
+            main: "main.js",
+          }),
+        },
+        {
+          name: "extension/main.js",
+          content: 'const cmd = "npx github:nrwl/nx#0123456789abcdef0123456789abcdef01234567";',
         },
       ]),
     );
@@ -296,6 +331,59 @@ describe("built CLI smoke tests", () => {
     expect(result.status).toBe(2);
     expect(result.stderr).toContain(
       "--require-yara cannot be used when the module filter excludes yara",
+    );
+  });
+
+  it("emits parseable recursive JSON on stdout", async () => {
+    const result = await runCli([
+      "scan",
+      batchDir,
+      "--recursive",
+      "--jobs",
+      "2",
+      "--output",
+      "json",
+      "--module",
+      "package",
+    ]);
+    const parsed = JSON.parse(result.stdout) as {
+      summary: { scannedFiles: number; totalFindings: number };
+      results: Array<{ findings: Array<{ id: string }> }>;
+    };
+
+    expect(result.status).toBe(1);
+    expect(result.stdout.trimStart().startsWith("{")).toBe(true);
+    expect(result.stderr).toContain("Scanning directory:");
+    expect(parsed.summary.scannedFiles).toBe(2);
+    expect(parsed.summary.totalFindings).toBeGreaterThan(0);
+    expect(parsed.results.flatMap((scan) => scan.findings.map((finding) => finding.id))).toContain(
+      "GITHUB_SHA_EXECUTION",
+    );
+  });
+
+  it("emits parseable recursive SARIF on stdout", async () => {
+    const result = await runCli([
+      "scan",
+      batchDir,
+      "--recursive",
+      "--jobs",
+      "2",
+      "--output",
+      "sarif",
+      "--module",
+      "package",
+    ]);
+    const parsed = JSON.parse(result.stdout) as {
+      version: string;
+      runs: Array<{ results: Array<{ ruleId: string }> }>;
+    };
+
+    expect(result.status).toBe(1);
+    expect(result.stdout.trimStart().startsWith("{")).toBe(true);
+    expect(result.stderr).toContain("Scanning directory:");
+    expect(parsed.version).toBe("2.1.0");
+    expect(parsed.runs.flatMap((run) => run.results.map((finding) => finding.ruleId))).toContain(
+      "GITHUB_SHA_EXECUTION",
     );
   });
 });
