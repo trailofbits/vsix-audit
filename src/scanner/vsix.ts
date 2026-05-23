@@ -556,6 +556,46 @@ function collectManifestReferences(manifest: VsixManifest): Array<{ path: string
   return refs;
 }
 
+const NODE_ENTRYPOINT_EXTENSIONS = [".js", ".json", ".node"] as const;
+
+function isCodeEntrypoint(kind: string): boolean {
+  return kind === "main" || kind === "browser";
+}
+
+function manifestReferenceCandidates(ref: { path: string; kind: string }): string[] {
+  const candidates = [ref.path];
+
+  if (isCodeEntrypoint(ref.kind)) {
+    for (const extension of NODE_ENTRYPOINT_EXTENSIONS) {
+      candidates.push(`${ref.path}${extension}`);
+    }
+    for (const extension of NODE_ENTRYPOINT_EXTENSIONS) {
+      candidates.push(`${ref.path}/index${extension}`);
+    }
+  }
+
+  return [...new Set(candidates)];
+}
+
+function findManifestReferenceResolution(
+  ref: { path: string; kind: string },
+  files: Map<string, Buffer>,
+  archiveWarnings: ArchiveWarning[],
+): { found: true } | { skipped: ArchiveWarning; path: string } | null {
+  for (const candidate of manifestReferenceCandidates(ref)) {
+    if (files.has(candidate)) {
+      return { found: true };
+    }
+
+    const skipped = archiveWarnings.find((warning) => warning.normalizedPath === candidate);
+    if (skipped) {
+      return { skipped, path: candidate };
+    }
+  }
+
+  return null;
+}
+
 function findManifestReferenceWarnings(
   manifest: VsixManifest,
   files: Map<string, Buffer>,
@@ -578,21 +618,24 @@ function findManifestReferenceWarnings(
       continue;
     }
 
-    if (files.has(ref.path)) {
+    const resolution = findManifestReferenceResolution(ref, files, archiveWarnings);
+    if (resolution && "found" in resolution) {
       continue;
     }
 
-    const skipped = archiveWarnings.find((warning) => warning.normalizedPath === ref.path);
+    const skippedResolution = resolution && "skipped" in resolution ? resolution : undefined;
+    const skipped = skippedResolution?.skipped;
+    const warningPath = skippedResolution?.path ?? ref.path;
     warnings.push(
       makeArchiveWarning(
         skipped ? "ARCHIVE_REFERENCED_FILE_SKIPPED" : "ARCHIVE_REFERENCED_FILE_MISSING",
         skipped ? "Manifest-referenced file was skipped" : "Manifest-referenced file is missing",
-        ref.path,
+        warningPath,
         skipped
           ? `manifest ${ref.kind} reference points to an entry skipped during extraction`
           : `manifest ${ref.kind} reference does not exist in the archive`,
         ref.kind === "main" || ref.kind === "browser" ? "critical" : "high",
-        ref.path,
+        warningPath,
       ),
     );
   }

@@ -584,6 +584,107 @@ describe("extractVsix", () => {
     }
   });
 
+  it("resolves extensionless manifest main references like VS Code", async () => {
+    const manifest = JSON.stringify({
+      name: "extensionless-main-ext",
+      publisher: "test",
+      version: "1.0.0",
+      main: "./client/out/extension",
+    });
+
+    const zipBuffer = createTestZip(
+      [
+        { name: "extension/package.json", content: manifest },
+        { name: "extension/client/out/extension.js", content: 'console.log("ok");' },
+      ],
+      {
+        useDataDescriptor: false,
+      },
+    );
+
+    const vsixPath = join(tmpdir(), `test-extensionless-main-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.files.has("client/out/extension.js")).toBe(true);
+      expect(
+        (contents.archiveWarnings ?? []).some((w) => w.id === "ARCHIVE_REFERENCED_FILE_MISSING"),
+      ).toBe(false);
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("resolves directory manifest main references to index files", async () => {
+    const manifest = JSON.stringify({
+      name: "directory-main-ext",
+      publisher: "test",
+      version: "1.0.0",
+      main: "./server",
+    });
+
+    const zipBuffer = createTestZip(
+      [
+        { name: "extension/package.json", content: manifest },
+        { name: "extension/server/index.js", content: 'console.log("ok");' },
+      ],
+      {
+        useDataDescriptor: false,
+      },
+    );
+
+    const vsixPath = join(tmpdir(), `test-directory-main-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.files.has("server/index.js")).toBe(true);
+      expect(
+        (contents.archiveWarnings ?? []).some((w) => w.id === "ARCHIVE_REFERENCED_FILE_MISSING"),
+      ).toBe(false);
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("prefers skipped exact manifest main over resolvable extension variants", async () => {
+    const manifest = JSON.stringify({
+      name: "skipped-exact-main-ext",
+      publisher: "test",
+      version: "1.0.0",
+      main: "main",
+    });
+
+    const zipBuffer = createSpoofedZip([
+      { name: "extension/package.json", content: manifest },
+      {
+        name: "extension/main",
+        content: "small",
+        spoofedUncompressedSize: MAX_ENTRY_SIZE + 1,
+      },
+      { name: "extension/main.js", content: 'console.log("fallback");' },
+    ]);
+
+    const vsixPath = join(tmpdir(), `test-skipped-exact-main-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.files.has("main.js")).toBe(true);
+      expect(
+        contents.archiveWarnings?.some(
+          (w) => w.id === "ARCHIVE_REFERENCED_FILE_SKIPPED" && w.normalizedPath === "main",
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
   it("warns when manifest main points to a skipped ZIP entry", async () => {
     const manifest = JSON.stringify({
       name: "skipped-main-ext",
