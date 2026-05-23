@@ -17,7 +17,13 @@ import {
  * Supports data descriptors (bit 3) which cause local header sizes to be 0.
  */
 function createTestZip(
-  files: Array<{ name: string; content: string }>,
+  files: Array<{
+    name: string;
+    content: string;
+    rawName?: Buffer;
+    extraFields?: Buffer;
+    utf8Name?: boolean;
+  }>,
   options: { useDataDescriptor?: boolean } = {},
 ): Buffer {
   const { useDataDescriptor = false } = options;
@@ -28,13 +34,15 @@ function createTestZip(
     const localHeaderOffset = chunks.reduce((sum, buf) => sum + buf.length, 0);
     const content = Buffer.from(file.content, "utf8");
     const compressed = deflateRawSync(content);
-    const fileName = Buffer.from(file.name, "utf8");
+    const fileName = file.rawName ?? Buffer.from(file.name, "utf8");
+    const extraFields = file.extraFields ?? Buffer.alloc(0);
 
     // General purpose bit flag: bit 3 = data descriptor, bit 11 = UTF-8 names.
-    const gpBitFlag = (useDataDescriptor ? 0x0008 : 0x0000) | 0x0800;
+    const gpBitFlag =
+      (useDataDescriptor ? 0x0008 : 0x0000) | (file.utf8Name === false ? 0 : 0x0800);
 
     // Local file header (30 bytes + filename)
-    const localHeader = Buffer.alloc(30 + fileName.length);
+    const localHeader = Buffer.alloc(30 + fileName.length + extraFields.length);
     localHeader.writeUInt32LE(0x04034b50, 0); // signature
     localHeader.writeUInt16LE(20, 4); // version needed
     localHeader.writeUInt16LE(gpBitFlag, 6); // general purpose bit flag
@@ -52,8 +60,9 @@ function createTestZip(
       localHeader.writeUInt32LE(content.length, 22);
     }
     localHeader.writeUInt16LE(fileName.length, 26);
-    localHeader.writeUInt16LE(0, 28); // extra field length
+    localHeader.writeUInt16LE(extraFields.length, 28);
     fileName.copy(localHeader, 30);
+    extraFields.copy(localHeader, 30 + fileName.length);
     chunks.push(localHeader);
 
     // Compressed data
@@ -70,7 +79,7 @@ function createTestZip(
     }
 
     // Central directory entry (46 bytes + filename)
-    const cdEntry = Buffer.alloc(46 + fileName.length);
+    const cdEntry = Buffer.alloc(46 + fileName.length + extraFields.length);
     cdEntry.writeUInt32LE(0x02014b50, 0); // signature
     cdEntry.writeUInt16LE(20, 4); // version made by
     cdEntry.writeUInt16LE(20, 6); // version needed
@@ -82,13 +91,14 @@ function createTestZip(
     cdEntry.writeUInt32LE(compressed.length, 20); // compressed size (always correct)
     cdEntry.writeUInt32LE(content.length, 24); // uncompressed size (always correct)
     cdEntry.writeUInt16LE(fileName.length, 28);
-    cdEntry.writeUInt16LE(0, 30); // extra field length
+    cdEntry.writeUInt16LE(extraFields.length, 30);
     cdEntry.writeUInt16LE(0, 32); // comment length
     cdEntry.writeUInt16LE(0, 34); // disk number start
     cdEntry.writeUInt16LE(0, 36); // internal file attributes
     cdEntry.writeUInt32LE(0, 38); // external file attributes
     cdEntry.writeUInt32LE(localHeaderOffset, 42); // relative offset of local header
     fileName.copy(cdEntry, 46);
+    extraFields.copy(cdEntry, 46 + fileName.length);
     centralDirEntries.push(cdEntry);
   }
 
@@ -125,6 +135,20 @@ function crc32(data: Buffer): number {
     }
   }
   return (crc ^ 0xffffffff) >>> 0;
+}
+
+function createUnicodePathExtraField(rawName: Buffer, unicodeName: string): Buffer {
+  const unicodeNameBuffer = Buffer.from(unicodeName, "utf8");
+  const data = Buffer.alloc(5 + unicodeNameBuffer.length);
+  data.writeUInt8(1, 0);
+  data.writeUInt32LE(crc32(rawName), 1);
+  unicodeNameBuffer.copy(data, 5);
+
+  const field = Buffer.alloc(4 + data.length);
+  field.writeUInt16LE(0x7075, 0);
+  field.writeUInt16LE(data.length, 2);
+  data.copy(field, 4);
+  return field;
 }
 
 interface SpoofedFile {
@@ -658,6 +682,84 @@ describe("extractVsix", () => {
       expect(contents.files.has(composed)).toBe(true);
       expect(collision?.normalizedPath).toBe(composed);
       expect(collision?.reason).toContain(decomposed);
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("decodes non-UTF-8 ZIP entry names as CP437", async () => {
+    const manifest = JSON.stringify({
+      name: "cp437-name-ext",
+      publisher: "test",
+      version: "1.0.0",
+    });
+    const rawName = Buffer.concat([
+      Buffer.from("extension/caf", "ascii"),
+      Buffer.from([0x82]),
+      Buffer.from(".js", "ascii"),
+    ]);
+
+    const zipBuffer = createTestZip(
+      [
+        { name: "extension/package.json", content: manifest },
+        {
+          name: "extension/caf-e.js",
+          rawName,
+          utf8Name: false,
+          content: 'console.log("cp437");',
+        },
+      ],
+      { useDataDescriptor: false },
+    );
+
+    const vsixPath = join(tmpdir(), `test-cp437-name-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.files.has("caf\u00e9.js")).toBe(true);
+      expect(contents.files.get("caf\u00e9.js")?.toString()).toBe('console.log("cp437");');
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("prefers Info-ZIP Unicode Path extra fields when present", async () => {
+    const manifest = JSON.stringify({
+      name: "unicode-path-extra-field-ext",
+      publisher: "test",
+      version: "1.0.0",
+    });
+    const rawName = Buffer.from("extension/fallback.js", "ascii");
+    const unicodeName = "extension/unicode-\u2603.js";
+    const extraFields = createUnicodePathExtraField(rawName, unicodeName);
+
+    const zipBuffer = createTestZip(
+      [
+        { name: "extension/package.json", content: manifest },
+        {
+          name: "extension/fallback.js",
+          rawName,
+          extraFields,
+          utf8Name: false,
+          content: 'console.log("unicode path");',
+        },
+      ],
+      { useDataDescriptor: false },
+    );
+
+    const vsixPath = join(tmpdir(), `test-unicode-path-extra-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.files.has("unicode-\u2603.js")).toBe(true);
+      expect(contents.files.has("fallback.js")).toBe(false);
+      expect(contents.files.get("unicode-\u2603.js")?.toString()).toBe(
+        'console.log("unicode path");',
+      );
     } finally {
       await rm(vsixPath, { force: true });
     }
