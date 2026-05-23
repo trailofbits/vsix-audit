@@ -13,7 +13,6 @@ const TEST_CORPUS_DIR = join(import.meta.dirname, "..", "..", "test-corpus");
 const CLEAN_DIR = join(TEST_CORPUS_DIR, "clean");
 const TEAMPCP_NX_CONSOLE = "teampcp/nrwl.angular-console-18.95.0.vsix";
 
-const hasCleanCorpus = existsSync(CLEAN_DIR);
 const hasTeamPcpNxConsole = hasSamplePath(TEAMPCP_NX_CONSOLE);
 
 function hasSamplePath(samplePath: string): boolean {
@@ -111,6 +110,9 @@ const CLEAN_EXTENSIONS = [
   "4ops.packer.vsix",
   "yzhang.markdown-all-in-one.vsix",
 ];
+
+const hasCleanCorpus =
+  existsSync(CLEAN_DIR) && CLEAN_EXTENSIONS.some((ext) => existsSync(join(CLEAN_DIR, ext)));
 
 /**
  * Finding IDs that are acceptable in clean extensions.

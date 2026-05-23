@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "description": "Pinned benign VS Code extensions used for false-positive testing. VSIX files are downloaded locally and are not committed.",
+  "extensions": [
+    {
+      "id": "esbenp.prettier-vscode",
+      "publisher": "esbenp",
+      "name": "prettier-vscode",
+      "version": "12.4.0",
+      "registry": "marketplace",
+      "sha256": "46d22a567b35ebe5bdffd7280457742cd67e65d7e1b250bb775ab2be86479a42",
+      "category": "baseline",
+      "notes": "Popular formatter baseline."
+    },
+    {
+      "id": "dbaeumer.vscode-eslint",
+      "publisher": "dbaeumer",
+      "name": "vscode-eslint",
+      "version": "3.0.25",
+      "registry": "marketplace",
+      "sha256": "f4ff9e841c564fbac4fb0c86f44b184ee0bf204175b86fa6594b3444b072e6f7",
+      "category": "edge-case",
+      "notes": "Language-server extension with legitimate startup and child-process behavior."
+    },
+    {
+      "id": "4ops.packer",
+      "publisher": "4ops",
+      "name": "packer",
+      "version": "0.3.0",
+      "registry": "marketplace",
+      "sha256": "698bd3c5d77ee8449210316d6fc8702135632dd6f04d5e5969ba70032c06c157",
+      "category": "baseline",
+      "notes": "Small low-noise extension baseline."
+    },
+    {
+      "id": "yzhang.markdown-all-in-one",
+      "publisher": "yzhang",
+      "name": "markdown-all-in-one",
+      "version": "3.6.3",
+      "registry": "marketplace",
+      "sha256": "c4985b150497d430c3a7c884fd1f1ea7ed6de4846eb0192f8c770d9af8eb6e83",
+      "category": "edge-case",
+      "notes": "Markdown extension with bundled Unicode-heavy parser code."
+    }
+  ]
+}
