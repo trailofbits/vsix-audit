@@ -287,6 +287,18 @@ git clone git@github.com:trailofbits/vsix-zoo.git ../vsix-zoo
 VSIX_ZOO_PATH=../vsix-zoo/samples npm test
 ```
 
+### Benign False-Positive Corpus
+
+Pinned benign extension metadata lives in `test-corpus/clean/manifest.json`. The VSIX files are downloaded locally and ignored by git.
+
+```bash
+# Download pinned clean corpus artifacts and verify SHA-256 hashes
+npm run corpus:download
+
+# Scan the local clean corpus
+vsix-audit scan test-corpus/clean --recursive --no-network --no-threat-intel
+```
+
 ## Development
 
 ```sh

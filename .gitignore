@@ -34,5 +34,8 @@ npm-debug.log*
 *.temp
 .cache/
 
+# Downloaded benign corpus artifacts
+test-corpus/clean/*.vsix
+
 # Zoo samples - all committed for research reproducibility
 # WARNING: This repo contains malware samples for security research
