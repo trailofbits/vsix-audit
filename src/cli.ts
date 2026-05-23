@@ -160,6 +160,17 @@ cli
       };
       validateScanOptions(scanOptions);
 
+      const outputFormat = options.output ?? "text";
+      const machineOutput = outputFormat === "json" || outputFormat === "sarif";
+      const statusStream = machineOutput ? process.stderr : process.stdout;
+      const statusLog = (...args: unknown[]) => {
+        if (machineOutput) {
+          console.error(...args);
+        } else {
+          console.log(...args);
+        }
+      };
+
       // Handle --all-registries mode for extension IDs
       if (options.allRegistries && isExtensionId(target)) {
         const results: ScanResult[] = [];
@@ -168,16 +179,16 @@ cli
         for (const registry of REGISTRIES) {
           const prefixedId = `${registry}:${baseId}`;
           try {
-            console.log(pc.cyan(`Downloading from ${registry}:`), baseId);
+            statusLog(pc.cyan(`Downloading from ${registry}:`), baseId);
             const downloaded = await downloadExtension(prefixedId, {
               useCache,
               forceDownload,
             });
 
             if (downloaded.fromCache) {
-              console.log(pc.green("✓ Using cached"), pc.dim(downloaded.path));
+              statusLog(pc.green("✓ Using cached"), pc.dim(downloaded.path));
             } else {
-              console.log(pc.green("✓ Downloaded"), pc.dim(downloaded.path));
+              statusLog(pc.green("✓ Downloaded"), pc.dim(downloaded.path));
             }
 
             const result = await scanExtension(downloaded.path, scanOptions);
@@ -186,17 +197,17 @@ cli
           } catch (error) {
             // Extension may not exist in this registry - continue
             const msg = error instanceof Error ? error.message : String(error);
-            console.log(pc.dim(`  Not found in ${registry}: ${msg}`));
+            statusLog(pc.dim(`  Not found in ${registry}: ${msg}`));
           }
         }
-        console.log();
+        statusLog();
 
         if (results.length === 0) {
           console.error(pc.red("Error:"), `Extension not found in any registry: ${baseId}`);
           process.exit(2);
         }
 
-        outputResults(results, options.output ?? "text", VERSION);
+        outputResults(results, outputFormat, VERSION);
 
         const hasFindings = results.some((r) => r.findings.length > 0);
         const hasCoverageFailure = results.some((r) => hasCoverageExitFailure(r, scanOptions));
@@ -209,7 +220,7 @@ cli
 
       // Warn if -j used without -r
       if (options.jobs && options.jobs !== "4" && !options.recursive) {
-        console.log(pc.yellow("Warning:"), "--jobs is only used with --recursive, ignoring");
+        statusLog(pc.yellow("Warning:"), "--jobs is only used with --recursive, ignoring");
       }
 
       // Handle --recursive mode for directories
@@ -227,17 +238,7 @@ cli
           process.exit(2);
         }
 
-        const outputFormat = options.output ?? "text";
-        const machineOutput = outputFormat === "json" || outputFormat === "sarif";
         const isParallel = concurrency > 1;
-        const statusStream = machineOutput ? process.stderr : process.stdout;
-        const statusLog = (...args: unknown[]) => {
-          if (machineOutput) {
-            console.error(...args);
-          } else {
-            console.log(...args);
-          }
-        };
 
         statusLog(pc.cyan("Scanning directory:"), target);
         if (isParallel) {
@@ -304,7 +305,7 @@ cli
       // Standard single-registry scan
       let scanTarget = target;
       if (isExtensionId(target)) {
-        console.log(pc.cyan("Downloading:"), target);
+        statusLog(pc.cyan("Downloading:"), target);
         const result = await downloadExtension(target, {
           useCache,
           forceDownload,
@@ -312,15 +313,15 @@ cli
         scanTarget = result.path;
 
         if (result.fromCache) {
-          console.log(pc.green("✓ Using cached"), pc.dim(result.path));
+          statusLog(pc.green("✓ Using cached"), pc.dim(result.path));
         } else {
-          console.log(pc.green("✓ Downloaded"), pc.dim(result.path));
+          statusLog(pc.green("✓ Downloaded"), pc.dim(result.path));
         }
-        console.log();
+        statusLog();
       }
 
       const result = await scanExtension(scanTarget, scanOptions);
-      outputResult(result, scanOptions.output ?? "text", VERSION);
+      outputResult(result, outputFormat, VERSION);
       if (hasCoverageExitFailure(result, scanOptions)) {
         process.exit(2);
       }

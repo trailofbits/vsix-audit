@@ -281,6 +281,25 @@ describe("built CLI smoke tests", () => {
     expect(parsed.findings).toHaveLength(0);
   });
 
+  it("keeps non-recursive warning text off JSON stdout", async () => {
+    const result = await runCli([
+      "scan",
+      cleanExtension,
+      "--output",
+      "json",
+      "--module",
+      "package",
+      "--jobs",
+      "2",
+    ]);
+    const parsed = JSON.parse(result.stdout) as { findings: unknown[] };
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trimStart().startsWith("{")).toBe(true);
+    expect(result.stderr).toContain("--jobs is only used with --recursive");
+    expect(parsed.findings).toHaveLength(0);
+  });
+
   it("honors --no-threat-intel without disabling generic detections", async () => {
     const result = await runCli([
       "scan",
