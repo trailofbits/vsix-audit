@@ -3,15 +3,91 @@ import type { Finding, VsixContents, ZooData } from "../types.js";
 import { computeLineStarts, findLineNumberByString, getStringContent } from "../utils.js";
 import { computeSha256 } from "../vsix.js";
 
-function extractDomains(content: string): string[] {
-  const domainPattern =
-    /(?:https?:\/\/)?([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)+)/g;
-  const matches: string[] = [];
+const MAX_DOMAIN_LENGTH = 253;
+const MAX_DOMAIN_LABEL_LENGTH = 63;
 
-  for (const match of content.matchAll(domainPattern)) {
-    const domain = match[1];
-    if (domain) {
-      matches.push(domain.toLowerCase());
+function isDomainChar(charCode: number): boolean {
+  return (
+    (charCode >= 48 && charCode <= 57) ||
+    (charCode >= 65 && charCode <= 90) ||
+    (charCode >= 97 && charCode <= 122) ||
+    charCode === 45 ||
+    charCode === 46
+  );
+}
+
+function isAlphaNumeric(charCode: number): boolean {
+  return (
+    (charCode >= 48 && charCode <= 57) ||
+    (charCode >= 65 && charCode <= 90) ||
+    (charCode >= 97 && charCode <= 122)
+  );
+}
+
+function trimDomainCandidate(candidate: string): string {
+  let start = 0;
+  let end = candidate.length;
+
+  while (start < end && !isAlphaNumeric(candidate.charCodeAt(start))) {
+    start++;
+  }
+  while (end > start && !isAlphaNumeric(candidate.charCodeAt(end - 1))) {
+    end--;
+  }
+
+  return candidate.slice(start, end);
+}
+
+function isValidDomainCandidate(candidate: string): boolean {
+  if (candidate.length === 0 || candidate.length > MAX_DOMAIN_LENGTH || !candidate.includes(".")) {
+    return false;
+  }
+
+  const labels = candidate.split(".");
+  if (labels.length < 2) {
+    return false;
+  }
+
+  for (const label of labels) {
+    if (label.length === 0 || label.length > MAX_DOMAIN_LABEL_LENGTH) {
+      return false;
+    }
+    if (
+      !isAlphaNumeric(label.charCodeAt(0)) ||
+      !isAlphaNumeric(label.charCodeAt(label.length - 1))
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function extractDomains(content: string): string[] {
+  const matches: string[] = [];
+  let cursor = 0;
+
+  while (cursor < content.length) {
+    while (cursor < content.length && !isDomainChar(content.charCodeAt(cursor))) {
+      cursor++;
+    }
+
+    const start = cursor;
+    let hasDot = false;
+    while (cursor < content.length && isDomainChar(content.charCodeAt(cursor))) {
+      if (content.charCodeAt(cursor) === 46) {
+        hasDot = true;
+      }
+      cursor++;
+    }
+
+    if (!hasDot) {
+      continue;
+    }
+
+    const candidate = trimDomainCandidate(content.slice(start, cursor)).toLowerCase();
+    if (isValidDomainCandidate(candidate)) {
+      matches.push(candidate);
     }
   }
 
@@ -58,6 +134,8 @@ function isValidIp(ip: string): boolean {
 }
 
 export function checkHashes(contents: VsixContents, knownHashes: Set<string>): Finding[] {
+  if (knownHashes.size === 0) return [];
+
   const findings: Finding[] = [];
 
   for (const [filename, buffer] of contents.files) {
@@ -84,6 +162,8 @@ export function checkHashes(contents: VsixContents, knownHashes: Set<string>): F
 }
 
 export function checkDomains(contents: VsixContents, knownDomains: Set<string>): Finding[] {
+  if (knownDomains.size === 0) return [];
+
   const findings: Finding[] = [];
 
   for (const [filename, buffer] of contents.files) {
@@ -91,10 +171,11 @@ export function checkDomains(contents: VsixContents, knownDomains: Set<string>):
 
     const content = getStringContent(contents, filename, buffer);
     const foundDomains = extractDomains(content);
-    const lineStarts = computeLineStarts(content);
+    let lineStarts: number[] | undefined;
 
     for (const domain of foundDomains) {
       if (knownDomains.has(domain)) {
+        lineStarts ??= computeLineStarts(content);
         const line = findLineNumberByString(content, domain, lineStarts);
         findings.push({
           id: "KNOWN_C2_DOMAIN",
@@ -115,6 +196,8 @@ export function checkDomains(contents: VsixContents, knownDomains: Set<string>):
 }
 
 export function checkIps(contents: VsixContents, knownIps: Set<string>): Finding[] {
+  if (knownIps.size === 0) return [];
+
   const findings: Finding[] = [];
 
   for (const [filename, buffer] of contents.files) {
@@ -122,10 +205,11 @@ export function checkIps(contents: VsixContents, knownIps: Set<string>): Finding
 
     const content = getStringContent(contents, filename, buffer);
     const foundIps = extractIps(content);
-    const lineStarts = computeLineStarts(content);
+    let lineStarts: number[] | undefined;
 
     for (const ip of foundIps) {
       if (knownIps.has(ip)) {
+        lineStarts ??= computeLineStarts(content);
         const line = findLineNumberByString(content, ip, lineStarts);
         findings.push({
           id: "KNOWN_C2_IP",
