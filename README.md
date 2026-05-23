@@ -14,11 +14,14 @@ VS Code extensions run with full trust and the same permissions as the editor it
 
 ## Detection Modules
 
-The scanner runs 6 detection modules against each extension:
+The scanner runs 9 first-class detection modules against each extension. The legacy
+`package` module selector remains as a compatibility alias for `manifest`, `execution`,
+`deps`, and `intel`.
 
-### Package Analysis (`package.ts`)
+### Manifest, Execution, Dependency, And Intel Analysis (`package.ts`)
 
-Examines `package.json` and extension manifest for suspicious configurations.
+Examines `package.json`, extension manifest behavior, runtime execution patterns, and
+package-related threat intelligence.
 
 | Check                  | What It Detects                                                                 | Severity        |
 | ---------------------- | ------------------------------------------------------------------------------- | --------------- |
@@ -176,20 +179,21 @@ Displays: name, publisher, version, activation events, entry points, contributio
 
 ### Scan Options
 
-| Option                   | Description                                                                      |
-| ------------------------ | -------------------------------------------------------------------------------- |
-| `-o, --output <format>`  | Output format: `text`, `json`, or `sarif` (default: `text`)                      |
-| `-s, --severity <level>` | Minimum severity to report: `low`, `medium`, `high`, `critical` (default: `low`) |
-| `-r, --recursive`        | Recursively scan all .vsix files in a directory                                  |
-| `-j, --jobs <n>`         | Number of parallel scans (default: 4, used with --recursive)                     |
-| `--no-network`           | Disable network-based checks                                                     |
-| `--no-cache`             | Bypass cache, download fresh                                                     |
-| `--force`                | Re-download even if cached                                                       |
-| `--all-registries`       | Scan from all registries (Marketplace + OpenVSX + Cursor)                        |
-| `--intel <mode>`         | Threat intelligence mode: `local` or `none` (default: `local`)                   |
-| `--no-intel`             | Disable threat-intelligence datasets while keeping generic detections            |
-| `--strict`               | Exit with an error if scan coverage is degraded                                  |
-| `--require-yara`         | Exit with an error if YARA scanning cannot run                                   |
+| Option                   | Description                                                                       |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| `-o, --output <format>`  | Output format: `text`, `json`, or `sarif` (default: `text`)                       |
+| `-s, --severity <level>` | Minimum severity to report: `low`, `medium`, `high`, `critical` (default: `low`)  |
+| `-m, --module <names>`   | Comma-separated modules to run; `package` aliases `manifest,execution,deps,intel` |
+| `-r, --recursive`        | Recursively scan all .vsix files in a directory                                   |
+| `-j, --jobs <n>`         | Number of parallel scans (default: 4, used with --recursive)                      |
+| `--no-network`           | Disable network-based checks                                                      |
+| `--no-cache`             | Bypass cache, download fresh                                                      |
+| `--force`                | Re-download even if cached                                                        |
+| `--all-registries`       | Scan from all registries (Marketplace + OpenVSX + Cursor)                         |
+| `--threat-intel <mode>`  | Threat intelligence mode: `local` or `none` (default: `local`)                    |
+| `--no-threat-intel`      | Disable threat-intelligence datasets while keeping generic detections             |
+| `--strict`               | Exit with an error if scan coverage is degraded                                   |
+| `--require-yara`         | Exit with an error if YARA scanning cannot run                                    |
 
 ### Coverage Degradation
 

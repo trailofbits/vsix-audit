@@ -36,7 +36,7 @@ interface CliScanOptions extends Omit<ScanOptions, "intel"> {
   recursive?: boolean;
   jobs?: string;
   module?: string;
-  intel?: string | false;
+  threatIntel?: string | false;
   profile?: boolean;
   strict?: boolean;
   requireYara?: boolean;
@@ -112,14 +112,17 @@ cli
   .option("-j, --jobs <n>", "Number of parallel scans (default: 4)", "4")
   .option(
     "-m, --module <names>",
-    "Run only specific modules (comma-separated: package,obfuscation,ast,ioc,yara,telemetry)",
+    "Run only specific modules (comma-separated: package,manifest,execution,deps,intel,obfuscation,ast,ioc,yara,telemetry)",
   )
   .option(
-    "--intel <mode>",
+    "--threat-intel <mode>",
     "Threat intelligence mode (local, none). Use none to evaluate generic detections only.",
     "local",
   )
-  .option("--no-intel", "Disable threat-intelligence datasets while keeping generic detections")
+  .option(
+    "--no-threat-intel",
+    "Disable threat-intelligence datasets while keeping generic detections",
+  )
   .option("--profile", "Show detailed timing breakdown for each module")
   .option("--strict", "Exit with an error if scanner coverage is degraded")
   .option("--require-yara", "Exit with an error if YARA scanning cannot run")
@@ -143,7 +146,7 @@ cli
         }
       }
 
-      const intel = options.intel === false ? "none" : (options.intel ?? "local");
+      const intel = options.threatIntel === false ? "none" : (options.threatIntel ?? "local");
 
       const scanOptions: ScanOptions = {
         output: options.output,

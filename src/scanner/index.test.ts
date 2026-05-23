@@ -57,6 +57,70 @@ describe("scanExtension", () => {
       expect(withoutIntel.findings.some((f) => f.id === "KNOWN_C2_DOMAIN")).toBe(false);
       expect(withoutIntel.findings.some((f) => f.id === "MALICIOUS_NPM_PACKAGE")).toBe(false);
       expect(withoutIntel.findings.some((f) => f.id === "GITHUB_SHA_EXECUTION")).toBe(true);
+      const intelOnlyWithoutIntel = await scanExtension(dir, {
+        ...defaultOptions,
+        modules: ["intel"],
+        intel: "none",
+      });
+      expect(intelOnlyWithoutIntel.findings).toHaveLength(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("supports package submodule filtering and the legacy package alias", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vsix-audit-submodules-"));
+    try {
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({
+          name: "submodule-fixture",
+          publisher: "test",
+          version: "1.0.0",
+          main: "main.js",
+          activationEvents: ["onStartupFinished"],
+          dependencies: {
+            "vscode-darcula": "1.0.0",
+          },
+          scripts: {
+            postinstall: "node setup.js",
+          },
+        }),
+      );
+      await writeFile(
+        join(dir, "main.js"),
+        'const cmd = "npx github:nrwl/nx#0123456789abcdef0123456789abcdef01234567";',
+      );
+
+      const manifest = await scanExtension(dir, { ...defaultOptions, modules: ["manifest"] });
+      const execution = await scanExtension(dir, { ...defaultOptions, modules: ["execution"] });
+      const deps = await scanExtension(dir, { ...defaultOptions, modules: ["deps"] });
+      const intel = await scanExtension(dir, { ...defaultOptions, modules: ["intel"] });
+      const legacyPackage = await scanExtension(dir, { ...defaultOptions, modules: ["package"] });
+
+      expect(manifest.findings.map((finding) => finding.id)).toContain("ACTIVATION_STARTUP");
+      expect(manifest.findings.map((finding) => finding.id)).not.toContain("GITHUB_SHA_EXECUTION");
+
+      expect(execution.findings.map((finding) => finding.id)).toContain("GITHUB_SHA_EXECUTION");
+      expect(execution.findings.map((finding) => finding.id)).not.toContain("ACTIVATION_STARTUP");
+
+      expect(deps.findings.map((finding) => finding.id)).toContain("LIFECYCLE_SCRIPT");
+      expect(deps.findings.map((finding) => finding.id)).not.toContain("MALICIOUS_NPM_PACKAGE");
+
+      expect(intel.findings.map((finding) => finding.id)).toContain("MALICIOUS_NPM_PACKAGE");
+      expect(intel.findings.map((finding) => finding.id)).not.toContain("LIFECYCLE_SCRIPT");
+
+      const legacyIds = legacyPackage.findings.map((finding) => finding.id);
+      expect(legacyIds).toEqual(expect.arrayContaining(["ACTIVATION_STARTUP"]));
+      expect(legacyIds).toEqual(expect.arrayContaining(["GITHUB_SHA_EXECUTION"]));
+      expect(legacyIds).toEqual(expect.arrayContaining(["LIFECYCLE_SCRIPT"]));
+      expect(legacyIds).toEqual(expect.arrayContaining(["MALICIOUS_NPM_PACKAGE"]));
+      expect(legacyPackage.inventory.map((entry) => entry.name)).toEqual([
+        "Manifest",
+        "Execution",
+        "Deps",
+        "Intel",
+      ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
