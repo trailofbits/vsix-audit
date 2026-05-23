@@ -188,6 +188,16 @@ describe("checkObfuscation", () => {
       expect(findings.some((f) => f.id === "CYRILLIC_HOMOGLYPH")).toBe(true);
     });
 
+    it("detects Cyrillic 'і' (U+0456 BYELORUSSIAN-UKRAINIAN I) mixed into Latin", () => {
+      const cyrillicI = String.fromCharCode(0x0456);
+      const content = `const adm${cyrillicI}n = true;`;
+      const contents = makeContents({ "extension.js": content });
+
+      const findings = checkObfuscation(contents);
+
+      expect(findings.some((f) => f.id === "CYRILLIC_HOMOGLYPH")).toBe(true);
+    });
+
     it("ignores Cyrillic in markdown files", () => {
       const content = "# Hello \u0430nd welcome"; // Cyrillic а in markdown
       const contents = makeContents({ "README.md": content });
