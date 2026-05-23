@@ -212,9 +212,32 @@ const BIDI_OVERRIDE_REGEX = /[\u202A-\u202E]/g;
 // Unicode escapes for ASCII: \u00XX where XX is 20-7E (printable ASCII)
 const UNICODE_ASCII_ESCAPE_REGEX = /\\u00[2-7][0-9a-fA-F]/g;
 
-// Cyrillic homoglyphs that look like Latin letters
-const CYRILLIC_LOOKALIKE_REGEX =
-  /[\u0430\u0441\u0435\u043E\u0440\u0445\u0443\u0410\u0412\u0421\u0415\u041D\u041A\u041C\u041E\u0420\u0422\u0425]/g;
+// Cyrillic homoglyphs paired with the Latin letter they impersonate.
+// Used by the mixed-script detector to identify the homoglyph half of a
+// mixed token. Each entry is independently auditable.
+const CYRILLIC_TO_LATIN_HOMOGLYPHS: ReadonlyArray<readonly [string, string]> = [
+  // Lowercase
+  ["\u0430", "a"], // U+0430 CYRILLIC SMALL LETTER A
+  ["\u0441", "c"], // U+0441 CYRILLIC SMALL LETTER ES
+  ["\u0435", "e"], // U+0435 CYRILLIC SMALL LETTER IE
+  ["\u043E", "o"], // U+043E CYRILLIC SMALL LETTER O
+  ["\u0440", "p"], // U+0440 CYRILLIC SMALL LETTER ER
+  ["\u0445", "x"], // U+0445 CYRILLIC SMALL LETTER HA
+  ["\u0443", "y"], // U+0443 CYRILLIC SMALL LETTER U
+  // Uppercase
+  ["\u0410", "A"], // U+0410 CYRILLIC CAPITAL LETTER A
+  ["\u0412", "B"], // U+0412 CYRILLIC CAPITAL LETTER VE
+  ["\u0421", "C"], // U+0421 CYRILLIC CAPITAL LETTER ES
+  ["\u0415", "E"], // U+0415 CYRILLIC CAPITAL LETTER IE
+  ["\u041D", "H"], // U+041D CYRILLIC CAPITAL LETTER EN
+  ["\u041A", "K"], // U+041A CYRILLIC CAPITAL LETTER KA
+  ["\u041C", "M"], // U+041C CYRILLIC CAPITAL LETTER EM
+  ["\u041E", "O"], // U+041E CYRILLIC CAPITAL LETTER O
+  ["\u0420", "P"], // U+0420 CYRILLIC CAPITAL LETTER ER
+  ["\u0422", "T"], // U+0422 CYRILLIC CAPITAL LETTER TE
+  ["\u0425", "X"], // U+0425 CYRILLIC CAPITAL LETTER HA
+];
+const CYRILLIC_LOOKALIKE_SET = new Set(CYRILLIC_TO_LATIN_HOMOGLYPHS.map(([cyr]) => cyr));
 
 // Additional invisible/confusable characters
 const OTHER_INVISIBLE_REGEX =
@@ -242,6 +265,69 @@ function detectUnicodePattern(
   }
 
   return matches.length >= minMatches ? matches : [];
+}
+
+/**
+ * Flags Cyrillic homoglyph attacks: a single contiguous run of letters that
+ * mixes ASCII Latin (A–Z, a–z) with Cyrillic look-alike chars (а, о, е …).
+ *
+ * The run-tokenizer also consumes `\uXXXX` source escapes as a single
+ * "letter" so attacks that hide the homoglyph behind an escape sequence
+ * (e.g., `gоogle` in JS/JSON source) are flagged the same way as the
+ * literal-character form.
+ *
+ * Pure-Cyrillic words (e.g., "русский" in a localization array) are not
+ * flagged — homoglyph attacks require interleaving Cyrillic into Latin.
+ */
+function detectMixedScriptCyrillicHomoglyphs(content: string): UnicodeMatch[] {
+  const matches: UnicodeMatch[] = [];
+  // A "letter" is either a literal Latin/Cyrillic char or a `\uXXXX`
+  // source escape. Word breaks (whitespace, punctuation, digits) split
+  // tokens, so "русский" and "google" never merge into one run.
+  const wordPattern = /(?:[A-Za-zЀ-ӿ]|\\u[0-9A-Fa-f]{4})+/g;
+  const starts = computeLineStarts(content);
+  let match: RegExpExecArray | null;
+
+  while ((match = wordPattern.exec(content)) !== null) {
+    const run = match[0];
+    let hasLatin = false;
+    let firstHomoglyphIdx = -1;
+
+    let i = 0;
+    while (i < run.length) {
+      let ch: string;
+      let advance: number;
+      if (run[i] === "\\" && run[i + 1] === "u" && /[0-9A-Fa-f]{4}/.test(run.slice(i + 2, i + 6))) {
+        ch = String.fromCodePoint(parseInt(run.slice(i + 2, i + 6), 16));
+        advance = 6;
+      } else {
+        ch = run[i]!;
+        advance = 1;
+      }
+
+      const code = ch.charCodeAt(0);
+      if ((code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)) {
+        hasLatin = true;
+      } else if (firstHomoglyphIdx === -1 && CYRILLIC_LOOKALIKE_SET.has(ch)) {
+        firstHomoglyphIdx = i;
+      }
+
+      i += advance;
+    }
+
+    if (hasLatin && firstHomoglyphIdx !== -1) {
+      const absIdx = match.index + firstHomoglyphIdx;
+      const { line, column } = findLineAndColumn(absIdx, starts);
+      matches.push({
+        line,
+        column,
+        matched: run.slice(firstHomoglyphIdx, firstHomoglyphIdx + (run[firstHomoglyphIdx] === "\\" ? 6 : 1)),
+        context: getContext(content, absIdx, 1),
+      });
+    }
+  }
+
+  return matches;
 }
 
 /**
@@ -424,7 +510,7 @@ const UNICODE_RULES: UnicodeRule[] = [
     id: "CYRILLIC_HOMOGLYPH",
     title: "Cyrillic homoglyph characters detected",
     description:
-      "File contains Cyrillic characters that visually resemble Latin letters. This can be used for homoglyph attacks.",
+      "File contains a Latin token with Cyrillic look-alike characters mixed in (e.g., 'gооgle' with Cyrillic 'о'). Pure Cyrillic words are not flagged — only mixed-script tokens, which are the actual attack pattern.",
     severity: "high",
     detect: (content, filename) => {
       if (filename.endsWith(".md") || filename.endsWith(".txt")) {
@@ -433,7 +519,7 @@ const UNICODE_RULES: UnicodeRule[] = [
       if (isI18nFile(filename, content)) {
         return [];
       }
-      return detectUnicodePattern(content, CYRILLIC_LOOKALIKE_REGEX, 1);
+      return detectMixedScriptCyrillicHomoglyphs(content);
     },
   },
   {

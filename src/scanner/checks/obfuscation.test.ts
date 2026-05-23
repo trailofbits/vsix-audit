@@ -197,6 +197,59 @@ describe("checkObfuscation", () => {
 
       expect(cyrillicFinding).toBeUndefined();
     });
+
+    it("ignores pure-Cyrillic localization strings in package.json", () => {
+      // Real case from Copilot Chat: a language picker contains "Русский"
+      // as a legitimate locale label. Note this also doubles as a stronger
+      // negative case — the leading 'Р' (U+0420) is itself a Cyrillic
+      // homoglyph for Latin 'P', but the surrounding chars are all
+      // non-homoglyph Cyrillic, so the run is still pure-Cyrillic and
+      // must not flag.
+      const content = JSON.stringify({
+        contributes: {
+          configuration: {
+            properties: {
+              "myExt.language": {
+                enum: ["English", "Русский", "Deutsch"],
+              },
+            },
+          },
+        },
+      });
+      const contents = makeContents({ "package.json": content });
+
+      const findings = checkObfuscation(contents);
+      const cyrillicFinding = findings.find((f) => f.id === "CYRILLIC_HOMOGLYPH");
+
+      expect(cyrillicFinding).toBeUndefined();
+    });
+
+    it("flags Cyrillic homoglyph mixed into a Latin token", () => {
+      // Classic phishing: Cyrillic 'о' (U+043E) injected into "google".
+      // Build via concatenation so the test source stays auditable and
+      // reviewers can see exactly which codepoint is being injected.
+      const cyrillicO = String.fromCharCode(0x043e);
+      const content = `const url = "https://g${cyrillicO}${cyrillicO}gle.com/login";`;
+      const contents = makeContents({ "extension.js": content });
+
+      const findings = checkObfuscation(contents);
+
+      expect(findings.some((f) => f.id === "CYRILLIC_HOMOGLYPH")).toBe(true);
+    });
+
+    it("flags Cyrillic homoglyphs hidden behind backslash-u source escapes", () => {
+      // Bypass form: the scanned file literally contains the bytes
+      // "\\u043E" (six chars), which JavaScript resolves to Cyrillic 'о'
+      // at runtime. The detector must treat the escape as a single
+      // letter for mixed-script tokenisation.
+      const homoglyphEscape = "\\" + "u043E";
+      const content = `const url = "https://g${homoglyphEscape}${homoglyphEscape}gle.com";`;
+      const contents = makeContents({ "extension.js": content });
+
+      const findings = checkObfuscation(contents);
+
+      expect(findings.some((f) => f.id === "CYRILLIC_HOMOGLYPH")).toBe(true);
+    });
   });
 
   describe("Unicode - invisible characters near code execution", () => {
