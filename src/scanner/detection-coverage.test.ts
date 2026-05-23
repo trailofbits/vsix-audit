@@ -11,9 +11,14 @@ const ZOO_ROOT = join(import.meta.dirname, "..", "..", "zoo");
 const SAMPLES_DIR = process.env["VSIX_ZOO_PATH"] || join(ZOO_ROOT, "samples");
 const TEST_CORPUS_DIR = join(import.meta.dirname, "..", "..", "test-corpus");
 const CLEAN_DIR = join(TEST_CORPUS_DIR, "clean");
+const TEAMPCP_NX_CONSOLE = "teampcp/nrwl.angular-console-18.95.0.vsix";
 
-const hasSamples = existsSync(join(SAMPLES_DIR, "apollyon"));
 const hasCleanCorpus = existsSync(CLEAN_DIR);
+const hasTeamPcpNxConsole = hasSamplePath(TEAMPCP_NX_CONSOLE);
+
+function hasSamplePath(samplePath: string): boolean {
+  return existsSync(join(SAMPLES_DIR, samplePath));
+}
 
 /**
  * Expected detections for each malware sample.
@@ -75,7 +80,26 @@ const MALWARE_SAMPLES: ExpectedDetection[] = [
       "YARA_LOADER_PS_Download_Execute_Jan25",
     ],
   },
+  {
+    path: TEAMPCP_NX_CONSOLE,
+    description: "Compromised TeamPCP Nx Console 18.95.0 extension",
+    scanOptions: {
+      modules: ["package", "obfuscation", "ast", "yara", "telemetry"],
+    },
+    expectedFindings: [
+      { id: "GITHUB_SHA_EXECUTION", severity: "critical" },
+      { id: "BACKGROUND_TASK_EXECUTION", severity: "high" },
+      { id: "STARTUP_EXECUTION_CHAIN", severity: "high" },
+    ],
+    optionalFindings: [
+      "YARA_LOADER_JS_Download_Write_Execute_Jan25",
+      "YARA_STEALER_JS_Credential_File_Exfil_Jan25",
+      "YARA_SUSP_JS_Obfuscation_Eval_Jan25",
+    ],
+  },
 ];
+
+const hasMalwareSamples = MALWARE_SAMPLES.some((sample) => hasSamplePath(sample.path));
 
 /**
  * Clean extensions that should produce minimal findings.
@@ -135,9 +159,9 @@ const defaultOptions: ScanOptions = {
   network: false,
 };
 
-describe.skipIf(!hasSamples)("Malware Sample Detection Coverage", () => {
+describe.skipIf(!hasMalwareSamples)("Malware Sample Detection Coverage", () => {
   for (const sample of MALWARE_SAMPLES) {
-    describe(sample.description, () => {
+    describe.skipIf(!hasSamplePath(sample.path))(sample.description, () => {
       it(`detects expected findings in ${sample.path}`, async () => {
         const samplePath = join(SAMPLES_DIR, sample.path);
         const result = await scanExtension(samplePath, {
@@ -236,11 +260,11 @@ describe.skipIf(!hasCleanCorpus)("Clean Extension False Positive Testing", () =>
   }, 120000);
 });
 
-describe.skipIf(!hasSamples)("Detection Quality Assertions", () => {
+describe.skipIf(!hasMalwareSamples)("Detection Quality Assertions", () => {
   it("all expected YARA rules fire on their target samples", async () => {
     const yaraFindings: Record<string, string[]> = {};
 
-    for (const sample of MALWARE_SAMPLES) {
+    for (const sample of MALWARE_SAMPLES.filter((candidate) => hasSamplePath(candidate.path))) {
       const samplePath = join(SAMPLES_DIR, sample.path);
       const result = await scanExtension(samplePath, { ...defaultOptions, ...sample.scanOptions });
 
@@ -263,52 +287,100 @@ describe.skipIf(!hasSamples)("Detection Quality Assertions", () => {
     }
   }, 60000);
 
-  it("IOC checks detect known C2 infrastructure", async () => {
-    const kagemaSample = join(
-      SAMPLES_DIR,
-      "kagema/ShowSnowcrypto.SnowShoNo/showsnowcrypto.snowshono-0.6.0",
-    );
-    const result = await scanExtension(kagemaSample, defaultOptions);
+  it.skipIf(!hasSamplePath("kagema/ShowSnowcrypto.SnowShoNo/showsnowcrypto.snowshono-0.6.0"))(
+    "IOC checks detect known C2 infrastructure",
+    async () => {
+      const kagemaSample = join(
+        SAMPLES_DIR,
+        "kagema/ShowSnowcrypto.SnowShoNo/showsnowcrypto.snowshono-0.6.0",
+      );
+      const result = await scanExtension(kagemaSample, defaultOptions);
 
-    const c2Finding = result.findings.find((f) => f.id === "KNOWN_C2_DOMAIN");
-    expect(c2Finding).toBeDefined();
-    expect(c2Finding?.metadata?.["domain"]).toBe("niggboo.com");
+      const c2Finding = result.findings.find((f) => f.id === "KNOWN_C2_DOMAIN");
+      expect(c2Finding).toBeDefined();
+      expect(c2Finding?.metadata?.["domain"]).toBe("niggboo.com");
+    },
+    30000,
+  );
+
+  it.skipIf(!hasSamplePath("glassworm/icon-theme-materiall.vsix"))(
+    "hash matching catches known malware files",
+    async () => {
+      const glasswormSample = join(SAMPLES_DIR, "glassworm/icon-theme-materiall.vsix");
+      const result = await scanExtension(glasswormSample, defaultOptions);
+
+      const hashFindings = result.findings.filter((f) => f.id === "KNOWN_MALWARE_HASH");
+      expect(hashFindings.length).toBeGreaterThan(0);
+
+      // Should detect the darwin.node, os.node, and extension.js hashes
+      const files = hashFindings.map((f) => f.location?.file);
+      expect(files.some((f) => f?.includes("darwin.node"))).toBe(true);
+    },
+    30000,
+  );
+
+  it.skipIf(!hasSamplePath("glassworm/icon-theme-materiall.vsix"))(
+    "blocklist matching catches known malicious extension IDs",
+    async () => {
+      const glasswormSample = join(SAMPLES_DIR, "glassworm/icon-theme-materiall.vsix");
+      const result = await scanExtension(glasswormSample, defaultOptions);
+
+      const blocklistFinding = result.findings.find((f) => f.id === "BLOCKLIST_MATCH");
+      expect(blocklistFinding).toBeDefined();
+      expect(blocklistFinding?.severity).toBe("critical");
+    },
+    30000,
+  );
+
+  it.skipIf(!hasTeamPcpNxConsole)(
+    "hash matching catches the compromised Nx Console 18.95.0 bundle",
+    async () => {
+      const samplePath = join(SAMPLES_DIR, TEAMPCP_NX_CONSOLE);
+      const [contents, zooData] = await Promise.all([loadExtension(samplePath), loadZooData()]);
+      const hashFindings = checkHashes(contents, zooData.hashes);
+
+      const finding = hashFindings.find(
+        (f) =>
+          f.metadata?.["sha256"] ===
+          "b0cefb66b953e5184b6adb3035e9e267335ac5eabfe1848e07834777b9397b74",
+      );
+
+      expect(finding).toBeDefined();
+      expect(finding?.severity).toBe("critical");
+      expect(finding?.location?.file).toBe("main.js");
+    },
+    30000,
+  );
+});
+
+describe.skipIf(!hasTeamPcpNxConsole)("TeamPCP Nx Console regression coverage", () => {
+  it("catches the compromised extension without hashes or IOC lists", async () => {
+    const samplePath = join(SAMPLES_DIR, TEAMPCP_NX_CONSOLE);
+    const result = await scanExtension(samplePath, {
+      ...defaultOptions,
+      modules: ["package", "obfuscation", "ast", "yara", "telemetry"],
+    });
+
+    const findingIds = new Set(result.findings.map((f) => f.id));
+
+    expect(findingIds).toContain("GITHUB_SHA_EXECUTION");
+    expect(findingIds).toContain("BACKGROUND_TASK_EXECUTION");
+    expect(findingIds).toContain("STARTUP_EXECUTION_CHAIN");
+    expect(findingIds).not.toContain("KNOWN_MALWARE_HASH");
+    expect(findingIds).not.toContain("KNOWN_C2_DOMAIN");
+    expect(findingIds).not.toContain("KNOWN_C2_IP");
   }, 30000);
 
-  it("hash matching catches known malware files", async () => {
-    const glasswormSample = join(SAMPLES_DIR, "glassworm/icon-theme-materiall.vsix");
-    const result = await scanExtension(glasswormSample, defaultOptions);
-
-    const hashFindings = result.findings.filter((f) => f.id === "KNOWN_MALWARE_HASH");
-    expect(hashFindings.length).toBeGreaterThan(0);
-
-    // Should detect the darwin.node, os.node, and extension.js hashes
-    const files = hashFindings.map((f) => f.location?.file);
-    expect(files.some((f) => f?.includes("darwin.node"))).toBe(true);
-  }, 30000);
-
-  it("blocklist matching catches known malicious extension IDs", async () => {
-    const glasswormSample = join(SAMPLES_DIR, "glassworm/icon-theme-materiall.vsix");
-    const result = await scanExtension(glasswormSample, defaultOptions);
-
-    const blocklistFinding = result.findings.find((f) => f.id === "BLOCKLIST_MATCH");
-    expect(blocklistFinding).toBeDefined();
-    expect(blocklistFinding?.severity).toBe("critical");
-  }, 30000);
-
-  it("hash matching catches the compromised Nx Console 18.95.0 bundle", async () => {
-    const samplePath = join(SAMPLES_DIR, "malwarebazaar/nrwl.angular-console-18.95.0.vsix");
+  it("catches the compromised extension with full hash intelligence enabled", async () => {
+    const samplePath = join(SAMPLES_DIR, TEAMPCP_NX_CONSOLE);
     const [contents, zooData] = await Promise.all([loadExtension(samplePath), loadZooData()]);
     const hashFindings = checkHashes(contents, zooData.hashes);
-
-    const finding = hashFindings.find(
-      (f) =>
-        f.metadata?.["sha256"] ===
-        "b0cefb66b953e5184b6adb3035e9e267335ac5eabfe1848e07834777b9397b74",
-    );
-
-    expect(finding).toBeDefined();
-    expect(finding?.severity).toBe("critical");
-    expect(finding?.location?.file).toBe("main.js");
+    expect(
+      hashFindings.some(
+        (f) =>
+          f.metadata?.["sha256"] ===
+          "b0cefb66b953e5184b6adb3035e9e267335ac5eabfe1848e07834777b9397b74",
+      ),
+    ).toBe(true);
   }, 30000);
 });
