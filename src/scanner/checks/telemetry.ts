@@ -258,10 +258,26 @@ function detectSdkImports(
 
 /**
  * Detect VS Code API opt-out usage.
+ *
+ * `vscode.env.isTelemetryEnabled` is the canonical signal. Two accepted
+ * forms:
+ *   1. Literal `vscode.env.isTelemetryEnabled` — unambiguous, attribute
+ *      directly.
+ *   2. Aliased `<ident>.env.isTelemetryEnabled` (from a bundler that
+ *      renamed the `vscode` import). On its own this is ambiguous — a
+ *      custom config object could share the method name — so we only
+ *      accept it when the same file also imports the `"vscode"` module.
+ *
+ * The literal module specifier `"vscode"` survives bundling, so the
+ * import-presence check is reliable even for minified extensions.
  */
+const VSCODE_MODULE_IMPORT_REGEX =
+  /(?:require|import)\s*\(\s*["']vscode["']|from\s+["']vscode["']/i;
+
 function detectVsCodeApiOptOut(content: string): boolean {
-  // vscode.env.isTelemetryEnabled
-  return /vscode\.env\.isTelemetryEnabled/i.test(content);
+  if (/\bvscode\.env\.isTelemetryEnabled/i.test(content)) return true;
+  if (!/\.env\.isTelemetryEnabled/i.test(content)) return false;
+  return VSCODE_MODULE_IMPORT_REGEX.test(content);
 }
 
 /**
