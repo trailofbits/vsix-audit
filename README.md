@@ -296,7 +296,7 @@ Pinned benign extension metadata lives in `test-corpus/clean/manifest.json`. The
 npm run corpus:download
 
 # Scan the local clean corpus
-vsix-audit scan test-corpus/clean --recursive --no-network --no-threat-intel
+vsix-audit scan test-corpus/clean --recursive --no-network
 
 # Generate a false-positive report
 npm run corpus:report

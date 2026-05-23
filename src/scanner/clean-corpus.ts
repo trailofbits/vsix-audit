@@ -25,12 +25,13 @@ export const CLEAN_CORPUS_NEVER_FINDINGS = new Set([
   "KNOWN_MALWARE_HASH",
   "KNOWN_C2_DOMAIN",
   "KNOWN_C2_IP",
+  "KNOWN_GITHUB_C2",
   "KNOWN_MALWARE_WALLET",
   "MALICIOUS_NPM_PACKAGE",
   "MALICIOUS_NPM_PACKAGE_VERSION",
   "ARCHIVE_INVALID_PATH",
-  "ARCHIVE_PATH_COLLISION",
-  "ARCHIVE_DUPLICATE_ENTRY",
+  "ARCHIVE_PORTABLE_PATH_COLLISION",
+  "ARCHIVE_DUPLICATE_PATH",
   "ARCHIVE_SKIPPED_ENTRY",
   "ARCHIVE_REFERENCED_FILE_MISSING",
   "ARCHIVE_REFERENCED_FILE_SKIPPED",
@@ -137,10 +138,6 @@ export function cleanCorpusKey(extension: CleanCorpusEntry): string {
 
 export function cleanCorpusFilename(extension: CleanCorpusEntry): string {
   return `${extension.publisher}.${extension.name}-${extension.version}.vsix`;
-}
-
-export function cleanCorpusExtensionRef(extension: CleanCorpusEntry): string {
-  return `${extension.registry}:${extension.id}@${extension.version}`;
 }
 
 export function isNeverCleanFindingId(findingId: string): boolean {

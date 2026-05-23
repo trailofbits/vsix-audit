@@ -179,7 +179,7 @@ async function main() {
         output: "json",
         severity: "low",
         network: false,
-        intel: "none",
+        intel: "local",
       });
       const findings = result.findings.map(compactFinding);
       const neverFindings = findings.filter((finding) => isNeverCleanFindingId(finding.id));
