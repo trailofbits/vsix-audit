@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { VsixContents, VsixManifest } from "../types.js";
@@ -186,5 +188,45 @@ describe("checkYara", () => {
     const loaderFindings = findings.filter((f) => f.id === "YARA_LOADER_PS_Download_Execute_Jan25");
     expect(loaderFindings).toHaveLength(1);
     expect(loaderFindings[0]?.severity).toBe("critical");
+  });
+
+  it("suppresses low-signal WebAssembly matches in dependency and documentation paths", async () => {
+    const available = await isYaraAvailable();
+    if (!available) return;
+
+    const rulesDir = await mkdtemp(join(tmpdir(), "vsix-audit-yara-rules-"));
+    try {
+      await writeFile(
+        join(rulesDir, "test.yar"),
+        [
+          "rule SUSP_JS_WebAssembly_Remote_Jan25 {",
+          "  meta:",
+          '    severity = "low"',
+          '    description = "test wasm pattern"',
+          "  strings:",
+          '    $a = "WebAssembly.instantiateStreaming"',
+          "  condition:",
+          "    $a",
+          "}",
+        ].join("\n"),
+      );
+
+      const contents = makeContents({
+        "main.js": "WebAssembly.instantiateStreaming(fetch(url));",
+        "node_modules/@tybys/wasm-util/dist/wasm-util.js":
+          "WebAssembly.instantiateStreaming(fetch(url));",
+        "node_modules/@tybys/wasm-util/README.md": "WebAssembly.instantiateStreaming(fetch(url));",
+        "node_modules/@tybys/wasm-util/dist/wasm-util.d.ts":
+          "WebAssembly.instantiateStreaming(fetch(url));",
+        "dist/bundle.js": "WebAssembly.instantiateStreaming(fetch(url));",
+      });
+
+      const findings = await checkYara(contents, rulesDir);
+      const wasmFindings = findings.filter((f) => f.id === "YARA_SUSP_JS_WebAssembly_Remote_Jan25");
+
+      expect(wasmFindings.map((f) => f.location?.file)).toEqual(["main.js"]);
+    } finally {
+      await rm(rulesDir, { recursive: true, force: true });
+    }
   });
 });
