@@ -58,7 +58,7 @@
     "@types/node": "25.8.0",
     "oxlint": "1.56.0",
     "typescript": "5.9.3",
-    "vitest": "4.1.0"
+    "vitest": "4.1.6"
   },
   "engines": {
     "node": ">=22"
