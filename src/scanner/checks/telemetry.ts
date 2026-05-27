@@ -258,10 +258,107 @@ function detectSdkImports(
 
 /**
  * Detect VS Code API opt-out usage.
+ *
+ * `vscode.env.isTelemetryEnabled` is the canonical signal. Two accepted
+ * forms:
+ *   1. Literal `vscode.env.isTelemetryEnabled` — unambiguous, attribute
+ *      directly.
+ *   2. Aliased `<ident>.env.isTelemetryEnabled` (from a bundler that
+ *      renamed the `vscode` import). On its own this is ambiguous — a
+ *      custom config object could share the method name — so we only
+ *      accept it when the same file also imports the `"vscode"` module.
+ *
+ * The literal module specifier `"vscode"` survives bundling, so the
+ * import-presence check is reliable even for minified extensions.
  */
+const IDENTIFIER_PATTERN = "[A-Za-z_$][\\w$]*";
+
+const VSCODE_NAMESPACE_IMPORT_REGEX = new RegExp(
+  `\\bimport\\s+(?!type\\b)\\*\\s+as\\s+(${IDENTIFIER_PATTERN})\\s+from\\s*["']vscode["']`,
+  "g",
+);
+
+const VSCODE_DEFAULT_IMPORT_REGEX = new RegExp(
+  `\\bimport\\s+(?!type\\b)(${IDENTIFIER_PATTERN})(?:\\s*,\\s*\\{[^}]*\\})?\\s+from\\s*["']vscode["']`,
+  "g",
+);
+
+const VSCODE_REQUIRE_ALIAS_REGEX = new RegExp(
+  `(?:^|[;,(\\n]|\\b(?:const|let|var)\\s+)\\s*(${IDENTIFIER_PATTERN})\\s*=\\s*` +
+    `(?:(?:__importStar|__toESM|__importDefault)\\s*\\(\\s*)?` +
+    `require\\s*\\(\\s*["']vscode["']\\s*\\)\\s*\\)?`,
+  "g",
+);
+
+const VSCODE_NAMED_ENV_IMPORT_REGEX =
+  /\bimport\s+(?!type\b)(?:[^"';]*,\s*)?\{([^}]*)\}\s+from\s*["']vscode["']/g;
+
+const VSCODE_DESTRUCTURED_ENV_REQUIRE_REGEX =
+  /\b(?:const|let|var)\s*\{([^}]*)\}\s*=\s*(?:(?:__importStar|__toESM|__importDefault)\s*\(\s*)?require\s*\(\s*["']vscode["']\s*\)\s*\)?/g;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function collectVsCodeModuleAliases(content: string): Set<string> {
+  const aliases = new Set<string>(["vscode"]);
+
+  for (const match of content.matchAll(VSCODE_NAMESPACE_IMPORT_REGEX)) {
+    if (match[1]) aliases.add(match[1]);
+  }
+
+  for (const match of content.matchAll(VSCODE_DEFAULT_IMPORT_REGEX)) {
+    if (match[1]) aliases.add(match[1]);
+  }
+
+  for (const match of content.matchAll(VSCODE_REQUIRE_ALIAS_REGEX)) {
+    if (match[1]) aliases.add(match[1]);
+  }
+
+  return aliases;
+}
+
+function collectVsCodeEnvAliases(content: string): Set<string> {
+  const aliases = new Set<string>();
+
+  for (const match of content.matchAll(VSCODE_NAMED_ENV_IMPORT_REGEX)) {
+    addEnvAliasesFromDestructure(match[1], aliases);
+  }
+
+  for (const match of content.matchAll(VSCODE_DESTRUCTURED_ENV_REQUIRE_REGEX)) {
+    addEnvAliasesFromDestructure(match[1], aliases);
+  }
+
+  return aliases;
+}
+
+function addEnvAliasesFromDestructure(specifiers: string | undefined, aliases: Set<string>): void {
+  if (!specifiers) return;
+
+  for (const specifier of specifiers.split(",")) {
+    const trimmed = specifier.trim();
+    const match = trimmed.match(
+      new RegExp(`^env(?:\\s+(?:as\\s+)?|\\s*:\\s*)?(${IDENTIFIER_PATTERN})?$`),
+    );
+    if (match) aliases.add(match[1] ?? "env");
+  }
+}
+
 function detectVsCodeApiOptOut(content: string): boolean {
-  // vscode.env.isTelemetryEnabled
-  return /vscode\.env\.isTelemetryEnabled/i.test(content);
+  for (const alias of collectVsCodeModuleAliases(content)) {
+    const pattern = new RegExp(
+      `\\b${escapeRegExp(alias)}\\s*\\.\\s*env\\s*\\.\\s*isTelemetryEnabled\\b`,
+      "i",
+    );
+    if (pattern.test(content)) return true;
+  }
+
+  for (const alias of collectVsCodeEnvAliases(content)) {
+    const pattern = new RegExp(`\\b${escapeRegExp(alias)}\\s*\\.\\s*isTelemetryEnabled\\b`, "i");
+    if (pattern.test(content)) return true;
+  }
+
+  return false;
 }
 
 /**
