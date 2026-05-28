@@ -13,7 +13,7 @@ import {
 } from "./formatters.js";
 import { clearCache, getCacheDir, getCachedVersions, listCached } from "./scanner/cache.js";
 import { extractCapabilities, type Capabilities } from "./scanner/capabilities.js";
-import { downloadExtension, parseExtensionId } from "./scanner/download.js";
+import { downloadExtension, parseExtensionId, type ParsedExtensionId } from "./scanner/download.js";
 import {
   MODULE_NAMES,
   scanDirectory,
@@ -49,51 +49,63 @@ interface CliDownloadOptions {
   force?: boolean;
 }
 
-/**
- * Strip registry prefix from an extension ID for path-checking purposes
- */
-function stripRegistryPrefix(target: string): string {
-  if (target.startsWith("openvsx:")) return target.slice(8);
-  if (target.startsWith("marketplace:")) return target.slice(12);
-  if (target.startsWith("cursor:")) return target.slice(7);
-  return target;
+export type CliTarget =
+  | { kind: "path"; path: string }
+  | {
+      kind: "extension-id";
+      extensionId: string;
+      unprefixedExtensionId: string;
+      parsed: ParsedExtensionId;
+    };
+
+interface TargetClassifierOptions {
+  exists?: (path: string) => boolean;
 }
 
 function hasRegistryPrefix(target: string): boolean {
-  return target !== stripRegistryPrefix(target);
+  return REGISTRIES.some((registry) => target.startsWith(`${registry}:`));
 }
 
-/**
- * Check if a target looks like an extension ID vs a local path
- */
-export function isExtensionId(target: string): boolean {
-  // Strip registry prefix for path validation
-  const id = stripRegistryPrefix(target);
+function isExplicitLocalPath(target: string): boolean {
+  return (
+    target.startsWith("/") ||
+    target.startsWith("./") ||
+    target.startsWith("../") ||
+    target.startsWith("~") ||
+    /^[A-Za-z]:[\\/]/.test(target) ||
+    target.includes("\\")
+  );
+}
 
-  // Local paths: start with /, ./, ~, or contain Windows separators.
-  if (id.startsWith("/") || id.startsWith("./") || id.startsWith("~")) {
-    return false;
-  }
-  if (id.includes("\\")) {
-    return false;
-  }
+function isRelativePathCandidate(target: string, exists: (path: string) => boolean): boolean {
+  return target.includes("/") && (exists(target) || target.toLowerCase().endsWith(".vsix"));
+}
 
-  // Existing relative slash paths and explicit VSIX paths should stay paths.
-  // Registry prefixes force ID parsing.
+function formatUnprefixedExtensionId(parsed: ParsedExtensionId): string {
+  const version = parsed.version === undefined ? "" : `@${parsed.version}`;
+  return `${parsed.publisher}/${parsed.name}${version}`;
+}
+
+export function classifyTarget(target: string, options: TargetClassifierOptions = {}): CliTarget {
+  const exists = options.exists ?? existsSync;
+
   if (
     !hasRegistryPrefix(target) &&
-    id.includes("/") &&
-    (existsSync(id) || id.toLowerCase().endsWith(".vsix"))
+    (isExplicitLocalPath(target) || isRelativePathCandidate(target, exists))
   ) {
-    return false;
+    return { kind: "path", path: target };
   }
 
-  // Extension IDs: publisher.name, publisher/name, with optional @version.
   try {
-    parseExtensionId(target);
-    return true;
+    const parsed = parseExtensionId(target);
+    return {
+      kind: "extension-id",
+      extensionId: target,
+      unprefixedExtensionId: formatUnprefixedExtensionId(parsed),
+      parsed,
+    };
   } catch {
-    return false;
+    return { kind: "path", path: target };
   }
 }
 
@@ -189,11 +201,12 @@ cli
           console.log(...args);
         }
       };
+      const targetInfo = classifyTarget(target);
 
       // Handle --all-registries mode for extension IDs
-      if (options.allRegistries && isExtensionId(target)) {
+      if (options.allRegistries && targetInfo.kind === "extension-id") {
         const results: ScanResult[] = [];
-        const baseId = stripRegistryPrefix(target);
+        const baseId = targetInfo.unprefixedExtensionId;
 
         for (const registry of REGISTRIES) {
           const prefixedId = `${registry}:${baseId}`;
@@ -322,10 +335,10 @@ cli
       }
 
       // Standard single-registry scan
-      let scanTarget = target;
-      if (isExtensionId(target)) {
-        statusLog(pc.cyan("Downloading:"), target);
-        const result = await downloadExtension(target, {
+      let scanTarget: string;
+      if (targetInfo.kind === "extension-id") {
+        statusLog(pc.cyan("Downloading:"), targetInfo.extensionId);
+        const result = await downloadExtension(targetInfo.extensionId, {
           useCache,
           forceDownload,
         });
@@ -337,6 +350,8 @@ cli
           statusLog(pc.green("✓ Downloaded"), pc.dim(result.path));
         }
         statusLog();
+      } else {
+        scanTarget = targetInfo.path;
       }
 
       const result = await scanExtension(scanTarget, scanOptions);
@@ -354,7 +369,10 @@ cli
 cli
   .command("download")
   .description("Download a VS Code extension from the marketplace")
-  .argument("<extension-id>", "Extension ID (e.g., ms-python.python or ms-python.python@2024.1.0)")
+  .argument(
+    "<extension-id>",
+    "Extension ID (e.g., ms-python.python, ms-python/python, or ms-python.python@2024.1.0)",
+  )
   .option("-o, --output <dir>", "Also copy to this directory (in addition to cache)")
   .option("--no-cache", "Bypass cache, download fresh")
   .option("--force", "Re-download even if cached")
@@ -406,10 +424,11 @@ cli
   .option("-v, --verbose", "Show detailed evidence for each capability")
   .action(async (target: string, options: CliInfoOptions) => {
     try {
-      let infoTarget = target;
-      if (isExtensionId(target)) {
-        console.log(pc.cyan("Downloading:"), target);
-        const result = await downloadExtension(target);
+      const targetInfo = classifyTarget(target);
+      let infoTarget: string;
+      if (targetInfo.kind === "extension-id") {
+        console.log(pc.cyan("Downloading:"), targetInfo.extensionId);
+        const result = await downloadExtension(targetInfo.extensionId);
         infoTarget = result.path;
 
         if (result.fromCache) {
@@ -417,6 +436,8 @@ cli
         } else {
           console.log(pc.green("✓ Downloaded"), pc.dim(result.path));
         }
+      } else {
+        infoTarget = targetInfo.path;
       }
 
       const contents = await loadExtension(infoTarget);
