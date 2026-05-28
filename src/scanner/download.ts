@@ -139,9 +139,16 @@ export interface ParsedExtensionId {
   registry: Registry;
 }
 
+const EXTENSION_ID_FORMAT =
+  "publisher.name, publisher/name, publisher.name@version, or publisher/name@version";
+
+function invalidExtensionId(input: string): Error {
+  return new Error(`Invalid extension ID: "${input}". Expected format: ${EXTENSION_ID_FORMAT}`);
+}
+
 /**
- * Parse an extension ID in the format "publisher.name" or "publisher.name@version"
- * Optionally with registry prefix: "openvsx:publisher.name" or "marketplace:publisher.name"
+ * Parse an extension ID in the format "publisher.name", "publisher/name", or with "@version".
+ * Optionally with registry prefix: "openvsx:publisher.name" or "openvsx:publisher/name".
  */
 export function parseExtensionId(input: string): ParsedExtensionId {
   let registry: Registry = "marketplace";
@@ -169,21 +176,33 @@ export function parseExtensionId(input: string): ParsedExtensionId {
     version = rest.slice(atIndex + 1);
   }
 
-  // Split publisher.name
-  const dotIndex = identifier.indexOf(".");
-  if (dotIndex <= 0) {
-    throw new Error(
-      `Invalid extension ID: "${input}". Expected format: publisher.name or publisher.name@version`,
-    );
+  let publisher: string;
+  let name: string;
+
+  // Split publisher.name or publisher/name. Slash form mirrors Open VSX URLs.
+  const slashIndex = identifier.indexOf("/");
+  if (slashIndex !== -1) {
+    if (
+      slashIndex <= 0 ||
+      slashIndex !== identifier.lastIndexOf("/") ||
+      slashIndex === identifier.length - 1
+    ) {
+      throw invalidExtensionId(input);
+    }
+    publisher = identifier.slice(0, slashIndex);
+    name = identifier.slice(slashIndex + 1);
+  } else {
+    const dotIndex = identifier.indexOf(".");
+    if (dotIndex <= 0) {
+      throw invalidExtensionId(input);
+    }
+
+    publisher = identifier.slice(0, dotIndex);
+    name = identifier.slice(dotIndex + 1);
   }
 
-  const publisher = identifier.slice(0, dotIndex);
-  const name = identifier.slice(dotIndex + 1);
-
   if (!publisher || !name) {
-    throw new Error(
-      `Invalid extension ID: "${input}". Expected format: publisher.name or publisher.name@version`,
-    );
+    throw invalidExtensionId(input);
   }
 
   const result: ParsedExtensionId = { publisher, name, registry };
@@ -457,8 +476,8 @@ export async function downloadVsix(
 /**
  * Download an extension from the VS Code Marketplace or OpenVSX
  *
- * @param extensionId - Extension ID in format "publisher.name", "publisher.name@version",
- *                      or with registry prefix: "openvsx:publisher.name", "marketplace:publisher.name"
+ * @param extensionId - Extension ID in format "publisher.name", "publisher/name", with optional "@version",
+ *                      or with registry prefix: "openvsx:publisher.name", "marketplace:publisher/name"
  * @param options - Optional settings
  * @returns Path to downloaded VSIX and extension metadata
  */

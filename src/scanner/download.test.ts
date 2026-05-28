@@ -25,8 +25,35 @@ describe("parseExtensionId", () => {
     expect(result.registry).toBe("marketplace");
   });
 
+  it("parses publisher/name format", () => {
+    const result = parseExtensionId("ms-python/python");
+
+    expect(result.publisher).toBe("ms-python");
+    expect(result.name).toBe("python");
+    expect(result.version).toBeUndefined();
+    expect(result.registry).toBe("marketplace");
+  });
+
+  it("parses publisher/name@version format", () => {
+    const result = parseExtensionId("ms-python/python@2024.1.0");
+
+    expect(result.publisher).toBe("ms-python");
+    expect(result.name).toBe("python");
+    expect(result.version).toBe("2024.1.0");
+    expect(result.registry).toBe("marketplace");
+  });
+
   it("handles dots in extension name", () => {
     const result = parseExtensionId("publisher.extension.name");
+
+    expect(result.publisher).toBe("publisher");
+    expect(result.name).toBe("extension.name");
+    expect(result.version).toBeUndefined();
+    expect(result.registry).toBe("marketplace");
+  });
+
+  it("handles dots in slash-form extension names", () => {
+    const result = parseExtensionId("publisher/extension.name");
 
     expect(result.publisher).toBe("publisher");
     expect(result.name).toBe("extension.name");
@@ -68,6 +95,15 @@ describe("parseExtensionId", () => {
     expect(result.registry).toBe("openvsx");
   });
 
+  it("parses openvsx: prefix with slash-form ID", () => {
+    const result = parseExtensionId("openvsx:redhat/java");
+
+    expect(result.publisher).toBe("redhat");
+    expect(result.name).toBe("java");
+    expect(result.version).toBeUndefined();
+    expect(result.registry).toBe("openvsx");
+  });
+
   it("parses marketplace: prefix", () => {
     const result = parseExtensionId("marketplace:ms-python.python");
 
@@ -79,6 +115,15 @@ describe("parseExtensionId", () => {
 
   it("parses marketplace: prefix with version", () => {
     const result = parseExtensionId("marketplace:ms-python.python@2024.1.0");
+
+    expect(result.publisher).toBe("ms-python");
+    expect(result.name).toBe("python");
+    expect(result.version).toBe("2024.1.0");
+    expect(result.registry).toBe("marketplace");
+  });
+
+  it("parses marketplace: prefix with slash-form ID and version", () => {
+    const result = parseExtensionId("marketplace:ms-python/python@2024.1.0");
 
     expect(result.publisher).toBe("ms-python");
     expect(result.name).toBe("python");
@@ -114,6 +159,18 @@ describe("parseExtensionId", () => {
 
   it("throws on empty name", () => {
     expect(() => parseExtensionId("publisher.")).toThrow("Invalid extension ID");
+  });
+
+  it("throws on empty slash-form publisher", () => {
+    expect(() => parseExtensionId("/python")).toThrow("Invalid extension ID");
+  });
+
+  it("throws on empty slash-form name", () => {
+    expect(() => parseExtensionId("publisher/")).toThrow("Invalid extension ID");
+  });
+
+  it("throws on slash-form ID with multiple slashes", () => {
+    expect(() => parseExtensionId("publisher/extension/name")).toThrow("Invalid extension ID");
   });
 
   it("throws on just a dot", () => {
