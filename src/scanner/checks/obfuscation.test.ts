@@ -188,9 +188,112 @@ describe("checkObfuscation", () => {
       expect(findings.some((f) => f.id === "CYRILLIC_HOMOGLYPH")).toBe(true);
     });
 
+    it("detects Cyrillic 'і' (U+0456 BYELORUSSIAN-UKRAINIAN I) mixed into Latin", () => {
+      const cyrillicI = String.fromCharCode(0x0456);
+      const content = `const adm${cyrillicI}n = true;`;
+      const contents = makeContents({ "extension.js": content });
+
+      const findings = checkObfuscation(contents);
+
+      expect(findings.some((f) => f.id === "CYRILLIC_HOMOGLYPH")).toBe(true);
+    });
+
     it("ignores Cyrillic in markdown files", () => {
       const content = "# Hello \u0430nd welcome"; // Cyrillic а in markdown
       const contents = makeContents({ "README.md": content });
+
+      const findings = checkObfuscation(contents);
+      const cyrillicFinding = findings.find((f) => f.id === "CYRILLIC_HOMOGLYPH");
+
+      expect(cyrillicFinding).toBeUndefined();
+    });
+
+    it("ignores pure-Cyrillic localization strings in package.json", () => {
+      // Real case from Copilot Chat: a language picker contains "Русский"
+      // as a legitimate locale label. Note this also doubles as a stronger
+      // negative case — the leading 'Р' (U+0420) is itself a Cyrillic
+      // homoglyph for Latin 'P', but the surrounding chars are all
+      // non-homoglyph Cyrillic, so the run is still pure-Cyrillic and
+      // must not flag.
+      const content = JSON.stringify({
+        contributes: {
+          configuration: {
+            properties: {
+              "myExt.language": {
+                enum: ["English", "Русский", "Deutsch"],
+              },
+            },
+          },
+        },
+      });
+      const contents = makeContents({ "package.json": content });
+
+      const findings = checkObfuscation(contents);
+      const cyrillicFinding = findings.find((f) => f.id === "CYRILLIC_HOMOGLYPH");
+
+      expect(cyrillicFinding).toBeUndefined();
+    });
+
+    it("flags Cyrillic homoglyph mixed into a Latin token", () => {
+      // Classic phishing: Cyrillic 'о' (U+043E) injected into "google".
+      // Build via concatenation so the test source stays auditable and
+      // reviewers can see exactly which codepoint is being injected.
+      const cyrillicO = String.fromCharCode(0x043e);
+      const content = `const url = "https://g${cyrillicO}${cyrillicO}gle.com/login";`;
+      const contents = makeContents({ "extension.js": content });
+
+      const findings = checkObfuscation(contents);
+
+      expect(findings.some((f) => f.id === "CYRILLIC_HOMOGLYPH")).toBe(true);
+    });
+
+    it("flags Cyrillic homoglyphs hidden behind backslash-u source escapes", () => {
+      // Bypass form: the scanned file literally contains the bytes
+      // "\\u043E" (six chars), which JavaScript resolves to Cyrillic 'о'
+      // at runtime. The detector must treat the escape as a single
+      // letter for mixed-script tokenisation.
+      const homoglyphEscape = "\\" + "u043E";
+      const content = `const url = "https://g${homoglyphEscape}${homoglyphEscape}gle.com";`;
+      const contents = makeContents({ "extension.js": content });
+
+      const findings = checkObfuscation(contents);
+      const finding = findings.find((f) => f.id === "CYRILLIC_HOMOGLYPH");
+      const codePoints = finding?.metadata?.["codePoints"] as string[] | undefined;
+
+      expect(finding).toBeDefined();
+      expect(codePoints?.some((cp) => cp.includes("043E"))).toBe(true);
+    });
+
+    it("does not join words across escaped whitespace", () => {
+      // The source contains a literal "\\u0020" escape, which decodes to a
+      // space. It must split the Cyrillic and Latin words instead of turning
+      // the string into one mixed-script token.
+      const escapedSpace = "\\" + "u0020";
+      const content = `const label = "Русский${escapedSpace}English";`;
+      const contents = makeContents({ "extension.js": content });
+
+      const findings = checkObfuscation(contents);
+      const cyrillicFinding = findings.find((f) => f.id === "CYRILLIC_HOMOGLYPH");
+
+      expect(cyrillicFinding).toBeUndefined();
+    });
+
+    it("flags pure-Cyrillic look-alike domain labels", () => {
+      // "раураӏ" is all Cyrillic, but every character visually maps to a
+      // Latin look-alike, producing a "paypal"-style domain spoof.
+      const spoofedPaypal = String.fromCodePoint(0x0440, 0x0430, 0x0443, 0x0440, 0x0430, 0x04cf);
+      const content = `const url = "https://${spoofedPaypal}.com/login";`;
+      const contents = makeContents({ "extension.js": content });
+
+      const findings = checkObfuscation(contents);
+
+      expect(findings.some((f) => f.id === "CYRILLIC_HOMOGLYPH")).toBe(true);
+    });
+
+    it("does not flag pure-Cyrillic look-alike tokens outside domain contexts", () => {
+      const lookAlikeWord = String.fromCodePoint(0x0440, 0x0430, 0x0443, 0x0440, 0x0430, 0x04cf);
+      const content = `const label = "${lookAlikeWord}";`;
+      const contents = makeContents({ "extension.js": content });
 
       const findings = checkObfuscation(contents);
       const cyrillicFinding = findings.find((f) => f.id === "CYRILLIC_HOMOGLYPH");

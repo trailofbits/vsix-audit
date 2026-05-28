@@ -6,6 +6,8 @@ import {
   SCANNABLE_EXTENSIONS_UNICODE,
 } from "../constants.js";
 import type { Finding, Severity, VsixContents } from "../types.js";
+import { detectCyrillicHomoglyphs } from "./homoglyph.js";
+import type { UnicodeMatch } from "./homoglyph.js";
 import {
   computeLineStarts,
   findLineNumberByIndex,
@@ -39,13 +41,6 @@ interface UnicodeRule {
   description: string;
   severity: Severity;
   detect: (content: string, filename: string) => UnicodeMatch[];
-}
-
-interface UnicodeMatch {
-  line: number;
-  column: number;
-  matched: string;
-  context: string;
 }
 
 // ============================================================================
@@ -211,10 +206,6 @@ const BIDI_OVERRIDE_REGEX = /[\u202A-\u202E]/g;
 
 // Unicode escapes for ASCII: \u00XX where XX is 20-7E (printable ASCII)
 const UNICODE_ASCII_ESCAPE_REGEX = /\\u00[2-7][0-9a-fA-F]/g;
-
-// Cyrillic homoglyphs that look like Latin letters
-const CYRILLIC_LOOKALIKE_REGEX =
-  /[\u0430\u0441\u0435\u043E\u0440\u0445\u0443\u0410\u0412\u0421\u0415\u041D\u041A\u041C\u041E\u0420\u0422\u0425]/g;
 
 // Additional invisible/confusable characters
 const OTHER_INVISIBLE_REGEX =
@@ -424,7 +415,7 @@ const UNICODE_RULES: UnicodeRule[] = [
     id: "CYRILLIC_HOMOGLYPH",
     title: "Cyrillic homoglyph characters detected",
     description:
-      "File contains Cyrillic characters that visually resemble Latin letters. This can be used for homoglyph attacks.",
+      "File contains a token with Cyrillic look-alike characters: either mixed into Latin text (e.g., 'gооgle') or forming a domain label entirely from Cyrillic look-alikes (e.g., 'раураӏ.com'). Pure Cyrillic words outside domain-spoof contexts are not flagged.",
     severity: "high",
     detect: (content, filename) => {
       if (filename.endsWith(".md") || filename.endsWith(".txt")) {
@@ -433,7 +424,7 @@ const UNICODE_RULES: UnicodeRule[] = [
       if (isI18nFile(filename, content)) {
         return [];
       }
-      return detectUnicodePattern(content, CYRILLIC_LOOKALIKE_REGEX, 1);
+      return detectCyrillicHomoglyphs(content);
     },
   },
   {
