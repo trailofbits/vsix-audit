@@ -148,7 +148,7 @@ Requires Node.js 22 or later and [YARA-X](https://github.com/VirusTotal/yara-x) 
 ```sh
 vsix-audit scan ./extension.vsix
 vsix-audit scan publisher.extension-name
-vsix-audit scan openvsx:publisher.extension-name
+vsix-audit scan openvsx:publisher/extension-name
 ```
 
 **Download an extension for offline analysis:**
@@ -156,7 +156,7 @@ vsix-audit scan openvsx:publisher.extension-name
 ```sh
 vsix-audit download ms-python.python
 vsix-audit download ms-python.python@2024.1.0 -o ./downloads
-vsix-audit download openvsx:redhat.java
+vsix-audit download openvsx:redhat/java
 ```
 
 **Show extension metadata:**

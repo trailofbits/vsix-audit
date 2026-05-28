@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { basename } from "node:path";
@@ -58,21 +59,36 @@ function stripRegistryPrefix(target: string): string {
   return target;
 }
 
+function hasRegistryPrefix(target: string): boolean {
+  return target !== stripRegistryPrefix(target);
+}
+
 /**
  * Check if a target looks like an extension ID vs a local path
  */
-function isExtensionId(target: string): boolean {
+export function isExtensionId(target: string): boolean {
   // Strip registry prefix for path validation
   const id = stripRegistryPrefix(target);
 
-  // Local paths: start with /, ./, ~, or contain path separators
+  // Local paths: start with /, ./, ~, or contain Windows separators.
   if (id.startsWith("/") || id.startsWith("./") || id.startsWith("~")) {
     return false;
   }
-  if (id.includes("/") || id.includes("\\")) {
+  if (id.includes("\\")) {
     return false;
   }
-  // Extension IDs: publisher.name or publisher.name@version
+
+  // Existing relative slash paths and explicit VSIX paths should stay paths.
+  // Registry prefixes force ID parsing.
+  if (
+    !hasRegistryPrefix(target) &&
+    id.includes("/") &&
+    (existsSync(id) || id.toLowerCase().endsWith(".vsix"))
+  ) {
+    return false;
+  }
+
+  // Extension IDs: publisher.name, publisher/name, with optional @version.
   try {
     parseExtensionId(target);
     return true;
@@ -97,7 +113,10 @@ export const cli = new Command()
 cli
   .command("scan")
   .description("Scan a VS Code extension for security issues")
-  .argument("<target>", "Path to .vsix file or extension ID (e.g., publisher.extension)")
+  .argument(
+    "<target>",
+    "Path to .vsix file or extension ID (e.g., publisher.extension or publisher/extension)",
+  )
   .option("-o, --output <format>", "Output format (text, json, sarif)", "text")
   .option(
     "-s, --severity <level>",
@@ -382,7 +401,7 @@ cli
   .description("Display metadata and capabilities of a VS Code extension")
   .argument(
     "<target>",
-    "Path to .vsix file, directory, or extension ID (e.g., publisher.extension)",
+    "Path to .vsix file, directory, or extension ID (e.g., publisher.extension or publisher/extension)",
   )
   .option("-v, --verbose", "Show detailed evidence for each capability")
   .action(async (target: string, options: CliInfoOptions) => {
