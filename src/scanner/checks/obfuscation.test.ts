@@ -257,8 +257,48 @@ describe("checkObfuscation", () => {
       const contents = makeContents({ "extension.js": content });
 
       const findings = checkObfuscation(contents);
+      const finding = findings.find((f) => f.id === "CYRILLIC_HOMOGLYPH");
+      const codePoints = finding?.metadata?.["codePoints"] as string[] | undefined;
+
+      expect(finding).toBeDefined();
+      expect(codePoints?.some((cp) => cp.includes("043E"))).toBe(true);
+    });
+
+    it("does not join words across escaped whitespace", () => {
+      // The source contains a literal "\\u0020" escape, which decodes to a
+      // space. It must split the Cyrillic and Latin words instead of turning
+      // the string into one mixed-script token.
+      const escapedSpace = "\\" + "u0020";
+      const content = `const label = "Русский${escapedSpace}English";`;
+      const contents = makeContents({ "extension.js": content });
+
+      const findings = checkObfuscation(contents);
+      const cyrillicFinding = findings.find((f) => f.id === "CYRILLIC_HOMOGLYPH");
+
+      expect(cyrillicFinding).toBeUndefined();
+    });
+
+    it("flags pure-Cyrillic look-alike domain labels", () => {
+      // "раураӏ" is all Cyrillic, but every character visually maps to a
+      // Latin look-alike, producing a "paypal"-style domain spoof.
+      const spoofedPaypal = String.fromCodePoint(0x0440, 0x0430, 0x0443, 0x0440, 0x0430, 0x04cf);
+      const content = `const url = "https://${spoofedPaypal}.com/login";`;
+      const contents = makeContents({ "extension.js": content });
+
+      const findings = checkObfuscation(contents);
 
       expect(findings.some((f) => f.id === "CYRILLIC_HOMOGLYPH")).toBe(true);
+    });
+
+    it("does not flag pure-Cyrillic look-alike tokens outside domain contexts", () => {
+      const lookAlikeWord = String.fromCodePoint(0x0440, 0x0430, 0x0443, 0x0440, 0x0430, 0x04cf);
+      const content = `const label = "${lookAlikeWord}";`;
+      const contents = makeContents({ "extension.js": content });
+
+      const findings = checkObfuscation(contents);
+      const cyrillicFinding = findings.find((f) => f.id === "CYRILLIC_HOMOGLYPH");
+
+      expect(cyrillicFinding).toBeUndefined();
     });
   });
 
