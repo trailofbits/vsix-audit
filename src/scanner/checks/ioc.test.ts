@@ -9,6 +9,7 @@ import {
   checkIps,
   checkWallets,
   isLikelySolanaAddress,
+  isValidBitcoinAddress,
 } from "./ioc.js";
 
 function makeContents(files: Record<string, string>): VsixContents {
@@ -431,6 +432,98 @@ describe("isLikelySolanaAddress", () => {
     // Pure lowercase strings should be rejected
     expect(isLikelySolanaAddress("fromcertificatewithsha256thumbprint")).toBe(false);
     expect(isLikelySolanaAddress("pubbbf48e6d78dae54bceaa4acf463299bf")).toBe(false);
+  });
+
+  it("returns false for low-entropy repeating patterns", () => {
+    // Base64 of UTF-8 ellipsis: ".." repeated
+    expect(isLikelySolanaAddress("Li4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4u")).toBe(false);
+    // Base64 of underscores
+    expect(isLikelySolanaAddress("X19fX19fX19fX19fX19fX19fX19fX19f")).toBe(false);
+    // Base64 of em-dash repeating
+    expect(isLikelySolanaAddress("4oCU4oCU4oCU4oCU4oCU4oCU4oCU4oCU")).toBe(false);
+    // Base64 of CJK characters
+    expect(isLikelySolanaAddress("5peg56CB5LiN5Y2h6auY5riF5YWN6LS5")).toBe(false);
+  });
+
+  it("returns false for English-like camelCase identifiers that contain digits", () => {
+    // Mixed-case identifiers with sparse digits should be rejected
+    expect(isLikelySolanaAddress("fromCertificateWithSha256Thumbprint")).toBe(false);
+    expect(isLikelySolanaAddress("JediPython27NotSupportedDiagnosticService")).toBe(false);
+    expect(isLikelySolanaAddress("doNotShowPython36DebugDeprecatedAgain")).toBe(false);
+  });
+});
+
+describe("isValidBitcoinAddress", () => {
+  it("accepts real P2PKH addresses (start with 1)", () => {
+    // Satoshi's genesis block address
+    expect(isValidBitcoinAddress("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")).toBe(true);
+    // Another well-known address
+    expect(isValidBitcoinAddress("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2")).toBe(true);
+  });
+
+  it("accepts real P2SH addresses (start with 3)", () => {
+    expect(isValidBitcoinAddress("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy")).toBe(true);
+    expect(isValidBitcoinAddress("3P14159f73E4gFr7JterCCQh9QjiTjiZrG")).toBe(true);
+  });
+
+  it("rejects strings with valid Base58 charset but no checksum", () => {
+    // Actual false positives from minified-JS scans
+    expect(isValidBitcoinAddress("1AAAAAAAAAAACAAAAAAAAAAAAAAQP")).toBe(false);
+    expect(isValidBitcoinAddress("1AAAAAAAAAAAAAAAAAAAAAAAAAAAN")).toBe(false);
+    expect(isValidBitcoinAddress("3wAAAAAAAAAAAAAAAAAAAAAAAAAAQP")).toBe(false);
+    expect(isValidBitcoinAddress("3wAAAAAAAAAAAAAAAAAAAAAAAAAQ7")).toBe(false);
+    expect(isValidBitcoinAddress("33BAQEBAQEBAQEBAQEAgAAAAAAAAQK")).toBe(false);
+    expect(isValidBitcoinAddress("31AAAAAAAAAAAAAAAAAAAAAAAABAz")).toBe(false);
+  });
+
+  it("rejects mutated valid addresses (checksum corruption)", () => {
+    // Real address with one char flipped: should fail checksum
+    expect(isValidBitcoinAddress("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNb")).toBe(false);
+  });
+
+  it("rejects empty and malformed inputs", () => {
+    expect(isValidBitcoinAddress("")).toBe(false);
+    // Contains '0' which is not in Base58 alphabet
+    expect(isValidBitcoinAddress("1A1zP0eP5QGefi2DMPTfTL5SLmv7DivfNa")).toBe(false);
+  });
+
+  it("rejects inputs outside the legacy length range without BigInt work", () => {
+    // Real legacy addresses are 26–35 chars; anything outside should
+    // short-circuit before base58Decode runs.
+    expect(isValidBitcoinAddress("1A1zP1eP")).toBe(false); // too short
+    expect(
+      isValidBitcoinAddress("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa1A1zP1eP5QGefi2DMPTfTL"),
+    ).toBe(false); // too long
+  });
+});
+
+describe("checkWallets BTC validation", () => {
+  it("filters out garbage Base58 substrings in minified JS", () => {
+    const contents = makeContents({
+      // Real false positives observed in Copilot Chat extension bundle
+      "extension.js":
+        'const x = "1AAAAAAAAAAACAAAAAAAAAAAAAAQP";' +
+        'const y = "3wAAAAAAAAAAAAAAAAAAAAAAAAAAQP";' +
+        'const z = "33BAQEBAQEBAQEBAQEAgAAAAAAAAQK";',
+    });
+
+    const findings = checkWallets(contents, new Set());
+
+    expect(findings).toHaveLength(0);
+  });
+
+  it("still detects real BTC addresses next to garbage", () => {
+    const contents = makeContents({
+      "extension.js":
+        'const real = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa";' +
+        'const garbage = "1AAAAAAAAAAACAAAAAAAAAAAAAAQP";',
+    });
+
+    const findings = checkWallets(contents, new Set());
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.metadata?.["currency"]).toBe("BTC");
+    expect(findings[0]?.metadata?.["wallet"]).toBe("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa");
   });
 });
 

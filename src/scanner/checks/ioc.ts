@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isScannable, SCANNABLE_EXTENSIONS_IOC } from "../constants.js";
 import type { Finding, VsixContents, ZooData } from "../types.js";
 import { computeLineStarts, findLineNumberByString, getStringContent } from "../utils.js";
@@ -229,6 +230,83 @@ export function checkIps(contents: VsixContents, knownIps: Set<string>): Finding
   return findings;
 }
 
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const BASE58_INDEX = new Map<string, number>(
+  [...BASE58_ALPHABET].map((c, i): [string, number] => [c, i]),
+);
+
+function base58Decode(s: string): Uint8Array | null {
+  if (s.length === 0) return null;
+
+  let leadingOnes = 0;
+  for (const c of s) {
+    if (c === "1") leadingOnes++;
+    else break;
+  }
+
+  let num = 0n;
+  for (const c of s) {
+    const idx = BASE58_INDEX.get(c);
+    if (idx === undefined) return null;
+    num = num * 58n + BigInt(idx);
+  }
+
+  // Accumulate bytes LSB-first to keep the loop linear; reverse on write.
+  const lsbBytes: number[] = [];
+  while (num > 0n) {
+    lsbBytes.push(Number(num & 0xffn));
+    num >>= 8n;
+  }
+
+  const result = new Uint8Array(leadingOnes + lsbBytes.length);
+  for (let i = 0; i < lsbBytes.length; i++) {
+    result[leadingOnes + lsbBytes.length - 1 - i] = lsbBytes[i]!;
+  }
+  return result;
+}
+
+/**
+ * Validates a Bitcoin P2PKH/P2SH address by checking its Base58Check checksum
+ * and mainnet version byte. Real addresses encode a 21-byte payload
+ * (version + 20-byte hash) followed by the first 4 bytes of
+ * SHA256(SHA256(payload)). Random Base58 substrings that happen to match the
+ * regex will fail this check.
+ */
+export function isValidBitcoinAddress(address: string): boolean {
+  // Legacy P2PKH/P2SH addresses encode to exactly 25 bytes, which in Base58
+  // is 26–35 chars. Skip BigInt math for anything outside that range.
+  if (address.length < 26 || address.length > 35) return false;
+
+  const decoded = base58Decode(address);
+  if (decoded === null || decoded.length !== 25) return false;
+
+  // Mainnet version byte: 0x00 = P2PKH ("1…"), 0x05 = P2SH ("3…").
+  const version = decoded[0];
+  if (version !== 0x00 && version !== 0x05) return false;
+
+  const payload = decoded.subarray(0, 21);
+  const checksum = decoded.subarray(21, 25);
+  const hash1 = createHash("sha256").update(payload).digest();
+  const hash2 = createHash("sha256").update(hash1).digest();
+
+  for (let i = 0; i < 4; i++) {
+    if (hash2[i] !== checksum[i]) return false;
+  }
+  return true;
+}
+
+function shannonEntropy(s: string): number {
+  if (s.length === 0) return 0;
+  const counts = new Map<string, number>();
+  for (const c of s) counts.set(c, (counts.get(c) ?? 0) + 1);
+  let h = 0;
+  for (const count of counts.values()) {
+    const p = count / s.length;
+    h -= p * Math.log2(p);
+  }
+  return h;
+}
+
 // Wallet patterns ordered from most specific to least specific.
 // More specific patterns (BTC, ETH, XMR) are checked first to avoid
 // the broad Solana Base58 pattern from matching them.
@@ -284,6 +362,15 @@ export function isLikelySolanaAddress(candidate: string): boolean {
     return false;
   }
 
+  // Real Ed25519 keys in Base58 span a wide character set; repeating
+  // base64 garbage (e.g., "Li4uLi4u…", "4oCU4oCU…") uses 4–8 unique chars.
+  const uniqueChars = new Set(candidate).size;
+  if (uniqueChars < 16) return false;
+
+  // Random Base58 keys cluster around ~5.6 bits/char; English-like
+  // camelCase identifiers fall under ~4.5; repeating patterns under ~3.
+  if (shannonEntropy(candidate) < 4.5) return false;
+
   return true;
 }
 
@@ -322,6 +409,17 @@ export function checkWallets(
 
         // For SOL pattern, apply additional validation to filter out JS identifiers
         if (name === "SOL" && !isLikelySolanaAddress(wallet)) {
+          continue;
+        }
+
+        // For BTC P2PKH/P2SH, verify the Base58Check checksum. The Bech32
+        // variant ("bc1…", case-insensitive per BIP173) uses a different
+        // checksum scheme and is not validated here.
+        if (
+          name === "BTC" &&
+          wallet.slice(0, 3).toLowerCase() !== "bc1" &&
+          !isValidBitcoinAddress(wallet)
+        ) {
           continue;
         }
 
