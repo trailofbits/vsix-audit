@@ -197,7 +197,7 @@ Displays: name, publisher, version, activation events, entry points, contributio
 
 ### Coverage Degradation
 
-`vsix-audit` reports coverage problems as findings and in JSON metadata. Examples include skipped ZIP entries, duplicate normalized archive paths, manifest entry points that were missing or skipped, AST parser recovery errors, and unavailable scanner modules.
+`vsix-audit` reports coverage problems as findings and in JSON metadata. Examples include skipped ZIP entries, duplicate normalized archive paths, manifest entry points that were missing or skipped, AST parser recovery errors, and unavailable scanner modules. Archive entries that cannot be read successfully are reported as skipped entries instead of stalling the scan.
 
 Use `--strict` for production gating when an incomplete scan should fail closed. Use `--require-yara` when YARA coverage is mandatory in CI.
 

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { inflateRawSync } from "node:zlib";
 import * as yauzl from "yauzl";
 import type {
   ArchiveWarning,
@@ -23,6 +24,7 @@ export const MAX_COMPRESSION_RATIO = 100;
 
 const ZIP_UTF8_FLAG = 0x0800;
 const INFO_ZIP_UNICODE_PATH_EXTRA_FIELD = 0x7075;
+const ZIP_ENTRY_IDLE_TIMEOUT_MS = 5_000;
 
 const CP437_CODE_POINTS = [
   0x0000, 0x263a, 0x263b, 0x2665, 0x2666, 0x2663, 0x2660, 0x2022, 0x25d8, 0x25cb, 0x25d9, 0x2642,
@@ -210,8 +212,24 @@ function collectZipEntries(zipFile: yauzl.ZipFile): Promise<yauzl.Entry[]> {
 function openZipEntryStream(
   zipFile: yauzl.ZipFile,
   entry: yauzl.Entry,
+  options?: yauzl.ZipFileOptions,
 ): Promise<NodeJS.ReadableStream> {
   return new Promise((resolve, reject) => {
+    if (options) {
+      zipFile.openReadStream(entry, options, (error, stream) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (!stream) {
+          reject(new Error(`Failed to read ZIP entry "${getZipEntryName(entry)}"`));
+          return;
+        }
+        resolve(stream);
+      });
+      return;
+    }
+
     zipFile.openReadStream(entry, (error, stream) => {
       if (error) {
         reject(error);
@@ -227,20 +245,103 @@ function openZipEntryStream(
 }
 
 async function readZipEntry(entry: yauzl.Entry, zipFile: yauzl.ZipFile): Promise<Buffer> {
-  const stream = await openZipEntryStream(zipFile, entry);
-  const chunks: Buffer[] = [];
-  let actualSize = 0;
+  const stream = await openZipEntryStream(zipFile, entry, {
+    decompress: false,
+    decrypt: null,
+    start: null,
+    end: null,
+  });
+  const destroyableStream = stream as NodeJS.ReadableStream & {
+    destroy?: (error?: Error) => void;
+  };
 
-  for await (const chunk of stream) {
-    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    actualSize += data.length;
-    if (actualSize > MAX_ENTRY_SIZE) {
-      throw new Error(`ZIP entry "${getZipEntryName(entry)}" exceeds ${MAX_ENTRY_SIZE} byte limit`);
-    }
-    chunks.push(data);
-  }
+  return await new Promise<Buffer>((resolve, reject) => {
+    const compressedChunks: Buffer[] = [];
+    let actualCompressedSize = 0;
+    let settled = false;
+    let timeoutId: NodeJS.Timeout | undefined;
 
-  return Buffer.concat(chunks);
+    const settleResolve = (value: Buffer) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      resolve(value);
+    };
+
+    const settleReject = (error: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      reject(error);
+    };
+
+    const restartTimeout = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      timeoutId = setTimeout(() => {
+        const error = new Error(
+          `ZIP entry "${getZipEntryName(entry)}" stalled for ${ZIP_ENTRY_IDLE_TIMEOUT_MS}ms`,
+        );
+        destroyableStream.destroy?.(error);
+        settleReject(error);
+      }, ZIP_ENTRY_IDLE_TIMEOUT_MS);
+    };
+
+    restartTimeout();
+
+    stream.on("data", (chunk) => {
+      const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      actualCompressedSize += data.length;
+      compressedChunks.push(data);
+      restartTimeout();
+    });
+
+    stream.once("end", () => {
+      try {
+        const compressed = Buffer.concat(compressedChunks, actualCompressedSize);
+        const content =
+          entry.compressionMethod === 0
+            ? compressed
+            : entry.compressionMethod === 8
+              ? inflateRawSync(compressed)
+              : (() => {
+                  throw new Error(
+                    `ZIP entry "${getZipEntryName(entry)}" uses unsupported compression method ${entry.compressionMethod}`,
+                  );
+                })();
+
+        if (content.length > MAX_ENTRY_SIZE) {
+          settleReject(
+            new Error(`ZIP entry "${getZipEntryName(entry)}" exceeds ${MAX_ENTRY_SIZE} byte limit`),
+          );
+          return;
+        }
+
+        settleResolve(content);
+      } catch (error) {
+        settleReject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+
+    stream.once("error", (error) => {
+      settleReject(error instanceof Error ? error : new Error(String(error)));
+    });
+
+    stream.once("close", () => {
+      if (!settled) {
+        settleReject(new Error(`ZIP entry "${getZipEntryName(entry)}" closed before completion`));
+      }
+    });
+  });
 }
 
 export async function extractVsix(vsixPath: string): Promise<VsixContents> {
