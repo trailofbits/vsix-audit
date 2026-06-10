@@ -287,6 +287,24 @@ export function isLikelySolanaAddress(candidate: string): boolean {
   return true;
 }
 
+function isLockfileIntegrityMatch(filename: string, content: string, offset: number): boolean {
+  const normalizedFilename = filename.replace(/\\/g, "/").toLowerCase();
+  if (
+    !normalizedFilename.endsWith("package-lock.json") &&
+    !normalizedFilename.endsWith(".package-lock.json")
+  ) {
+    return false;
+  }
+
+  const lineStart = content.lastIndexOf("\n", offset);
+  const lineEnd = content.indexOf("\n", offset);
+  const line = content
+    .slice(lineStart === -1 ? 0 : lineStart + 1, lineEnd === -1 ? content.length : lineEnd)
+    .trim();
+
+  return /^"integrity"\s*:\s*"sha(?:1|256|384|512)-/i.test(line);
+}
+
 export function checkWallets(
   contents: VsixContents,
   knownWallets: Set<string>,
@@ -315,10 +333,15 @@ export function checkWallets(
 
       for (const match of content.matchAll(pattern)) {
         const wallet = match[0];
+        const matchIndex = match.index ?? content.indexOf(wallet);
 
         // Skip if we've already reported this wallet address
         if (seenWallets.has(wallet)) continue;
         seenWallets.add(wallet);
+
+        if (matchIndex >= 0 && isLockfileIntegrityMatch(filename, content, matchIndex)) {
+          continue;
+        }
 
         // For SOL pattern, apply additional validation to filter out JS identifiers
         if (name === "SOL" && !isLikelySolanaAddress(wallet)) {

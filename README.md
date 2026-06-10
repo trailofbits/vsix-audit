@@ -47,7 +47,7 @@ Matches against curated threat intelligence from `zoo/iocs/`.
 | C2 domains     | Domain extraction matched against blocklist                         | Critical |
 | C2 IPs         | IPv4 extraction (excludes private ranges) matched against blocklist | Critical |
 | GitHub C2      | GitHub API/raw URLs referencing known C2 accounts                   | Critical |
-| Crypto wallets | BTC (legacy/SegWit/Bech32), ETH, Monero, Solana address patterns    | High     |
+| Crypto wallets | BTC (legacy/SegWit/Bech32), ETH, Monero, Solana address patterns; npm lockfile `integrity` checksums are ignored to reduce false positives | High     |
 
 ### AST Analysis (`ast.ts`)
 
