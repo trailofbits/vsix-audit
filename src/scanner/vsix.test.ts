@@ -718,6 +718,38 @@ describe("extractVsix", () => {
     }
   });
 
+  it("extracts large deflated entries through the raw-byte path without warnings", async () => {
+    const manifest = JSON.stringify({
+      name: "large-deflated-ext",
+      publisher: "test",
+      version: "1.0.0",
+    });
+    const largeScript = Array.from(
+      { length: 20_000 },
+      (_, index) => `export const value${index} = "${index.toString(36).padStart(4, "0")}";`,
+    ).join("\n");
+
+    const zipBuffer = createTestZip(
+      [
+        { name: "extension/package.json", content: manifest },
+        { name: "extension/dist/big.js", content: largeScript },
+      ],
+      { useDataDescriptor: false },
+    );
+
+    const vsixPath = join(tmpdir(), `test-large-deflated-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.files.get("dist/big.js")?.toString("utf8")).toBe(largeScript);
+      expect(contents.archiveWarnings).toBeUndefined();
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
   it("warns when paths collide on case-insensitive filesystems", async () => {
     const manifest = JSON.stringify({
       name: "case-collision-ext",
