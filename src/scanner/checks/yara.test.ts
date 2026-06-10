@@ -62,7 +62,7 @@ describe("checkYara", () => {
       expect(findings.some((f) => f.id === "YARA_NOT_INSTALLED")).toBe(true);
       expect(findings.some((f) => f.severity === "low")).toBe(true);
       const finding = findings.find((f) => f.id === "YARA_NOT_INSTALLED");
-      expect(finding?.metadata?.["suggestion"]).toBe("brew install yara-x");
+      expect(finding?.metadata?.["suggestion"]).toContain("VSIX_AUDIT_YARA_BIN");
     } else {
       // When YARA is installed, should return scan results (possibly empty)
       expect(Array.isArray(findings)).toBe(true);
@@ -204,21 +204,22 @@ describe("checkYara", () => {
           '    severity = "low"',
           '    description = "test wasm pattern"',
           "  strings:",
-          '    $a = "WebAssembly.instantiateStreaming"',
+          '    $a = "WebAssembly.instantiate"',
+          '    $b = "fetch("',
           "  condition:",
-          "    $a",
+          "    all of them",
           "}",
         ].join("\n"),
       );
 
       const contents = makeContents({
-        "main.js": "WebAssembly.instantiateStreaming(fetch(url));",
+        "main.js": "WebAssembly.instantiate(fetch(url));",
         "node_modules/@tybys/wasm-util/dist/wasm-util.js":
-          "WebAssembly.instantiateStreaming(fetch(url));",
-        "node_modules/@tybys/wasm-util/README.md": "WebAssembly.instantiateStreaming(fetch(url));",
+          "WebAssembly.instantiate(fetch(url));",
+        "node_modules/@tybys/wasm-util/README.md": "WebAssembly.instantiate(fetch(url));",
         "node_modules/@tybys/wasm-util/dist/wasm-util.d.ts":
-          "WebAssembly.instantiateStreaming(fetch(url));",
-        "dist/bundle.js": "WebAssembly.instantiateStreaming(fetch(url));",
+          "WebAssembly.instantiate(fetch(url));",
+        "dist/bundle.js": "WebAssembly.instantiate(fetch(url));",
       });
 
       const findings = await checkYara(contents, rulesDir);

@@ -41,9 +41,14 @@ Example: `tigerjack_keylogger.yar`
 # Scan with YARA-X
 yr scan -r zoo/signatures/yara/unicode_stealth.yar path/to/extension/
 
+# Scan with classic YARA
+yara64 -r zoo/signatures/yara/unicode_stealth.yar path/to/extension/
+
 # Or scan all rules in directory
 for f in zoo/signatures/yara/*.yar; do yr scan -r "$f" path/to/extension/; done
 
 # With vsix-audit (automatic)
 vsix-audit scan extension.vsix  # YARA rules loaded automatically
 ```
+
+`vsix-audit` auto-detects `yr`, `yara64`, or `yara`, and you can override the executable path with `VSIX_AUDIT_YARA_BIN`.

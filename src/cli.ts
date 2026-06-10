@@ -173,7 +173,8 @@ cli
             pc.red("Error:"),
             `Unknown module(s): ${invalid.join(", ")}. Valid modules: ${MODULE_NAMES.join(", ")}`,
           );
-          process.exit(2);
+          process.exitCode = 2;
+          return;
         }
       }
 
@@ -236,7 +237,8 @@ cli
 
         if (results.length === 0) {
           console.error(pc.red("Error:"), `Extension not found in any registry: ${baseId}`);
-          process.exit(2);
+          process.exitCode = 2;
+          return;
         }
 
         outputResults(results, outputFormat, VERSION);
@@ -244,9 +246,10 @@ cli
         const hasFindings = results.some((r) => r.findings.length > 0);
         const hasCoverageFailure = results.some((r) => hasCoverageExitFailure(r, scanOptions));
         if (hasCoverageFailure) {
-          process.exit(2);
+          process.exitCode = 2;
+          return;
         }
-        process.exit(hasFindings ? 1 : 0);
+        process.exitCode = hasFindings ? 1 : 0;
         return;
       }
 
@@ -260,14 +263,16 @@ cli
         const targetStat = await stat(target).catch(() => null);
         if (!targetStat?.isDirectory()) {
           console.error(pc.red("Error:"), "--recursive requires a directory path");
-          process.exit(2);
+          process.exitCode = 2;
+          return;
         }
 
         // Validate --jobs
         const concurrency = parseInt(options.jobs ?? "4", 10);
         if (isNaN(concurrency) || concurrency < 1) {
           console.error(pc.red("Error:"), "--jobs must be a positive integer");
-          process.exit(2);
+          process.exitCode = 2;
+          return;
         }
 
         const isParallel = concurrency > 1;
@@ -324,13 +329,12 @@ cli
 
         // Exit codes: 0=clean, 1=findings, 2=errors only
         if (batchResult.results.some((result) => hasCoverageExitFailure(result, scanOptions))) {
-          process.exit(2);
+          process.exitCode = 2;
         } else if (batchResult.summary.totalFindings > 0) {
-          process.exit(1);
+          process.exitCode = 1;
         } else if (batchResult.summary.failedFiles > 0 && batchResult.summary.scannedFiles === 0) {
-          process.exit(2);
+          process.exitCode = 2;
         }
-        process.exit(0);
         return;
       }
 
@@ -357,12 +361,13 @@ cli
       const result = await scanExtension(scanTarget, scanOptions);
       outputResult(result, outputFormat, VERSION);
       if (hasCoverageExitFailure(result, scanOptions)) {
-        process.exit(2);
+        process.exitCode = 2;
+        return;
       }
-      process.exit(result.findings.length > 0 ? 1 : 0);
+      process.exitCode = result.findings.length > 0 ? 1 : 0;
     } catch (error) {
       console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
-      process.exit(2);
+      process.exitCode = 2;
     }
   });
 
@@ -516,7 +521,7 @@ cli
       console.log();
     } catch (error) {
       console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
-      process.exit(2);
+      process.exitCode = 2;
     }
   });
 

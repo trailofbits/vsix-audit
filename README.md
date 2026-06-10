@@ -49,6 +49,7 @@ Matches against curated threat intelligence from `zoo/iocs/`.
 | GitHub C2      | GitHub API/raw URLs referencing known C2 accounts                   | Critical |
 | Crypto wallets | BTC (legacy/SegWit/Bech32), ETH, Monero, Solana address patterns    | High     |
 
+
 ### AST Analysis (`ast.ts`)
 
 OXC-based parsing to detect structural patterns that regex can't catch.
@@ -81,7 +82,7 @@ JavaScript obfuscation patterns (hex variables, `fromCharCode` arrays, eval+deco
 
 ### YARA Rules (`yara.ts`)
 
-External YARA-X engine for complex pattern matching. Rules loaded from `zoo/signatures/yara/`. Requires `yr` CLI (`brew install yara-x`).
+External YARA engine for complex pattern matching. Rules loaded from `zoo/signatures/yara/`. Supports YARA-X (`yr`) and classic YARA (`yara64`/`yara`), auto-detects whichever is available, and can be overridden with `VSIX_AUDIT_YARA_BIN`.
 
 | Rule File                     | Detects                                                        |
 | ----------------------------- | -------------------------------------------------------------- |
@@ -133,11 +134,20 @@ The goal is rich context for human/agent review, not just pass/fail.
 ## Installation
 
 ```sh
-brew install yara-x
 npm install -g @trailofbits/vsix-audit
 ```
 
-Requires Node.js 22 or later and [YARA-X](https://github.com/VirusTotal/yara-x) for YARA rule scanning.
+Requires Node.js 22 or later and either [YARA-X](https://github.com/VirusTotal/yara-x) or classic YARA for YARA rule scanning.
+
+Install one of the supported YARA engines before using signature scanning:
+
+```sh
+# YARA-X
+brew install yara-x
+
+# or classic YARA
+yara64 --version
+```
 
 ## Usage
 

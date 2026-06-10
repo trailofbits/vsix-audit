@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { access, mkdir, mkdtemp, readdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { Finding, VsixContents } from "../types.js";
@@ -118,6 +118,7 @@ let cachedYaraRulesDir: string | undefined;
 /** Reset module caches (for testing) */
 export function resetYaraCaches(): void {
   cachedYaraRulesDir = undefined;
+  cachedYaraExecutable = undefined;
   ruleMetaCache.clear();
 }
 
@@ -138,16 +139,93 @@ interface YaraMatch {
   meta?: Record<string, string>;
 }
 
+type YaraFlavor = "yara-x" | "classic";
+
+interface YaraExecutable {
+  command: string;
+  flavor: YaraFlavor;
+}
+
+const YARA_EXECUTABLE_CANDIDATES: YaraExecutable[] = [
+  { command: "yr", flavor: "yara-x" },
+  { command: "yara64", flavor: "classic" },
+  { command: "yara", flavor: "classic" },
+];
+
+let cachedYaraExecutable: YaraExecutable | undefined;
+
+function getConfiguredYaraExecutable(): YaraExecutable | undefined {
+  const configured = process.env["VSIX_AUDIT_YARA_BIN"]?.trim();
+  if (!configured) {
+    return undefined;
+  }
+
+  const normalized = configured.toLowerCase();
+  const flavor: YaraFlavor = normalized.includes("yr") && !normalized.includes("yara")
+    ? "yara-x"
+    : "classic";
+  return { command: configured, flavor };
+}
+
+async function findYaraExecutable(): Promise<YaraExecutable | undefined> {
+  if (cachedYaraExecutable) {
+    return cachedYaraExecutable;
+  }
+
+  const candidates = [getConfiguredYaraExecutable(), ...YARA_EXECUTABLE_CANDIDATES].filter(
+    (candidate, index, all): candidate is YaraExecutable => {
+      if (!candidate) {
+        return false;
+      }
+      return all.findIndex((other) => other?.command === candidate.command) === index;
+    },
+  );
+
+  for (const candidate of candidates) {
+    try {
+      const { stdout, stderr } = await execFileAsync(candidate.command, ["--version"]);
+      if (`${stdout}${stderr}`.trim().length > 0) {
+        cachedYaraExecutable = candidate;
+        return candidate;
+      }
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  return undefined;
+}
+
+function getYaraInstallSuggestion(): string {
+  return "Install YARA-X (`yr`) or classic YARA (`yara64`/`yara`), or set VSIX_AUDIT_YARA_BIN.";
+}
+
+function getYaraScanArgs(
+  executable: YaraExecutable,
+  rulesDir: string,
+  ruleFiles: string[],
+  targetDir: string,
+): string[] {
+  if (executable.flavor === "yara-x") {
+    return ["scan", "-r", rulesDir, targetDir];
+  }
+
+  return ["-r", ...ruleFiles.map((ruleFile) => join(rulesDir, ruleFile)), targetDir];
+}
+
+function toRelativeMatchPath(tempDir: string, matchPath: string): string {
+  const relativePath = relative(tempDir, matchPath);
+  if (!relativePath || relativePath.startsWith("..")) {
+    return matchPath.replace(/\\/g, "/");
+  }
+  return relativePath.replace(/\\/g, "/");
+}
+
 /**
- * Check if YARA-X is installed and available
+ * Check if a supported YARA executable is installed and available
  */
 export async function isYaraAvailable(): Promise<boolean> {
-  try {
-    const { stdout } = await execFileAsync("yr", ["--version"]);
-    return stdout.trim().length > 0;
-  } catch {
-    return false;
-  }
+  return (await findYaraExecutable()) !== undefined;
 }
 
 /**
@@ -167,7 +245,10 @@ export async function listYaraRules(rulesDir: string): Promise<string[]> {
  */
 function parseYaraOutput(output: string): YaraMatch[] {
   const matches: YaraMatch[] = [];
-  const lines = output.trim().split("\n").filter(Boolean);
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
 
   for (const line of lines) {
     // YARA output format: rule_name file_path
@@ -359,7 +440,7 @@ async function buildYaraFinding(
   const ruleFile = ruleSourceMap.get(match.rule) ?? "unknown";
   const rulePath = join(targetRulesDir, ruleFile);
   const meta = await getRuleMeta(rulePath, match.rule);
-  const relativePath = match.file.replace(tempDir + "/", "");
+  const relativePath = toRelativeMatchPath(tempDir, match.file);
   const fileExt = relativePath.slice(relativePath.lastIndexOf(".")).toLowerCase();
   const severity = VALID_SEVERITIES.has(meta.severity ?? "")
     ? (meta.severity as Finding["severity"])
@@ -390,19 +471,19 @@ async function buildYaraFinding(
 export async function checkYara(contents: VsixContents, rulesDir?: string): Promise<Finding[]> {
   const findings: Finding[] = [];
   const targetRulesDir = rulesDir ?? (await getDefaultYaraRulesDir());
+  const executable = await findYaraExecutable();
 
   // Check if YARA is available
-  const available = await isYaraAvailable();
-  if (!available) {
+  if (!executable) {
     findings.push({
       id: "YARA_NOT_INSTALLED",
-      title: "YARA-X scanner not available",
+      title: "YARA scanner not available",
       description:
-        "YARA-X is not installed. Install with 'brew install yara-x' to enable advanced malware detection using signature rules.",
+        "No supported YARA executable was found. Install YARA-X (`yr`) or classic YARA (`yara64`/`yara`) to enable signature-based malware detection.",
       severity: "low",
       category: "yara",
       metadata: {
-        suggestion: "brew install yara-x",
+        suggestion: getYaraInstallSuggestion(),
       },
     });
     return findings;
@@ -447,13 +528,13 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
       }
     }
 
-    // Single YARA-X invocation scanning all rules at once
+    const scanArgs = getYaraScanArgs(executable, targetRulesDir, rules, tempDir);
+
+    // Single YARA invocation scanning all rules at once.
     try {
-      const { stdout, stderr } = await execFileAsync(
-        "yr",
-        ["scan", "-r", targetRulesDir, tempDir],
-        { maxBuffer: 10 * 1024 * 1024 },
-      );
+      const { stdout, stderr } = await execFileAsync(executable.command, scanArgs, {
+        maxBuffer: 10 * 1024 * 1024,
+      });
 
       if (stderr && !stderr.includes("warning")) {
         // Log but don't fail - partial results may still be useful
@@ -462,40 +543,43 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
       const matches = parseYaraOutput(stdout);
 
       for (const match of matches) {
-        const relativePath = match.file.replace(tempDir + "/", "");
+        const relativePath = toRelativeMatchPath(tempDir, match.file);
         if (shouldSuppressYaraMatch(match.rule, relativePath)) {
           continue;
         }
         findings.push(await buildYaraFinding(match, ruleSourceMap, targetRulesDir, tempDir));
       }
     } catch (error) {
-      // YARA-X (yr) exit codes: 0 = success (matches or no matches), 1+ = error.
-      // execFileAsync throws on any non-zero exit code. Unlike legacy YARA,
-      // YARA-X does NOT use exit code 1 for "no matches" — it always means
-      // an actual error (bad rules, missing files, etc.).
-      // Recover any partial matches from stdout before reporting the error.
       const execError = error as { stdout?: string; stderr?: string; code?: number };
-      if (execError.stdout) {
-        const partialMatches = parseYaraOutput(execError.stdout);
-        for (const match of partialMatches) {
-          const relativePath = match.file.replace(tempDir + "/", "");
-          if (shouldSuppressYaraMatch(match.rule, relativePath)) {
-            continue;
-          }
-          findings.push(await buildYaraFinding(match, ruleSourceMap, targetRulesDir, tempDir));
+      const partialMatches = parseYaraOutput(execError.stdout ?? "");
+      for (const match of partialMatches) {
+        const relativePath = toRelativeMatchPath(tempDir, match.file);
+        if (shouldSuppressYaraMatch(match.rule, relativePath)) {
+          continue;
         }
+        findings.push(await buildYaraFinding(match, ruleSourceMap, targetRulesDir, tempDir));
+      }
+
+      const shouldSuppressScanError =
+        executable.flavor === "classic" &&
+        partialMatches.length > 0 &&
+        (execError.stderr ?? "").trim().length === 0;
+      if (shouldSuppressScanError) {
+        return findings;
       }
 
       findings.push({
         id: "YARA_SCAN_ERROR",
         title: "YARA scan encountered errors",
         description:
-          "YARA-X reported errors during scan. " +
+          `The ${executable.command} YARA executable reported errors during scan. ` +
           "Some rules may not have been applied, " +
           "reducing detection coverage.",
         severity: "low",
         category: "yara",
         metadata: {
+          executable: executable.command,
+          flavor: executable.flavor,
           error: error instanceof Error ? error.message : String(error),
           stderr: execError.stderr ?? "",
           exitCode: execError.code,
