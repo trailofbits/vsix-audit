@@ -357,6 +357,40 @@ describe("checkWallets", () => {
 
     expect(findings).toHaveLength(0);
   });
+
+  it("ignores wallet-like substrings inside npm lockfile integrity fields", () => {
+    const contents = makeContents({
+      "package-lock.json": [
+        "{",
+        '  "packages": {',
+        '    "node_modules/process-nextick-args": {',
+        '      "integrity": "sha512-3ouUOpQhtgrbOa17J7+uxOTpITYWaGP7/AhoR3+A+/1e9skrzelGi/dXzEYyvbxubEF6Wn2ypscTKiKJFFn1ag=="',
+        "    }",
+        "  }",
+        "}",
+      ].join("\n"),
+    });
+
+    const findings = checkWallets(contents, new Set());
+
+    expect(findings).toHaveLength(0);
+  });
+
+  it("still detects explicit wallet values inside lockfiles outside integrity fields", () => {
+    const contents = makeContents({
+      "package-lock.json": [
+        "{",
+        '  "wallet": "FvGoyLXBSPu2pwx788zuWdCtWX7Hy9mwk"',
+        "}",
+      ].join("\n"),
+    });
+
+    const findings = checkWallets(contents, new Set());
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.id).toBe("CRYPTO_WALLET_DETECTED");
+    expect(findings[0]?.metadata?.["currency"]).toBe("SOL");
+  });
 });
 
 describe("checkIocs", () => {

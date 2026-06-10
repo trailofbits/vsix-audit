@@ -129,8 +129,6 @@ const ACCEPTABLE_CLEAN_FINDINGS = new Set([
   "AST_DYNAMIC_IMPORT",
   // Process bindings in Node.js polyfills
   "AST_PROCESS_BINDING",
-  // Wallet-like strings in package-lock.json (integrity hashes)
-  "CRYPTO_WALLET_DETECTED",
 ]);
 
 /**
