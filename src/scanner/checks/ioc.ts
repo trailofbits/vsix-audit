@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
-import { isScannable, SCANNABLE_EXTENSIONS_IOC } from "../constants.js";
-import type { Finding, VsixContents, ZooData } from "../types.js";
+import { isScannable, SCANNABLE_EXTENSIONS_IOC } from "#internal/scanner/constants.js";
+import type { Finding, VsixContents, ZooData } from "#internal/scanner/types.js";
 import {
   computeLineStarts,
   findLineNumberByIndex,
   findLineNumberByString,
   getStringContent,
-} from "../utils.js";
-import { computeSha256 } from "../vsix.js";
+} from "#internal/scanner/utils.js";
+import { computeSha256 } from "#internal/scanner/vsix.js";
 
 const MAX_DOMAIN_LENGTH = 253;
 const MAX_DOMAIN_LABEL_LENGTH = 63;
@@ -106,7 +106,7 @@ function extractIps(content: string): string[] {
 
   for (const match of content.matchAll(ipPattern)) {
     const ip = match[1];
-    if (ip && isValidIp(ip)) {
+    if (ip !== undefined && ip !== "" && isValidIp(ip)) {
       matches.push(ip);
     }
   }
@@ -237,7 +237,7 @@ export function checkIps(contents: VsixContents, knownIps: Set<string>): Finding
 
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const BASE58_INDEX = new Map<string, number>(
-  [...BASE58_ALPHABET].map((c, i): [string, number] => [c, i]),
+  Array.from(BASE58_ALPHABET).map((c, i): [string, number] => [c, i]),
 );
 
 function base58Decode(s: string): Uint8Array | null {
@@ -282,7 +282,7 @@ export function isValidBitcoinAddress(address: string): boolean {
   if (address.length < 26 || address.length > 35) return false;
 
   const decoded = base58Decode(address);
-  if (decoded === null || decoded.length !== 25) return false;
+  if (decoded?.length !== 25) return false;
 
   // Mainnet version byte: 0x00 = P2PKH ("1…"), 0x05 = P2SH ("3…").
   const version = decoded[0];
@@ -484,7 +484,7 @@ export function checkWallets(
   blockchainAllowlist?: Set<string>,
 ): Finding[] {
   const extensionId = `${contents.manifest.publisher}.${contents.manifest.name}`;
-  if (blockchainAllowlist?.has(extensionId)) return [];
+  if (blockchainAllowlist?.has(extensionId) === true) return [];
 
   const findings: Finding[] = [];
   for (const [filename, buffer] of contents.files) {

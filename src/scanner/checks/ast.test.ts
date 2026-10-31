@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { VsixContents, VsixManifest } from "../types.js";
-import { checkAST } from "./ast.js";
+import type { VsixContents, VsixManifest } from "#internal/scanner/types.js";
+import { checkAST } from "#internal/scanner/checks/ast.js";
 
 function makeContents(files: Record<string, string>): VsixContents {
   const manifest: VsixManifest = {
@@ -485,7 +485,11 @@ describe("checkAST", () => {
 
       const findings = checkAST(contents);
       expect(Array.isArray(findings)).toBe(true);
-      expect(findings.some((f) => f.id === "PARSE_FAILURE_AST")).toBe(true);
+      const failure = findings.find((finding) => finding.id === "PARSE_FAILURE_AST");
+      expect(failure).toBeDefined();
+      expect(failure?.metadata?.["error"]).toMatch(/.+/);
+      expect(failure?.metadata?.["error"]).not.toBe("[object Object]");
+      expect(failure?.metadata?.["error"]).not.toBe("Unknown parser error");
     });
 
     it("handles empty files", () => {

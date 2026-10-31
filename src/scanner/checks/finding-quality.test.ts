@@ -9,8 +9,8 @@ import { tmpdir } from "node:os";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { downloadExtension } from "../download.js";
-import { scanExtension, type Finding, type ScanResult } from "../index.js";
+import { downloadExtension } from "#internal/scanner/download.js";
+import { scanExtension, type Finding, type ScanResult } from "#internal/scanner/index.js";
 
 const INTEGRATION_TESTS_ENABLED = process.env["VSIX_AUDIT_INTEGRATION_TESTS"] === "1";
 
@@ -109,7 +109,7 @@ describe.skipIf(!INTEGRATION_TESTS_ENABLED)("finding quality (integration)", () 
           finding.description.toLowerCase().includes("common") ||
           finding.description.toLowerCase().includes("expected") ||
           finding.description.toLowerCase().includes("remote") ||
-          (finding.metadata?.["legitimateUses"] as string[] | undefined)?.length;
+          finding.metadata?.["legitimateUses"]?.length;
 
         expect(
           hasContext,
@@ -135,9 +135,7 @@ describe.skipIf(!INTEGRATION_TESTS_ENABLED)("finding quality (integration)", () 
           finding.description.toLowerCase().includes("cli") ||
           finding.description.toLowerCase().includes("legitimate") ||
           finding.description.toLowerCase().includes("common") ||
-          (finding.metadata?.["legitimateUses"] as string[] | undefined)?.some((use) =>
-            use.toLowerCase().includes("git"),
-          );
+          finding.metadata?.["legitimateUses"]?.some((use) => use.toLowerCase().includes("git"));
 
         expect(
           hasContext,

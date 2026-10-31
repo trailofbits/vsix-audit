@@ -41,15 +41,18 @@
     "test:cli": "npm run build && vitest run --config vitest.cli.config.ts",
     "test:docker": "node scripts/test-docker.mjs",
     "test:watch": "vitest",
-    "lint": "oxlint .",
+    "lint": "npm run build && oxlint --type-aware --max-warnings=0 .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && npm run typecheck:scripts",
     "corpus:download": "npm run build && node scripts/download-clean-corpus.mjs",
     "corpus:report": "npm run build && node scripts/report-clean-corpus.mjs",
     "corpus:check": "npm run build && node scripts/report-clean-corpus.mjs --fail-on-never",
-    "check": "npm run typecheck && npm run lint && npm run test && npm run test:cli",
-    "prepublishOnly": "npm run check && npm run build"
+    "check:static": "npm run typecheck && npm run lint && npm run format:check",
+    "check": "npm run check:static && npm test && npm run test:cli",
+    "prepublishOnly": "npm run check && npm run build",
+    "typecheck:scripts": "npm run build && tsc --noEmit --project tsconfig.scripts.json",
+    "findings:collect": "npm run --silent build && node scripts/collect-findings.ts"
   },
   "dependencies": {
     "@eslint-community/regexpp": "4.12.2",
@@ -61,7 +64,9 @@
   },
   "devDependencies": {
     "@types/node": "26.6.5",
+    "oxfmt": "0.74.0",
     "oxlint": "1.89.0",
+    "oxlint-tsgolint": "7.0.2005",
     "typescript": "6.0.3",
     "vitest": "5.0.5"
   },

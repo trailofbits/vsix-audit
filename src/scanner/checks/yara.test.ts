@@ -3,8 +3,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { VsixContents, VsixManifest } from "../types.js";
-import { checkYara, isYaraAvailable, listYaraRules } from "./yara.js";
+import type { VsixContents, VsixManifest } from "#internal/scanner/types.js";
+import { checkYara, isYaraAvailable, listYaraRules } from "#internal/scanner/checks/yara.js";
+
+const yaraAvailable = await isYaraAvailable();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ZOO_YARA_DIR = join(__dirname, "..", "..", "..", "zoo", "signatures", "yara");
@@ -51,46 +53,36 @@ describe("listYaraRules", () => {
 });
 
 describe("checkYara", () => {
-  it("returns appropriate result based on YARA availability", async () => {
-    const available = await isYaraAvailable();
+  it.skipIf(yaraAvailable)("explains how to install missing YARA", async () => {
     const contents = makeContents({ "test.js": "console.log('test');" });
-    const findings = await checkYara(contents);
-
-    if (!available) {
-      // When YARA is not installed, should return informational finding
-      expect(findings).toHaveLength(1);
-      expect(findings.some((f) => f.id === "YARA_NOT_INSTALLED")).toBe(true);
-      expect(findings.some((f) => f.severity === "low")).toBe(true);
-      const finding = findings.find((f) => f.id === "YARA_NOT_INSTALLED");
-      expect(finding?.metadata?.["suggestion"]).toBe("brew install yara-x");
-    } else {
-      // When YARA is installed, should return scan results (possibly empty)
-      expect(Array.isArray(findings)).toBe(true);
-    }
+    expect(await checkYara(contents)).toMatchObject([
+      {
+        id: "YARA_NOT_INSTALLED",
+        severity: "low",
+        metadata: { suggestion: "brew install yara-x" },
+      },
+    ]);
   });
 
-  it("returns empty findings for clean extension when YARA is available", async () => {
-    const available = await isYaraAvailable();
-    if (!available) return; // Skip if YARA not installed
+  it.skipIf(!yaraAvailable)(
+    "returns empty findings for clean extension when YARA is available",
+    async () => {
+      const contents = makeContents({
+        "extension.js": "console.log('Hello, World!');",
+        "package.json": JSON.stringify({ name: "test", version: "1.0.0" }),
+      });
 
-    const contents = makeContents({
-      "extension.js": "console.log('Hello, World!');",
-      "package.json": JSON.stringify({ name: "test", version: "1.0.0" }),
-    });
+      const findings = await checkYara(contents);
 
-    const findings = await checkYara(contents);
+      // Should not match any YARA rules for clean code
+      const yaraMatches = findings.filter(
+        (f) => f.id.startsWith("YARA_") && f.id !== "YARA_NOT_INSTALLED",
+      );
+      expect(yaraMatches).toHaveLength(0);
+    },
+  );
 
-    // Should not match any YARA rules for clean code
-    const yaraMatches = findings.filter(
-      (f) => f.id.startsWith("YARA_") && f.id !== "YARA_NOT_INSTALLED",
-    );
-    expect(yaraMatches).toHaveLength(0);
-  });
-
-  it("handles extension with potentially suspicious content", async () => {
-    const available = await isYaraAvailable();
-    if (!available) return; // Skip if YARA not installed
-
+  it.skipIf(!yaraAvailable)("handles extension with potentially suspicious content", async () => {
     // Create content that might match YARA rules
     // This includes variation selectors (U+FE00-FE0F) and eval
     const suspiciousContent = `
@@ -108,10 +100,7 @@ describe("checkYara", () => {
     expect(Array.isArray(findings)).toBe(true);
   });
 
-  it("includes metadata when rules match", async () => {
-    const available = await isYaraAvailable();
-    if (!available) return; // Skip if YARA not installed
-
+  it.skipIf(!yaraAvailable)("includes metadata when rules match", async () => {
     const contents = makeContents({
       "extension.js": `
         const wallet = "metamask";
@@ -123,18 +112,13 @@ describe("checkYara", () => {
     const findings = await checkYara(contents);
 
     // If any YARA rules matched, finding ID should include rule name
-    for (const finding of findings) {
-      if (finding.id !== "YARA_NOT_INSTALLED") {
-        expect(finding.id).toMatch(/^YARA_/);
-        expect(finding.metadata?.["rule"]).toBeDefined();
-      }
+    for (const finding of findings.filter((item) => item.id !== "YARA_NOT_INSTALLED")) {
+      expect(finding.id).toMatch(/^YARA_/);
+      expect(finding.metadata?.["rule"]).toBeDefined();
     }
   });
 
-  it("handles empty extension gracefully", async () => {
-    const available = await isYaraAvailable();
-    if (!available) return; // Skip if YARA not installed
-
+  it.skipIf(!yaraAvailable)("handles empty extension gracefully", async () => {
     const contents = makeContents({});
 
     const findings = await checkYara(contents);
@@ -143,10 +127,7 @@ describe("checkYara", () => {
     expect(Array.isArray(findings)).toBe(true);
   });
 
-  it("detects PowerShell hidden window pattern", async () => {
-    const available = await isYaraAvailable();
-    if (!available) return;
-
+  it.skipIf(!yaraAvailable)("detects PowerShell hidden window pattern", async () => {
     // Content that matches SUSP_PS_Hidden_Window_Jan25:
     // requires "powershell" AND "-WindowStyle Hidden"
     const maliciousContent = [
@@ -168,10 +149,7 @@ describe("checkYara", () => {
     expect(psFindings[0]?.metadata?.["ruleFile"]).toBe("powershell_attacks.yar");
   });
 
-  it("detects PowerShell download-execute cradle", async () => {
-    const available = await isYaraAvailable();
-    if (!available) return;
-
+  it.skipIf(!yaraAvailable)("detects PowerShell download-execute cradle", async () => {
     // Content that matches LOADER_PS_Download_Execute_Jan25:
     // requires PowerShell context + IEX pipe pattern
     const maliciousContent = [
@@ -190,43 +168,46 @@ describe("checkYara", () => {
     expect(loaderFindings[0]?.severity).toBe("critical");
   });
 
-  it("suppresses low-signal WebAssembly matches in dependency and documentation paths", async () => {
-    const available = await isYaraAvailable();
-    if (!available) return;
+  it.skipIf(!yaraAvailable)(
+    "suppresses low-signal WebAssembly matches in dependency and documentation paths",
+    async () => {
+      const rulesDir = await mkdtemp(join(tmpdir(), "vsix-audit-yara-rules-"));
+      try {
+        await writeFile(
+          join(rulesDir, "test.yar"),
+          [
+            "rule SUSP_JS_WebAssembly_Remote_Jan25 {",
+            "  meta:",
+            '    severity = "low"',
+            '    description = "test wasm pattern"',
+            "  strings:",
+            '    $a = "WebAssembly.instantiateStreaming"',
+            "  condition:",
+            "    $a",
+            "}",
+          ].join("\n"),
+        );
 
-    const rulesDir = await mkdtemp(join(tmpdir(), "vsix-audit-yara-rules-"));
-    try {
-      await writeFile(
-        join(rulesDir, "test.yar"),
-        [
-          "rule SUSP_JS_WebAssembly_Remote_Jan25 {",
-          "  meta:",
-          '    severity = "low"',
-          '    description = "test wasm pattern"',
-          "  strings:",
-          '    $a = "WebAssembly.instantiateStreaming"',
-          "  condition:",
-          "    $a",
-          "}",
-        ].join("\n"),
-      );
+        const contents = makeContents({
+          "main.js": "WebAssembly.instantiateStreaming(fetch(url));",
+          "node_modules/@tybys/wasm-util/dist/wasm-util.js":
+            "WebAssembly.instantiateStreaming(fetch(url));",
+          "node_modules/@tybys/wasm-util/README.md":
+            "WebAssembly.instantiateStreaming(fetch(url));",
+          "node_modules/@tybys/wasm-util/dist/wasm-util.d.ts":
+            "WebAssembly.instantiateStreaming(fetch(url));",
+          "dist/bundle.js": "WebAssembly.instantiateStreaming(fetch(url));",
+        });
 
-      const contents = makeContents({
-        "main.js": "WebAssembly.instantiateStreaming(fetch(url));",
-        "node_modules/@tybys/wasm-util/dist/wasm-util.js":
-          "WebAssembly.instantiateStreaming(fetch(url));",
-        "node_modules/@tybys/wasm-util/README.md": "WebAssembly.instantiateStreaming(fetch(url));",
-        "node_modules/@tybys/wasm-util/dist/wasm-util.d.ts":
-          "WebAssembly.instantiateStreaming(fetch(url));",
-        "dist/bundle.js": "WebAssembly.instantiateStreaming(fetch(url));",
-      });
+        const findings = await checkYara(contents, rulesDir);
+        const wasmFindings = findings.filter(
+          (f) => f.id === "YARA_SUSP_JS_WebAssembly_Remote_Jan25",
+        );
 
-      const findings = await checkYara(contents, rulesDir);
-      const wasmFindings = findings.filter((f) => f.id === "YARA_SUSP_JS_WebAssembly_Remote_Jan25");
-
-      expect(wasmFindings.map((f) => f.location?.file)).toEqual(["main.js"]);
-    } finally {
-      await rm(rulesDir, { recursive: true, force: true });
-    }
-  });
+        expect(wasmFindings.map((f) => f.location?.file)).toEqual(["main.js"]);
+      } finally {
+        await rm(rulesDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

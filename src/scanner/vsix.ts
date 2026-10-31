@@ -8,7 +8,7 @@ import type {
   Severity,
   VsixContents,
   VsixManifest,
-} from "./types.js";
+} from "#internal/scanner/types.js";
 
 const VSIX_EXTENSION_PREFIX = "extension/";
 
@@ -57,7 +57,8 @@ function makeArchiveWarning(
   severity: Severity,
   normalizedPath?: string,
 ): ArchiveWarning {
-  const pathText = normalizedPath ? ` (${normalizedPath})` : "";
+  const pathText =
+    normalizedPath !== undefined && normalizedPath !== "" ? ` (${normalizedPath})` : "";
   const warning: ArchiveWarning = {
     id,
     title,
@@ -126,10 +127,6 @@ function openZipFile(vsixPath: string): Promise<yauzl.ZipFile> {
           reject(error);
           return;
         }
-        if (!zipFile) {
-          reject(new Error("Invalid ZIP: failed to open archive"));
-          return;
-        }
         resolve(zipFile);
       },
     );
@@ -155,16 +152,6 @@ function decodeCp437(buffer: Buffer): string {
   return result;
 }
 
-function getRawZipEntryName(entry: yauzl.Entry): Buffer {
-  const rawEntry = entry as yauzl.Entry & { fileName: string | Buffer; fileNameRaw?: Buffer };
-  if (rawEntry.fileNameRaw) {
-    return rawEntry.fileNameRaw;
-  }
-  return Buffer.isBuffer(rawEntry.fileName)
-    ? rawEntry.fileName
-    : Buffer.from(rawEntry.fileName, "utf8");
-}
-
 function getUnicodePathExtraFieldName(entry: yauzl.Entry, rawFileName: Buffer): string | undefined {
   for (const extraField of entry.extraFields) {
     if (extraField.id !== INFO_ZIP_UNICODE_PATH_EXTRA_FIELD) {
@@ -182,7 +169,7 @@ function getUnicodePathExtraFieldName(entry: yauzl.Entry, rawFileName: Buffer): 
 }
 
 function getZipEntryName(entry: yauzl.Entry): string {
-  const rawFileName = getRawZipEntryName(entry);
+  const rawFileName = entry.fileNameRaw;
   const unicodeName = getUnicodePathExtraFieldName(entry, rawFileName);
   if (unicodeName !== undefined) {
     return unicodeName;
@@ -198,11 +185,13 @@ function collectZipEntries(zipFile: yauzl.ZipFile): Promise<yauzl.Entry[]> {
     const entries: yauzl.Entry[] = [];
 
     zipFile.once("error", reject);
-    zipFile.on("entry", (entry) => {
+    zipFile.on("entry", (entry: yauzl.Entry) => {
       entries.push(entry);
       zipFile.readEntry();
     });
-    zipFile.once("end", () => resolve(entries));
+    zipFile.once("end", () => {
+      resolve(entries);
+    });
     zipFile.readEntry();
   });
 }
@@ -215,10 +204,6 @@ function openZipEntryStream(
     zipFile.openReadStream(entry, (error, stream) => {
       if (error) {
         reject(error);
-        return;
-      }
-      if (!stream) {
-        reject(new Error(`Failed to read ZIP entry "${getZipEntryName(entry)}"`));
         return;
       }
       resolve(stream);
@@ -288,7 +273,11 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
       const relativePath = toExtensionRelativePath(normalizedEntry.path);
       const portablePathKey = portablePathCollisionKey(relativePath);
       const portablePathMatch = portablePathKeys.get(portablePathKey);
-      if (portablePathMatch && portablePathMatch !== relativePath) {
+      if (
+        portablePathMatch !== undefined &&
+        portablePathMatch !== "" &&
+        portablePathMatch !== relativePath
+      ) {
         archiveWarnings.push(
           makeArchiveWarning(
             "ARCHIVE_PORTABLE_PATH_COLLISION",
@@ -441,9 +430,7 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
     zipFile.close();
   }
 
-  if (!manifest) {
-    manifest = findManifestWithNonStandardPrefix(files, artifacts, archiveWarnings);
-  }
+  manifest ??= findManifestWithNonStandardPrefix(files, artifacts, archiveWarnings);
 
   if (!manifest) {
     throw new Error("Invalid VSIX: missing package.json");
@@ -505,12 +492,12 @@ function findManifestWithNonStandardPrefix(
     }
 
     for (const artifact of artifacts) {
-      if (artifact.path?.startsWith(prefix)) {
+      if (artifact.path?.startsWith(prefix) === true) {
         artifact.path = artifact.path.slice(prefix.length);
       }
     }
     for (const warning of archiveWarnings) {
-      if (warning.normalizedPath?.startsWith(prefix)) {
+      if (warning.normalizedPath?.startsWith(prefix) === true) {
         warning.normalizedPath = warning.normalizedPath.slice(prefix.length);
       }
     }
@@ -533,10 +520,10 @@ function normalizeManifestReference(reference: string): string | null {
 
 function collectManifestReferences(manifest: VsixManifest): Array<{ path: string; kind: string }> {
   const refs: Array<{ path: string; kind: string }> = [];
-  const addRef = (value: unknown, kind: string) => {
+  const addRef = (value: unknown, kind: string): void => {
     if (typeof value !== "string" || value.length === 0) return;
     const normalized = normalizeManifestReference(value);
-    if (normalized) {
+    if (normalized !== null && normalized !== "") {
       refs.push({ path: normalized, kind });
     } else {
       refs.push({ path: value, kind: `${kind}:invalid` });

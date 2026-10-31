@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { stat } from "node:fs/promises";
 import { checkAST } from "#internal/scanner/checks/ast.js";
 import { checkIocs } from "#internal/scanner/checks/ioc.js";
@@ -87,7 +88,17 @@ function findingEvidenceFingerprint(finding: Finding): string {
   for (const key of FINGERPRINT_METADATA_KEYS) {
     const value = metadata[key];
     if (value !== undefined && value !== null) {
-      values.push(`${key}=${String(value)}`);
+      const evidence =
+        typeof value === "string"
+          ? value
+          : inspect(value, {
+              sorted: true,
+              customInspect: false,
+              depth: null,
+              maxStringLength: null,
+              maxArrayLength: null,
+            });
+      values.push(`${key}=${evidence}`);
     }
   }
 
@@ -192,7 +203,7 @@ export function validateScanOptions(options: ScanOptions): void {
     );
   }
 
-  if (options.requireYara && options.modules && !options.modules.includes("yara")) {
+  if (options.requireYara === true && options.modules && !options.modules.includes("yara")) {
     throw new Error("--require-yara cannot be used when the module filter excludes yara");
   }
 }
@@ -468,7 +479,7 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
       scanDuration: Math.round(timings.total),
       coverage,
       intel: intelMode,
-      ...(options.profile ? { timings } : {}),
+      ...(options.profile === true ? { timings } : {}),
     },
   };
 }

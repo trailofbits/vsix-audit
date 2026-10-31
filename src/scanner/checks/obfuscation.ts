@@ -518,13 +518,11 @@ function checkUnicodeHiding(contents: VsixContents): Finding[] {
         metadata: {
           matchCount: matches.length,
           firstMatch: firstMatch.context,
-          codePoints: matches
-            .slice(0, 5)
-            .map((m) =>
-              [...m.matched]
-                .map((c) => `U+${c.codePointAt(0)?.toString(16).toUpperCase().padStart(4, "0")}`)
-                .join(", "),
-            ),
+          codePoints: matches.slice(0, 5).map((m) =>
+            Array.from(m.matched)
+              .map((c) => `U+${c.codePointAt(0)?.toString(16).toUpperCase().padStart(4, "0")}`)
+              .join(", "),
+          ),
         },
       });
     }

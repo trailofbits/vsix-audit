@@ -1,4 +1,4 @@
-import { computeLineStarts, offsetToColumn, offsetToLine } from "../utils.js";
+import { computeLineStarts, offsetToColumn, offsetToLine } from "#internal/scanner/utils.js";
 
 export interface UnicodeMatch {
   line: number;
@@ -135,10 +135,10 @@ function findLetterRuns(content: string): SourceLetterRun[] {
   const runs: SourceLetterRun[] = [];
   let current: SourceChar[] = [];
 
-  const flush = () => {
-    if (current.length === 0) return;
-    const first = current[0]!;
-    const last = current.at(-1)!;
+  const flush = (): void => {
+    const first = current[0];
+    const last = current.at(-1);
+    if (first === undefined || last === undefined) return;
     runs.push({
       chars: current,
       sourceStart: first.sourceStart,

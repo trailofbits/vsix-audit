@@ -4,8 +4,20 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/** @typedef {import("#internal/scanner/types.js").ScanResult} ScanResult */
+/** @typedef {import("#internal/scanner/types.js").BatchScanResult} BatchScanResult */
+
 const image = process.argv[2] ?? "vsix-audit:test";
-const { version } = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+const packageInfo = /** @type {unknown} */ (
+  JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
+);
+assert.ok(
+  typeof packageInfo === "object" &&
+    packageInfo !== null &&
+    "version" in packageInfo &&
+    typeof packageInfo.version === "string",
+);
+const { version } = packageInfo;
 const cache = fileURLToPath(new URL("../.cache/", import.meta.url));
 await mkdir(cache, { recursive: true });
 const fixtures = await mkdtemp(join(cache, "docker-"));
@@ -19,6 +31,7 @@ const runtimeOptions = [
   "--env=VSIX_AUDIT_CACHE_DIR=/tmp/vsix-audit-cache",
 ];
 
+/** @param {string[]} args @param {number} [status] */
 function docker(args, status = 0) {
   const result = spawnSync("docker", args, { encoding: "utf8", timeout: 120_000 });
   assert.ifError(result.error);
@@ -30,6 +43,7 @@ function docker(args, status = 0) {
   return result.stdout;
 }
 
+/** @param {string[]} args @param {number} [status] */
 function cli(args, status = 0) {
   return docker(
     [
@@ -44,6 +58,11 @@ function cli(args, status = 0) {
   );
 }
 
+/**
+ * @param {string} name
+ * @param {string} main
+ * @param {Record<string, string>} [dependencies]
+ */
 async function writeExtension(name, main, dependencies = {}) {
   const directory = join(fixtures, "extensions", name);
   await mkdir(directory, { recursive: true });
@@ -54,6 +73,7 @@ async function writeExtension(name, main, dependencies = {}) {
   await writeFile(join(directory, "main.js"), main);
 }
 
+/** @param {string} name @param {number} status */
 function scan(name, status) {
   const output = cli(
     [
@@ -67,8 +87,8 @@ function scan(name, status) {
     ],
     status,
   );
-  const result = JSON.parse(output);
-  assert.equal(result.metadata.coverage.degraded, false);
+  const result = /** @type {ScanResult} */ (JSON.parse(output));
+  assert.equal(result.metadata.coverage?.degraded, false);
   assert.ok(result.inventory.every((check) => check.enabled));
   return result;
 }
@@ -106,18 +126,20 @@ try {
     "Bundled YARA rules must produce findings",
   );
 
-  const installed = JSON.parse(
-    cli(
-      [
-        "scan-installed",
-        "--extensions-dir=/fixtures/extensions",
-        "--output=json",
-        "--no-network",
-        "--strict",
-        "--require-yara",
-      ],
-      1,
-    ),
+  const installed = /** @type {BatchScanResult} */ (
+    JSON.parse(
+      cli(
+        [
+          "scan-installed",
+          "--extensions-dir=/fixtures/extensions",
+          "--output=json",
+          "--no-network",
+          "--strict",
+          "--require-yara",
+        ],
+        1,
+      ),
+    )
   );
   assert.equal(installed.summary.scannedFiles, 2);
   assert.deepEqual(installed.errors, []);

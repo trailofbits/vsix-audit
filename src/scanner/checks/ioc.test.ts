@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { performance } from "node:perf_hooks";
-import type { VsixContents, VsixManifest, ZooData } from "../types.js";
+import type { VsixContents, VsixManifest, ZooData } from "#internal/scanner/types.js";
 import {
   checkDomains,
   checkGithubC2,
@@ -11,7 +12,7 @@ import {
   isInsideLongBase64Run,
   isLikelySolanaAddress,
   isValidBitcoinAddress,
-} from "./ioc.js";
+} from "#internal/scanner/checks/ioc.js";
 
 function makeContents(files: Record<string, string>): VsixContents {
   const manifest: VsixManifest = {
@@ -81,8 +82,7 @@ describe("checkHashes", () => {
     const knownHashes = new Set([malwareHash]);
 
     // Compute the actual hash of "malicious code"
-    const crypto = require("node:crypto");
-    const actualHash = crypto.createHash("sha256").update("malicious code").digest("hex");
+    const actualHash = createHash("sha256").update("malicious code").digest("hex");
     knownHashes.add(actualHash);
 
     const findings = checkHashes(contents, knownHashes);
@@ -653,14 +653,13 @@ describe("checkWallets known-wallet precedence", () => {
 
       const findings = checkWallets(contents, new Set([wallet]));
 
-      expect(findings).toEqual([
-        expect.objectContaining({
-          id: "KNOWN_MALWARE_WALLET",
-          severity: "critical",
-          location: { file: "extension.js", line: 1 },
-          metadata: expect.objectContaining({ wallet, knownMalicious: true }),
-        }),
-      ]);
+      expect(findings).toHaveLength(1);
+      expect(findings[0]).toMatchObject({
+        id: "KNOWN_MALWARE_WALLET",
+        severity: "critical",
+        location: { file: "extension.js", line: 1 },
+        metadata: { wallet, knownMalicious: true },
+      });
     },
   );
 
