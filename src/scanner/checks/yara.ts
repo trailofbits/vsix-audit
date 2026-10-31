@@ -160,24 +160,33 @@ function toFinding(rule: unknown, file: string, rulesDir: string): Finding {
   };
 }
 
-function parseRecord(line: string): { path: string; rules: unknown[] } {
+function parseRecord(line: string, tempDir: string): { file: string; rules: unknown[] } {
   const record: unknown = JSON.parse(line);
   if (!isRecord(record) || typeof record["path"] !== "string" || !Array.isArray(record["rules"])) {
     throw new Error("YARA-X output must contain a path and rules array.");
   }
-  return { path: record["path"], rules: record["rules"] };
+  const file = relative(tempDir, record["path"]);
+  if (file === "" || isAbsolute(file) || file === ".." || file.startsWith(`..${sep}`)) {
+    throw new Error("YARA-X reported a path outside its scan directory.");
+  }
+  return { file: file.split(sep).join("/"), rules: record["rules"] };
 }
 
 function readMatches(output: string, tempDir: string, rulesDir: string, result: CheckResult): void {
   for (const line of output.split("\n").filter(Boolean)) {
     try {
-      const record = parseRecord(line);
-      const file = relative(tempDir, record.path);
-      if (file === "" || isAbsolute(file) || file === ".." || file.startsWith(`..${sep}`)) {
-        throw new Error("YARA-X reported a path outside its scan directory.");
+      const record = parseRecord(line, tempDir);
+      for (const rule of record.rules) {
+        try {
+          result.findings.push(toFinding(rule, record.file, rulesDir));
+        } catch (error) {
+          addFailure(
+            result,
+            "YARA_OUTPUT_ERROR",
+            `Cannot read YARA-X rule metadata: ${String(error)}. Check the rules and retry.`,
+          );
+        }
       }
-      for (const rule of record.rules)
-        result.findings.push(toFinding(rule, file.split(sep).join("/"), rulesDir));
     } catch (error) {
       addFailure(
         result,

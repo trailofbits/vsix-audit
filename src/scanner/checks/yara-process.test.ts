@@ -89,6 +89,23 @@ async function run(fixture: ProcessFixture = {}): ReturnType<typeof checkYara> {
 }
 
 describe("YARA-X process boundary", () => {
+  it("retains valid rules on both sides of malformed rule metadata", async () => {
+    const result = await run({
+      record: {
+        path: "$TARGET/main.js",
+        rules: [
+          { identifier: "Before", namespace: "$RULES/a.yar", meta: [["severity", "high"]] },
+          { identifier: "Broken", namespace: "$RULES/a.yar", meta: [] },
+          { identifier: "After", namespace: "$RULES/a.yar", meta: [["severity", "critical"]] },
+        ],
+      },
+    });
+    expect(result.findings.map((finding) => finding.id)).toEqual(
+      expect.arrayContaining(["YARA_Before", "YARA_After", "YARA_OUTPUT_ERROR"]),
+    );
+    expect(result.warnings).toHaveLength(1);
+  });
+
   it("preserves partial matches when the process fails", async () => {
     const result = await run({ status: 1, stderr: "Rule scan failed" });
     expect(result.findings).toContainEqual(

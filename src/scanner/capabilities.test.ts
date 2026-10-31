@@ -1,9 +1,27 @@
 import { describe, expect, it } from "vitest";
 import { extractCapabilities } from "#internal/scanner/capabilities.js";
 import { checkAST } from "#internal/scanner/checks/ast.js";
+import { checkWallets } from "#internal/scanner/checks/ioc.js";
 import { CAPABILITY_NAMES } from "#internal/scanner/types.js";
 
 describe("explicit finding capabilities", () => {
+  it.each([
+    [false, "CRYPTO_WALLET_DETECTED"],
+    [true, "KNOWN_MALWARE_WALLET"],
+  ] as const)("keeps public wallet indicators separate from credential access: %s", (known, id) => {
+    const wallet = "0x1234567890abcdef1234567890abcdef12345678";
+    const findings = checkWallets(
+      {
+        manifest: { name: "fixture", version: "1.0.0" },
+        basePath: "/fixture",
+        files: new Map([["main.js", Buffer.from(`const address = "${wallet}";`)]]),
+      },
+      new Set(known ? [wallet] : []),
+    );
+    expect(findings.map((finding) => finding.id)).toContain(id);
+    expect(extractCapabilities(findings).credentials.detected).toBe(false);
+  });
+
   it("includes Function construction in execution evidence", () => {
     const result = checkAST({
       manifest: { name: "fixture", version: "1.0.0" },
