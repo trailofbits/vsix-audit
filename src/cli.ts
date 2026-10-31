@@ -404,9 +404,8 @@ function printManifestInfo(manifest: VsixContents["manifest"]): void {
 
   // Activation events
   const events = manifest.activationEvents ?? [];
-  console.log(
-    `${pc.cyan("Activation:".padEnd(16))}${events.length > 0 ? events.join(", ") : pc.dim("(none)")}`,
-  );
+  const activation = events.length > 0 ? events.join(", ") : pc.dim("(none)");
+  console.log(`${pc.cyan("Activation:".padEnd(16))}${activation}`);
 
   // Entry points
   const entryPoints = (["main", "browser"] as const).flatMap((field) => {

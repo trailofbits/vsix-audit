@@ -7,7 +7,7 @@ rule LOADER_JS_Download_Write_Execute_Jan25 {
   meta:
     evidence = "co-occurring references"
     capabilities = "network,execution,fileAccess"
-    description = "File contains download, file-write, and execution references. A connected download-and-execute chain has not been established."
+    description = "Download, write and execution references co-occur. Data flow is unverified."
     severity = "medium"
     score       = 90
     author      = "vsix-audit"

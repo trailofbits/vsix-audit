@@ -103,7 +103,7 @@ rule RAT_JS_GlassWorm_Remote_Exec_Jan25 {
   meta:
     evidence = "co-occurring references"
     capabilities = "network,execution"
-    description = "File contains remote-command and execution references. Network-triggered command execution has not been established."
+    description = "Remote-command and execution references co-occur. Data flow is unverified."
     severity = "medium"
     score       = "95"
     author      = "vsix-audit"

@@ -145,7 +145,8 @@ function toFinding(rule: unknown, file: string, rulesDir: string): Finding {
     description:
       typeof description === "string"
         ? description
-        : `YARA rule "${rule["identifier"]}" from ${ruleFile} matched this file. Review the matched behavior.`,
+        : `YARA rule "${rule["identifier"]}" from ${ruleFile} matched this file. ` +
+          "Review the matched behavior.",
     severity: severity as Severity,
     category: "yara",
     location: { file },

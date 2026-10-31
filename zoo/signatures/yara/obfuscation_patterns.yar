@@ -127,7 +127,7 @@ rule SUSP_JS_Obfuscation_Eval_Jan25 {
   meta:
     evidence = "co-occurring references"
     capabilities = "execution,obfuscation"
-    description = "File contains obfuscation-like text and dynamic-code references. Their relationship has not been established."
+    description = "Obfuscation and dynamic-code references co-occur. Data flow is unverified."
     severity = "medium"
     score       = 95
     author      = "vsix-audit"

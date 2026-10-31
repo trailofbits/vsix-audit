@@ -7,7 +7,7 @@ rule SUSP_JS_Eval_Base64_Jan25 {
   meta:
     evidence = "co-occurring references"
     capabilities = "execution,obfuscation"
-    description = "File contains eval and Base64-decoding references. Their data flow has not been established; review their use."
+    description = "Eval and Base64 references co-occur. Their data flow is unverified."
     severity = "medium"
     score       = 90
     author      = "vsix-audit"
@@ -45,7 +45,7 @@ rule SUSP_JS_Eval_Charcode_Jan25 {
   meta:
     evidence = "co-occurring references"
     capabilities = "execution,obfuscation"
-    description = "File contains eval and character-construction references. Their data flow has not been established; review their use."
+    description = "Eval and charcode references co-occur. Their data flow is unverified."
     severity = "medium"
     score       = 90
     author      = "vsix-audit"

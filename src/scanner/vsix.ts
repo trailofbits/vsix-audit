@@ -184,7 +184,8 @@ function archiveSizeError(entry: yauzl.Entry, totalSize: number): string | undef
     entry.compressedSize > 0 &&
     entry.uncompressedSize / entry.compressedSize > MAX_COMPRESSION_RATIO
   ) {
-    return `compression ratio ${Math.round(entry.uncompressedSize / entry.compressedSize)}:1 exceeds ${MAX_COMPRESSION_RATIO}:1 limit`;
+    const ratio = Math.round(entry.uncompressedSize / entry.compressedSize);
+    return `compression ratio ${ratio}:1 exceeds ${MAX_COMPRESSION_RATIO}:1 limit`;
   }
   return sizeError;
 }
@@ -280,6 +281,7 @@ async function readArchiveEntry(
       skipped: false,
     });
   } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
     skipArchiveEntry(
       state,
       entry,
@@ -287,7 +289,7 @@ async function readArchiveEntry(
         id: "ARCHIVE_SKIPPED_ENTRY",
         title: "Skipped ZIP entry",
         entryName: name,
-        reason: `failed to extract entry (${error instanceof Error ? error.message : String(error)})`,
+        reason: `failed to extract entry (${reason})`,
         severity: "high",
         normalizedPath: path,
       }),
@@ -343,7 +345,8 @@ function normalizeNonStandardPrefix(
             title: "Duplicate normalized ZIP path",
             entryName: p,
             reason:
-              "multiple ZIP entries normalize to the same extension path after prefix normalization; the last entry is used",
+              "multiple ZIP entries normalize to the same extension path " +
+              "after prefix normalization; the last entry is used",
             severity: "high",
             normalizedPath: normalizedPath,
           }),

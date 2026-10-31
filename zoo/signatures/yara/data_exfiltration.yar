@@ -121,7 +121,7 @@ rule STEALER_JS_Credential_File_Exfil_Jan25 {
   meta:
     evidence = "co-occurring references"
     capabilities = "network,credentials,fileAccess"
-    description = "File contains credential-file, file-read, and network references. Exfiltration has not been established."
+    description = "Credential, read and network references co-occur. Exfiltration is unverified."
     severity = "medium"
     score       = 90
     author      = "vsix-audit"
