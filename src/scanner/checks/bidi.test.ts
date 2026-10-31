@@ -26,6 +26,25 @@ const safePatterns = [
 
 describe("BIDI controls in resolved regex constructions", () => {
   it.each([
+    "const root = true ? globalThis : {}; root.RegExp = consume;",
+    "const root = false ? {} : globalThis; root.RegExp = consume;",
+    "const root = globalThis || {}; root.RegExp = consume;",
+    "const root = globalThis ?? {}; root.RegExp = consume;",
+    "const root = (0, globalThis); root.RegExp = consume;",
+    "let root; const alias = (root = globalThis); alias.RegExp = consume;",
+    "async function update() { const root = await globalThis; root.RegExp = consume; }",
+  ])("retains controls after value-producing aliases: %j", (mutation) => {
+    expect(directionalFindings(`${mutation} RegExp("[a-${LRE}]");`)).toHaveLength(1);
+  });
+
+  it("handles repeated writes to a local alias without rescanning its history", () => {
+    const source = ["let root = {};"];
+    for (let index = 0; index < 3000; index++) source.push("root = {}; root.RegExp = consume;");
+    source.push(`new RegExp("[a-${LRE}]");`);
+    expect(directionalFindings(source.join(""))).toEqual([]);
+  });
+
+  it.each([
     "let root = globalThis; root.RegExp = consume;",
     "var root = globalThis; root.RegExp = consume;",
     "var root = globalThis; var root; root.RegExp = consume;",

@@ -76,39 +76,117 @@ function regExpProperty(node: MemberExpression, scope: Scope, resolver: StringRe
   return resolved === undefined || resolved.value === "RegExp";
 }
 
-function globalReceiver(node: Expression, scope: Scope): boolean {
-  const pending: BindingValue[] = [{ expression: node, scope }];
-  const seen = new Set<Binding>();
-  let candidate: BindingValue | undefined;
-  while ((candidate = pending.pop()) !== undefined) {
-    const expression = unwrapTypeExpression(candidate.expression);
-    if (expression.type !== "Identifier") continue;
-    const binding = lookup(candidate.scope, expression.name);
-    if (binding === undefined) {
-      if (GLOBAL_OBJECTS.has(expression.name)) return true;
-      continue;
-    }
-    if (binding === null || seen.has(binding)) continue;
-    seen.add(binding);
-    for (const value of binding.values) pending.push(value);
+function assignmentInputs(node: Node): Node[] {
+  if (node.type !== "AssignmentExpression") return [];
+  if (node.operator === "=") return [node.right];
+  if (["||=", "&&=", "??="].includes(node.operator)) return [node.left, node.right];
+  return [];
+}
+
+function aliasInputs(node: Node): Node[] {
+  if (node.type === "ConditionalExpression") return [node.consequent, node.alternate];
+  if (node.type === "LogicalExpression") return [node.left, node.right];
+  if (node.type === "SequenceExpression") {
+    const last = node.expressions.at(-1);
+    return last === undefined ? [] : [last];
   }
+  if (node.type === "AwaitExpression") return [node.argument];
+  return assignmentInputs(node);
+}
+
+function aliasIdentifiers(expression: Expression): string[] {
+  const names: string[] = [];
+  const pending: Node[] = [expression];
+  let candidate: Node | undefined;
+  while ((candidate = pending.pop()) !== undefined) {
+    const node = unwrapTypeExpression(candidate);
+    if (node.type === "Identifier") names.push(node.name);
+    else for (const input of aliasInputs(node)) pending.push(input);
+  }
+  return names;
+}
+
+class GlobalAliases {
+  private readonly globals = new Set<Binding>();
+  private readonly reverse = new Map<Binding, Set<Binding>>();
+
+  constructor(scopes: readonly Scope[]) {
+    const seen = new Set<Binding>();
+    for (const scope of scopes) {
+      for (const binding of scope.bindings.values()) {
+        if (binding === null || seen.has(binding)) continue;
+        seen.add(binding);
+        this.connect(binding);
+      }
+    }
+    this.propagate();
+  }
+
+  private connect(binding: Binding): void {
+    for (const value of binding.values) {
+      for (const name of aliasIdentifiers(value.expression)) {
+        const dependency = lookup(value.scope, name);
+        if (dependency === undefined) {
+          if (GLOBAL_OBJECTS.has(name)) this.globals.add(binding);
+          continue;
+        }
+        if (dependency === null) continue;
+        let dependents = this.reverse.get(dependency);
+        if (dependents === undefined) {
+          dependents = new Set<Binding>();
+          this.reverse.set(dependency, dependents);
+        }
+        dependents.add(binding);
+      }
+    }
+  }
+
+  private propagate(): void {
+    const pending = Array.from(this.globals);
+    let binding: Binding | undefined;
+    while ((binding = pending.pop()) !== undefined) {
+      for (const dependent of this.reverse.get(binding) ?? []) {
+        if (this.globals.has(dependent)) continue;
+        this.globals.add(dependent);
+        pending.push(dependent);
+      }
+    }
+  }
+
+  isGlobal(expression: Expression, scope: Scope): boolean {
+    return aliasIdentifiers(expression).some((name) => {
+      const binding = lookup(scope, name);
+      return binding === undefined
+        ? GLOBAL_OBJECTS.has(name)
+        : binding !== null && this.globals.has(binding);
+    });
+  }
+}
+
+function writesWrappedTarget(
+  node: Node,
+  scope: Scope,
+  resolver: StringResolver,
+  globals: GlobalAliases,
+): boolean {
+  if (node.type === "AssignmentPattern") return writesRegExp(node.left, scope, resolver, globals);
+  if (node.type === "RestElement") return writesRegExp(node.argument, scope, resolver, globals);
   return false;
 }
 
-function writesWrappedTarget(node: Node, scope: Scope, resolver: StringResolver): boolean {
-  if (node.type === "AssignmentPattern") return writesRegExp(node.left, scope, resolver);
-  if (node.type === "RestElement") return writesRegExp(node.argument, scope, resolver);
-  return false;
-}
-
-function writesRegExp(node: Node, scope: Scope, resolver: StringResolver): boolean {
+function writesRegExp(
+  node: Node,
+  scope: Scope,
+  resolver: StringResolver,
+  globals: GlobalAliases,
+): boolean {
   node = unwrapTypeExpression(node);
   if (node.type === "Identifier") {
     return node.name === "RegExp" && lookup(scope, node.name) === undefined;
   }
   if (node.type === "ArrayPattern") {
     return node.elements.some(
-      (element) => element !== null && writesRegExp(element, scope, resolver),
+      (element) => element !== null && writesRegExp(element, scope, resolver, globals),
     );
   }
   if (node.type === "ObjectPattern") {
@@ -117,11 +195,12 @@ function writesRegExp(node: Node, scope: Scope, resolver: StringResolver): boole
         property.type === "RestElement" ? property.argument : property.value,
         scope,
         resolver,
+        globals,
       ),
     );
   }
-  if (node.type !== "MemberExpression") return writesWrappedTarget(node, scope, resolver);
-  return regExpProperty(node, scope, resolver) && globalReceiver(node.object, scope);
+  if (node.type !== "MemberExpression") return writesWrappedTarget(node, scope, resolver, globals);
+  return regExpProperty(node, scope, resolver) && globals.isGlobal(node.object, scope);
 }
 
 function bindingScope(scope: Scope, name: string): Scope {
@@ -180,12 +259,14 @@ function declarePattern(scope: Scope, pattern: BindingPattern | ParamPattern): v
 class Constructions {
   scope: Scope = { parent: undefined, functionScope: true, bindings: new Map() };
   calls: Construction[] = [];
+  scopes: Scope[] = [this.scope];
   writes: Array<{ node: Node; scope: Scope }> = [];
   assignments: Array<{ node: Node; value: Expression; scope: Scope }> = [];
   modifiedBuiltin = false;
 
   enter(functionScope = false): void {
     this.scope = { parent: this.scope, functionScope, bindings: new Map() };
+    this.scopes.push(this.scope);
   }
 
   exit(): void {
@@ -238,7 +319,7 @@ class Constructions {
       },
       AssignmentExpression: (node): void => {
         this.writes.push({ node: node.left, scope: this.scope });
-        this.assignments.push({ node: node.left, value: node.right, scope: this.scope });
+        this.assignments.push({ node: node.left, value: node, scope: this.scope });
       },
       UpdateExpression: (node): void => {
         this.writes.push({ node: node.argument, scope: this.scope });
@@ -455,7 +536,8 @@ export function regexStrings(program: Program, content: string): RegexString[] {
   if (constructions.modifiedBuiltin) return [];
   recordGlobalAliases(constructions);
   const resolver = new StringResolver(content);
-  if (constructions.writes.some(({ node, scope }) => writesRegExp(node, scope, resolver)))
+  const globals = new GlobalAliases(constructions.scopes);
+  if (constructions.writes.some(({ node, scope }) => writesRegExp(node, scope, resolver, globals)))
     return [];
   const patterns: RegexString[] = [];
   for (const construction of constructions.calls) {
