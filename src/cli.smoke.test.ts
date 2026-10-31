@@ -1,3 +1,4 @@
+import type { ScanResult } from "#internal/scanner/types.js";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -119,7 +120,9 @@ async function runCli(
       stderr += chunk;
     });
     child.on("error", reject);
-    child.on("close", (status) => resolvePromise({ status, stdout, stderr }));
+    child.on("close", (status) => {
+      resolvePromise({ status, stdout, stderr });
+    });
   });
 }
 
@@ -218,7 +221,7 @@ globalThis.fetch = async (input) => {
     );
 
     expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).findings).toEqual([]);
+    expect((JSON.parse(result.stdout) as ScanResult).findings).toEqual([]);
     expect(result.stderr).not.toContain("Using cached");
     expect(await readdir(scanTempDir)).toEqual([]);
     await expectCacheUnchanged();
@@ -257,7 +260,7 @@ globalThis.fetch = async (input) => {
     );
 
     expect(result.status).toBe(1);
-    expect(JSON.parse(result.stdout).findings).toEqual(
+    expect((JSON.parse(result.stdout) as ScanResult).findings).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "ACTIVATION_WILDCARD" })]),
     );
     expect(await readdir(scanTempDir)).toEqual([]);
@@ -292,9 +295,7 @@ globalThis.fetch = async (input) => {
 
     expect(result.status).toBe(0);
     expect(
-      JSON.parse(result.stdout).map(
-        (result: { metadata: { registry: string } }) => result.metadata.registry,
-      ),
+      (JSON.parse(result.stdout) as ScanResult[]).map((scan) => scan.metadata.registry),
     ).toEqual(registries);
     expect(result.stderr).toContain("Downloading from marketplace:");
     expect(result.stderr).toContain("Downloading from openvsx:");

@@ -24,7 +24,7 @@ describe("downloadExtension cache behavior", () => {
     await writeFile(cachedPath, "cached VSIX");
     fetchMock.mockReset();
     fetchMock.mockImplementation(async (input) => {
-      const url = String(input);
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url === "https://open-vsx.org/api/test/extension") {
         return Response.json({ namespace: "test", name: "extension", version: "1.0.0" });
       }
@@ -96,7 +96,11 @@ describe("downloadExtension cache behavior", () => {
     await expect(readdir(emptyCache)).rejects.toMatchObject({
       code: existing ? "ENOTDIR" : "ENOENT",
     });
-    if (existing) expect(await readFile(emptyCache, "utf8")).toBe("blocked persistent cache");
+    const saved = await readFile(emptyCache, "utf8").catch((error: unknown) => {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    expect(saved).toBe(existing ? "blocked persistent cache" : undefined);
   });
 });
 
@@ -317,21 +321,5 @@ describe("getCursorDownloadUrl", () => {
     expect(url).toBe(
       "https://marketplace.cursorapi.com/_apis/public/gallery/publishers/eamodio/vsextensions/gitlens/15.0.0/vspackage",
     );
-  });
-});
-
-// Integration tests that require network access
-describe.skip("downloadExtension (integration)", () => {
-  // These tests are skipped by default as they require network access
-  // Run manually with: npm test -- --run download.test.ts
-
-  it("downloads a real extension", async () => {
-    // This would actually download from the marketplace
-    // Skipped to avoid network requests in normal test runs
-  });
-
-  it("queries extension metadata", async () => {
-    // This would actually query the marketplace API
-    // Skipped to avoid network requests in normal test runs
   });
 });

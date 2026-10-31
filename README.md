@@ -395,7 +395,7 @@ git clone https://github.com/trailofbits/vsix-audit.git
 cd vsix-audit
 npm install
 prek install   # pre-commit hooks
-npm run check  # typecheck + lint + test
+npm run check  # typecheck + type-aware lint + formatting + tests
 ```
 
 ## License

@@ -19,9 +19,9 @@ import {
   outputBatchResult,
   outputResult,
   outputResults,
-} from "./formatters.js";
-import { clearCache, getCacheDir, getCachedVersions, listCached } from "./scanner/cache.js";
-import { extractCapabilities, type Capabilities } from "./scanner/capabilities.js";
+} from "#internal/formatters.js";
+import { clearCache, getCacheDir, getCachedVersions, listCached } from "#internal/scanner/cache.js";
+import { extractCapabilities, type Capabilities } from "#internal/scanner/capabilities.js";
 import {
   downloadExtension,
   parseExtensionId,
@@ -30,7 +30,7 @@ import {
 import { scanDirectory, scanExtension } from "#internal/scanner/index.js";
 import type { BatchScanCallbacks } from "#internal/scanner/batch.js";
 import type { Registry, ScanOptions, ScanResult } from "#internal/scanner/types.js";
-import { loadExtension } from "./scanner/vsix.js";
+import { loadExtension } from "#internal/scanner/vsix.js";
 
 const require = createRequire(import.meta.url);
 const { version: VERSION } = require("../package.json") as {
@@ -145,13 +145,13 @@ async function scanDownloadedExtension(
     const downloaded = await downloadExtension(extensionId, {
       useCache: context.useCache,
       forceDownload: context.forceDownload,
-      ...(tempDir ? { destDir: tempDir } : {}),
+      ...(tempDir === undefined ? {} : { destDir: tempDir }),
     });
-    const message = downloaded.fromCache ? "✓ Using cached" : "✓ Downloaded";
+    const message = downloaded.fromCache === true ? "✓ Using cached" : "✓ Downloaded";
     context.statusLog(pc.green(message), pc.dim(downloaded.path));
     return await scanExtension(downloaded.path, context.options);
   } finally {
-    if (tempDir) await rm(tempDir, { recursive: true, force: true });
+    if (tempDir !== undefined) await rm(tempDir, { recursive: true, force: true });
   }
 }
 
@@ -248,13 +248,18 @@ async function scanSingle(target: CliTarget, context: ScanContext): Promise<numb
 async function runScan(target: string, options: CliScanOptions): Promise<number> {
   const context = createScanContext(options);
   const targetInfo = classifyTarget(target);
-  if (options.allRegistries && targetInfo.kind === "extension-id") {
+  if (options.allRegistries === true && targetInfo.kind === "extension-id") {
     return scanAllRegistries(targetInfo, context);
   }
-  if (options.jobs && options.jobs !== "4" && !options.recursive) {
+  if (
+    options.jobs !== undefined &&
+    options.jobs !== "" &&
+    options.jobs !== "4" &&
+    !(options.recursive === true)
+  ) {
     context.statusLog(pc.yellow("Warning:"), "--jobs is only used with --recursive, ignoring");
   }
-  if (options.recursive) return scanRecursive(target, options, context);
+  if (options.recursive === true) return scanRecursive(target, options, context);
   return scanSingle(targetInfo, context);
 }
 
@@ -308,12 +313,14 @@ cli
       const downloadOptions = {
         useCache,
         forceDownload,
-        ...(options.output ? { destDir: options.output } : {}),
+        ...(options.output !== undefined && options.output !== ""
+          ? { destDir: options.output }
+          : {}),
       };
       const result = await downloadExtension(extensionId, downloadOptions);
 
       console.log();
-      if (result.fromCache) {
+      if (result.fromCache === true) {
         console.log(pc.green("✓ Using cached version"));
       } else {
         console.log(pc.green("✓ Downloaded successfully"));
@@ -322,7 +329,11 @@ cli
       console.log(`${pc.cyan("Name:")} ${result.metadata.displayName ?? result.metadata.name}`);
       console.log(`${pc.cyan("Publisher:")} ${result.metadata.publisher}`);
       console.log(`${pc.cyan("Version:")} ${result.metadata.version}`);
-      if (result.metadata.installCount) {
+      if (
+        result.metadata.installCount !== undefined &&
+        result.metadata.installCount !== 0 &&
+        !Number.isNaN(result.metadata.installCount)
+      ) {
         console.log(`${pc.cyan("Installs:")} ${result.metadata.installCount.toLocaleString()}`);
       }
       console.log(`${pc.cyan("Path:")} ${result.path}`);
@@ -353,7 +364,7 @@ cli
         const result = await downloadExtension(targetInfo.extensionId);
         infoTarget = result.path;
 
-        if (result.fromCache) {
+        if (result.fromCache === true) {
           console.log(pc.green("✓ Using cached"), pc.dim(result.path));
         } else {
           console.log(pc.green("✓ Downloaded"), pc.dim(result.path));
@@ -378,7 +389,7 @@ cli
         pc.bold(`Extension: ${manifest.displayName ?? manifest.name} v${manifest.version}`),
       );
       console.log(`${pc.cyan("Publisher:")} ${manifest.publisher}`);
-      if (manifest.description) {
+      if (manifest.description !== undefined && manifest.description !== "") {
         console.log(`${pc.dim(manifest.description)}`);
       }
 
@@ -399,8 +410,10 @@ cli
 
       // Entry points
       const entryPoints: string[] = [];
-      if (manifest.main) entryPoints.push(`main: ${manifest.main}`);
-      if (manifest.browser) entryPoints.push(`browser: ${manifest.browser}`);
+      if (manifest.main !== undefined && manifest.main !== "")
+        entryPoints.push(`main: ${manifest.main}`);
+      if (manifest.browser !== undefined && manifest.browser !== "")
+        entryPoints.push(`browser: ${manifest.browser}`);
       if (entryPoints.length > 0) {
         console.log(`${pc.cyan("Entry Points:".padEnd(16))}${entryPoints.join(", ")}`);
       }
@@ -459,8 +472,14 @@ function printCapabilities(capabilities: Capabilities, verbose: boolean): void {
 
     if (verbose && cap.detected && cap.evidence.length > 0) {
       for (const ev of cap.evidence.slice(0, 5)) {
-        const loc = ev.line ? `${ev.file}:${ev.line}` : ev.file;
-        const matched = ev.matched ? pc.dim(` (${ev.matched.slice(0, 40)})`) : "";
+        const loc =
+          ev.line !== undefined && ev.line !== 0 && !Number.isNaN(ev.line)
+            ? `${ev.file}:${ev.line}`
+            : ev.file;
+        const matched =
+          ev.matched !== undefined && ev.matched !== ""
+            ? pc.dim(` (${ev.matched.slice(0, 40)})`)
+            : "";
         console.log(`                  ${pc.dim("└")} ${pc.dim(loc)}${matched}`);
       }
       if (cap.evidence.length > 5) {
@@ -489,7 +508,7 @@ cacheCommand
       const extensions = await listCached();
 
       if (extensions.length === 0) {
-        if (options.json) {
+        if (options.json === true) {
           console.log("[]");
         } else {
           console.log(pc.dim("Cache is empty"));
@@ -497,7 +516,7 @@ cacheCommand
         return;
       }
 
-      if (options.json) {
+      if (options.json === true) {
         console.log(JSON.stringify(extensions, null, 2));
         return;
       }
@@ -538,7 +557,7 @@ cacheCommand
       const deleted = await clearCache(pattern);
 
       if (deleted === 0) {
-        if (pattern) {
+        if (pattern !== undefined && pattern !== "") {
           console.log(pc.dim(`No extensions matching "${pattern}" found in cache`));
         } else {
           console.log(pc.dim("Cache is already empty"));

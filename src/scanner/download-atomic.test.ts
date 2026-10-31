@@ -37,9 +37,11 @@ it.each([false, true])(
     fetchMock.mockResolvedValue(
       new Response(
         new ReadableStream({
-          start(controller) {
+          start(controller): void {
             controller.enqueue(new Uint8Array([1, 2, 3]));
-            setTimeout(() => controller.error(new Error("Download interrupted")), 20);
+            setTimeout(() => {
+              controller.error(new Error("Download interrupted"));
+            }, 20);
           },
         }),
       ),
@@ -49,18 +51,29 @@ it.each([false, true])(
       downloadVsix("test", "extension", "1.0.0", destination, "openvsx"),
     ).rejects.toThrow("Download interrupted");
 
-    if (existing) expect(await readFile(destination, "utf8")).toBe("existing complete VSIX");
-    else await expect(readFile(destination)).rejects.toMatchObject({ code: "ENOENT" });
+    const saved = await readFile(destination, "utf8").catch((error: unknown) => {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    expect(saved).toBe(existing ? "existing complete VSIX" : undefined);
     expect(await readdir(root)).toEqual(existing ? ["extension.vsix"] : []);
   },
 );
 
 it.each([
-  { name: "HTTP error", response: () => new Response(null, { status: 503 }), error: /503/ },
-  { name: "missing response body", response: () => new Response(null), error: /Empty response/ },
+  {
+    name: "HTTP error",
+    response: (): Response => new Response(null, { status: 503 }),
+    error: /503/,
+  },
+  {
+    name: "missing response body",
+    response: (): Response => new Response(null),
+    error: /Empty response/,
+  },
   {
     name: "oversized response",
-    response: () => new Response("", { headers: { "content-length": "524288001" } }),
+    response: (): Response => new Response("", { headers: { "content-length": "524288001" } }),
     error: /Download too large/,
   },
 ])("preserves an existing VSIX after $name", async ({ response, error }) => {

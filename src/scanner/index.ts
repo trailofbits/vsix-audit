@@ -1,26 +1,27 @@
+import { inspect } from "node:util";
 import { stat } from "node:fs/promises";
-import { checkAST } from "./checks/ast.js";
-import { checkIocs } from "./checks/ioc.js";
-import { checkObfuscation } from "./checks/obfuscation.js";
+import { checkAST } from "#internal/scanner/checks/ast.js";
+import { checkIocs } from "#internal/scanner/checks/ioc.js";
+import { checkObfuscation } from "#internal/scanner/checks/obfuscation.js";
 import {
   checkDependencyHeuristics,
   checkExecutionPatterns,
   checkManifest,
   checkPackageIntel,
-} from "./checks/package.js";
-import { checkTelemetry } from "./checks/telemetry.js";
+} from "#internal/scanner/checks/package.js";
+import { checkTelemetry } from "#internal/scanner/checks/telemetry.js";
 import {
   checkYara,
   getDefaultYaraRulesDir,
   isYaraAvailable,
   listYaraRules,
-} from "./checks/yara.js";
+} from "#internal/scanner/checks/yara.js";
 import {
   isScannable,
   SCANNABLE_EXTENSIONS_PATTERN,
   SCANNABLE_EXTENSIONS_UNICODE,
-} from "./constants.js";
-import { loadZooData } from "./loaders/zoo.js";
+} from "#internal/scanner/constants.js";
+import { loadZooData } from "#internal/scanner/loaders/zoo.js";
 import type {
   BatchScanResult,
   CheckSummary,
@@ -33,10 +34,10 @@ import type {
   Severity,
   ZooData,
   VsixContents,
-} from "./types.js";
-import { INTEL_MODES, MODULE_NAMES, OUTPUT_FORMATS, SEVERITIES } from "./types.js";
-import type { ModuleName } from "./types.js";
-import { loadExtension } from "./vsix.js";
+} from "#internal/scanner/types.js";
+import { INTEL_MODES, MODULE_NAMES, OUTPUT_FORMATS, SEVERITIES } from "#internal/scanner/types.js";
+import type { ModuleName } from "#internal/scanner/types.js";
+import { loadExtension } from "#internal/scanner/vsix.js";
 
 export { MODULE_NAMES };
 export type {
@@ -49,7 +50,7 @@ export type {
   ScanResult,
   Severity,
 };
-export type { BatchScanCallbacks, BatchScanOptions } from "./batch.js";
+export type { BatchScanCallbacks, BatchScanOptions } from "#internal/scanner/batch.js";
 export { findVsixFiles, scanDirectory, scanPaths } from "#internal/scanner/batch.js";
 
 const SEVERITY_ORDER: Record<Severity, number> = {
@@ -87,7 +88,7 @@ function findingEvidenceFingerprint(finding: Finding): string {
   for (const key of FINGERPRINT_METADATA_KEYS) {
     const value = metadata[key];
     if (value !== undefined && value !== null) {
-      values.push(`${key}=${String(value)}`);
+      values.push(`${key}=${inspect(value, { sorted: true, customInspect: false, depth: null })}`);
     }
   }
 
@@ -192,7 +193,7 @@ export function validateScanOptions(options: ScanOptions): void {
     );
   }
 
-  if (options.requireYara && options.modules && !options.modules.includes("yara")) {
+  if (options.requireYara === true && options.modules && !options.modules.includes("yara")) {
     throw new Error("--require-yara cannot be used when the module filter excludes yara");
   }
 }
@@ -458,7 +459,7 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
       scanDuration: Math.round(timings.total),
       coverage,
       intel: intelMode,
-      ...(options.profile ? { timings } : {}),
+      ...(options.profile === true ? { timings } : {}),
     },
   };
 }

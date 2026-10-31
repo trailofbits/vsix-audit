@@ -70,7 +70,6 @@ describe("installed scan reports", () => {
               toolExecutionNotifications: [
                 {
                   level: "error",
-                  message: { text: expect.stringContaining("/extensions/broken") },
                 },
               ],
             },
@@ -78,6 +77,9 @@ describe("installed scan reports", () => {
         },
       ],
     });
+    expect(sarif.runs[0]?.invocations?.[0]?.toolExecutionNotifications[0]?.message.text).toContain(
+      "/extensions/broken",
+    );
   });
 
   it("includes successes and errors in the same SARIF report", () => {

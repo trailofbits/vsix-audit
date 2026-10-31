@@ -14,8 +14,8 @@
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { downloadExtension, type ExtensionMetadata } from "../src/scanner/download.js";
-import { scanExtension, type Finding, type ScanResult } from "../src/scanner/index.js";
+import { downloadExtension, type ExtensionMetadata } from "#internal/scanner/download.js";
+import { scanExtension, type Finding, type ScanResult } from "#internal/scanner/index.js";
 
 interface ExtensionConfig {
   id: string;
@@ -102,20 +102,20 @@ function analyzeFindingQuality(finding: Finding): string[] {
   if (!finding.id) issues.push("Missing finding ID");
   if (!finding.title) issues.push("Missing finding title");
   if (!finding.description || finding.description.length < 50) {
-    issues.push(`Description too short (${finding.description?.length ?? 0} chars, need 50+)`);
+    issues.push(`Description too short (${finding.description.length} chars, need 50+)`);
   }
-  if (!finding.severity) issues.push("Missing severity");
-  if (!finding.location?.file) issues.push("Missing file location");
+  if (finding.location?.file === undefined || finding.location.file === "")
+    issues.push("Missing file location");
 
   return issues;
 }
 
 function checkEdgeCaseContext(finding: Finding): boolean {
   const hasLegitimateUses =
-    finding.description?.toLowerCase().includes("legitimate") ||
-    finding.description?.toLowerCase().includes("common in") ||
-    finding.description?.toLowerCase().includes("expected") ||
-    (finding.metadata?.legitimateUses as string[] | undefined)?.length;
+    finding.description.toLowerCase().includes("legitimate") ||
+    finding.description.toLowerCase().includes("common in") ||
+    finding.description.toLowerCase().includes("expected") ||
+    finding.metadata?.legitimateUses?.length;
 
   return Boolean(hasLegitimateUses);
 }
@@ -178,7 +178,7 @@ async function collectFindings(textOutput: boolean): Promise<CollectionReport> {
             `Baseline has ${scanResult.findings.length} findings (may need investigation)`,
           );
         }
-      } else if (ext.category === "edge-case") {
+      } else {
         const findingsWithContext = scanResult.findings.filter(checkEdgeCaseContext);
         const contextRatio =
           scanResult.findings.length > 0
@@ -237,13 +237,13 @@ function formatTextReport(report: CollectionReport): string {
     if (ext.metadata) {
       lines.push(`Publisher: ${ext.metadata.publisher}`);
       lines.push(`Version: ${ext.metadata.version}`);
-      if (ext.metadata.installCount) {
+      if (ext.metadata.installCount !== undefined && ext.metadata.installCount > 0) {
         lines.push(`Installs: ${ext.metadata.installCount.toLocaleString()}`);
       }
     }
     lines.push("");
 
-    if (ext.error) {
+    if (ext.error !== undefined && ext.error !== "") {
       lines.push(`ERROR: ${ext.error}`);
       lines.push("");
       continue;
@@ -257,23 +257,23 @@ function formatTextReport(report: CollectionReport): string {
         const severityBadge = `[${finding.severity.toUpperCase()}]`;
         lines.push(`${severityBadge} ${finding.title}`);
         lines.push(`  ID: ${finding.id}`);
-        if (finding.location?.file) {
-          lines.push(
-            `  File: ${finding.location.file}${finding.location.line ? `:${finding.location.line}` : ""}`,
-          );
+        if (finding.location?.file !== undefined && finding.location.file !== "") {
+          const line = finding.location.line;
+          const suffix = line !== undefined && line !== 0 && !Number.isNaN(line) ? `:${line}` : "";
+          lines.push(`  File: ${finding.location.file}${suffix}`);
         }
-        if (finding.metadata?.matched) {
+        if (finding.metadata?.matched !== undefined && finding.metadata.matched !== "") {
           const matched = String(finding.metadata.matched).slice(0, 60);
           lines.push(`  Matched: ${matched}${matched.length >= 60 ? "..." : ""}`);
         }
 
         // Show context quality indicators
         if (finding.metadata?.legitimateUses) {
-          const uses = finding.metadata.legitimateUses as string[];
+          const uses = finding.metadata.legitimateUses;
           lines.push(`  Legitimate uses: ${uses.join(", ")}`);
         }
         if (finding.metadata?.redFlags) {
-          const flags = finding.metadata.redFlags as string[];
+          const flags = finding.metadata.redFlags;
           lines.push(`  Red flags: ${flags.join(", ")}`);
         }
 
@@ -311,11 +311,11 @@ async function main(): Promise<void> {
       report.summary.failed > 0 ||
       report.summary.baselineWithFindings > report.summary.baselineClean;
 
-    process.exit(hasIssues ? 1 : 0);
+    process.exitCode = hasIssues ? 1 : 0;
   } catch (error) {
     console.error("Fatal error:", error);
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 
-main();
+await main();
