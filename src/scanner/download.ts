@@ -3,8 +3,13 @@ import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
-import { ensureCacheDir, evictStaleEntries, getCachedPath, isCached } from "./cache.js";
-import type { Registry } from "./types.js";
+import {
+  ensureCacheDir,
+  evictStaleEntries,
+  getCachedPath,
+  isCached,
+} from "#internal/scanner/cache.js";
+import type { Registry } from "#internal/scanner/types.js";
 
 export interface ExtensionMetadata {
   extensionId: string;
@@ -258,10 +263,10 @@ async function queryGalleryApi(
     throw new Error(`Extension not found on ${registryLabel}: ${extensionId}`);
   }
 
-  const versions = ext.versions ?? [];
+  const versions = ext.versions;
 
   let targetVersion = versions[0];
-  if (version) {
+  if (version !== undefined && version !== "") {
     const found = versions.find((v) => v.version === version);
     if (!found) {
       throw new Error(
@@ -286,10 +291,10 @@ async function queryGalleryApi(
     registry,
   };
 
-  if (ext.displayName) {
+  if (ext.displayName !== undefined && ext.displayName !== "") {
     result.displayName = ext.displayName;
   }
-  if (ext.shortDescription) {
+  if (ext.shortDescription !== undefined && ext.shortDescription !== "") {
     result.description = ext.shortDescription;
   }
   if (installStat?.value !== undefined) {
@@ -326,9 +331,10 @@ export async function queryOpenVSX(
   version?: string,
 ): Promise<ExtensionMetadata> {
   const extensionId = `${publisher}.${name}`;
-  const url = version
-    ? `${OPENVSX_API_URL}/${publisher}/${name}/${version}`
-    : `${OPENVSX_API_URL}/${publisher}/${name}`;
+  const url =
+    version !== undefined && version !== ""
+      ? `${OPENVSX_API_URL}/${publisher}/${name}/${version}`
+      : `${OPENVSX_API_URL}/${publisher}/${name}`;
 
   const response = await fetch(url);
   if (!response.ok) {
@@ -348,13 +354,13 @@ export async function queryOpenVSX(
     registry: "openvsx",
   };
 
-  if (data.timestamp) {
+  if (data.timestamp !== undefined && data.timestamp !== "") {
     result.lastUpdated = data.timestamp;
   }
-  if (data.displayName) {
+  if (data.displayName !== undefined && data.displayName !== "") {
     result.displayName = data.displayName;
   }
-  if (data.description) {
+  if (data.description !== undefined && data.description !== "") {
     result.description = data.description;
   }
   if (data.downloadCount !== undefined) {
@@ -418,7 +424,7 @@ async function downloadVsixFromUrl(url: string, destPath: string): Promise<void>
 
   // Check Content-Length if available
   const contentLength = response.headers.get("content-length");
-  if (contentLength) {
+  if (contentLength !== null && contentLength !== "") {
     const size = parseInt(contentLength, 10);
     if (size > MAX_DOWNLOAD_BYTES) {
       throw new Error(`Download too large: ${size} bytes ` + `(max ${MAX_DOWNLOAD_BYTES} bytes)`);
@@ -429,12 +435,12 @@ async function downloadVsixFromUrl(url: string, destPath: string): Promise<void>
 
   // Stream with byte counter to enforce limit
   let bytesWritten = 0;
-  const nodeStream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream);
+  const nodeStream = Readable.fromWeb(response.body);
   const fileStream = createWriteStream(destPath);
 
   const { Transform } = await import("node:stream");
   const limiter = new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
+    transform(chunk: Buffer, _encoding, callback): void {
       bytesWritten += chunk.length;
       if (bytesWritten > MAX_DOWNLOAD_BYTES) {
         callback(
@@ -500,7 +506,7 @@ export async function downloadExtension(
   }
 
   // If destDir is explicitly provided, download directly there (bypasses cache)
-  if (options?.destDir) {
+  if (options?.destDir !== undefined && options.destDir !== "") {
     const filename = `${metadata.publisher}.${metadata.name}-${metadata.version}.vsix`;
     const destPath = join(options.destDir, filename);
 

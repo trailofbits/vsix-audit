@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
@@ -12,8 +12,29 @@ const defaultInputDir = join(repoRoot, "test-corpus", "clean");
 const scannerPath = join(repoRoot, "dist", "scanner", "index.js");
 const cleanCorpusPath = join(repoRoot, "dist", "scanner", "clean-corpus.js");
 
+/** @typedef {import("#internal/scanner/types.js").Severity} Severity */
+/** @typedef {import("#internal/scanner/types.js").Finding} Finding */
+/**
+ * @typedef {{id: string, severity: Severity, title: string,
+ *   file: string | undefined, line: number | undefined}} CompactFinding
+ */
+/** @typedef {ReturnType<typeof summarizeFindings>} FindingSummary */
+/**
+ * @typedef {{id: string, version: string, registry: string, category: string,
+ *   file: string, findings: FindingSummary, neverFindings: CompactFinding[],
+ *   error?: string}} ExtensionReport
+ */
+/**
+ * @typedef {{generatedAt: string, manifest: string, inputDir: string,
+ *   summary: {total: number, scanned: number, errors: number,
+ *   neverFindings: number, findings: FindingSummary},
+ *   extensions: ExtensionReport[]}} CorpusReport
+ */
+
+/** @type {readonly Severity[]} */
 const SEVERITIES = ["critical", "high", "medium", "low"];
 
+/** @param {string[]} argv */
 function parseArgs(argv) {
   const options = {
     manifestPath: defaultManifestPath,
@@ -25,12 +46,12 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
     if (arg === "--manifest") {
-      const value = argv[++index];
-      if (!value) throw new Error("--manifest requires a path");
+      const value = argv.at(++index);
+      if (value === undefined || value === "") throw new Error("--manifest requires a path");
       options.manifestPath = resolve(value);
     } else if (arg === "--input") {
-      const value = argv[++index];
-      if (!value) throw new Error("--input requires a directory");
+      const value = argv.at(++index);
+      if (value === undefined || value === "") throw new Error("--input requires a directory");
       options.inputDir = resolve(value);
     } else if (arg === "--json") {
       options.json = true;
@@ -44,17 +65,22 @@ function parseArgs(argv) {
   return options;
 }
 
+/** @param {string} path */
 async function sha256File(path) {
   const data = await readFile(path);
   return createHash("sha256").update(data).digest("hex");
 }
 
+/** @template {string} K @param {Record<K, number>} map @param {K} key @param {number} [amount] */
 function increment(map, key, amount = 1) {
   map[key] = (map[key] ?? 0) + amount;
 }
 
+/** @param {CompactFinding[]} findings */
 function summarizeFindings(findings) {
+  /** @type {Record<Severity, number>} */
   const bySeverity = { critical: 0, high: 0, medium: 0, low: 0 };
+  /** @type {Record<string, number>} */
   const byId = {};
 
   for (const finding of findings) {
@@ -69,6 +95,7 @@ function summarizeFindings(findings) {
   };
 }
 
+/** @param {Finding} finding @returns {CompactFinding} */
 function compactFinding(finding) {
   return {
     id: finding.id,
@@ -84,8 +111,8 @@ async function loadBuiltModules() {
     throw new Error("Built scanner not found. Run npm run build first.");
   }
 
-  const scanner = await import(pathToFileURL(scannerPath).href);
-  const cleanCorpus = await import(pathToFileURL(cleanCorpusPath).href);
+  const scanner = await import("#internal/scanner/index.js");
+  const cleanCorpus = await import("#internal/scanner/clean-corpus.js");
   return {
     scanExtension: scanner.scanExtension,
     cleanCorpusFilename: cleanCorpus.cleanCorpusFilename,
@@ -94,6 +121,7 @@ async function loadBuiltModules() {
   };
 }
 
+/** @param {CorpusReport} report */
 function formatTextReport(report) {
   const lines = [];
   lines.push("VSIX-AUDIT CLEAN CORPUS FALSE-POSITIVE REPORT");
@@ -105,7 +133,7 @@ function formatTextReport(report) {
   lines.push("");
 
   for (const severity of SEVERITIES) {
-    const count = report.summary.findings.bySeverity[severity] ?? 0;
+    const count = report.summary.findings.bySeverity[severity];
     if (count > 0) lines.push(`${severity}: ${count}`);
   }
 
@@ -121,16 +149,17 @@ function formatTextReport(report) {
   for (const extension of report.extensions) {
     lines.push("");
     lines.push(`${extension.id}@${extension.version}`);
-    if (extension.error) {
+    if (extension.error !== undefined && extension.error !== "") {
       lines.push(`  ERROR: ${extension.error}`);
       continue;
     }
     lines.push(`  findings: ${extension.findings.total}`);
     lines.push(`  never-in-clean: ${extension.neverFindings.length}`);
     for (const finding of extension.neverFindings) {
-      const location = finding.file
-        ? ` at ${finding.file}${finding.line ? `:${finding.line}` : ""}`
-        : "";
+      const location =
+        finding.file !== undefined && finding.file !== ""
+          ? ` at ${finding.file}${finding.line === undefined ? "" : `:${finding.line}`}`
+          : "";
       lines.push(`  FAIL ${finding.severity} ${finding.id}${location}`);
     }
   }
@@ -147,7 +176,9 @@ async function main() {
     JSON.parse(await readFile(options.manifestPath, "utf8")),
   );
 
+  /** @type {ExtensionReport[]} */
   const extensionReports = [];
+  /** @type {CompactFinding[]} */
   const allFindings = [];
   let neverFindingCount = 0;
   let errorCount = 0;
@@ -155,13 +186,14 @@ async function main() {
   for (const extension of manifest.extensions) {
     const filename = cleanCorpusFilename(extension);
     const filePath = join(options.inputDir, filename);
+    /** @type {ExtensionReport} */
     const extensionReport = {
       id: extension.id,
       version: extension.version,
       registry: extension.registry,
       category: extension.category,
       file: filePath,
-      findings: { total: 0, bySeverity: {}, byId: {} },
+      findings: summarizeFindings([]),
       neverFindings: [],
     };
 
@@ -217,14 +249,15 @@ async function main() {
   }
 
   if (errorCount > 0) {
-    process.exit(2);
-  }
-  if (options.failOnNever && neverFindingCount > 0) {
-    process.exit(1);
+    process.exitCode = 2;
+  } else if (options.failOnNever && neverFindingCount > 0) {
+    process.exitCode = 1;
   }
 }
 
-main().catch((error) => {
+try {
+  await main();
+} catch (error) {
   console.error(error instanceof Error ? error.message : error);
-  process.exit(2);
-});
+  process.exitCode = 2;
+}

@@ -63,6 +63,6 @@ export function parseJobs(value: string): number {
 export function hasCoverageExitFailure(result: ScanResult, options: ScanOptions): boolean {
   const coverage = result.metadata.coverage;
   if (!coverage) return false;
-  if (options.strict && coverage.degraded) return true;
+  if (options.strict === true && coverage.degraded) return true;
   return options.requireYara === true && coverage.unavailableModules?.includes("yara") === true;
 }
