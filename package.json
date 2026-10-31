@@ -57,7 +57,7 @@
   "dependencies": {
     "@eslint-community/regexpp": "4.12.2",
     "@types/yauzl": "3.4.0",
-    "commander": "14.0.3",
+    "commander": "15.0.0",
     "oxc-parser": "0.155.0",
     "picocolors": "1.1.1",
     "yauzl": "3.4.0"
@@ -71,6 +71,6 @@
     "vitest": "5.0.5"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   }
 }

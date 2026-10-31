@@ -17,12 +17,13 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22"
+          node-version-file: .node-version
           registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
 
-      - name: Install npm 11.5.1+ for OIDC support
-        run: npm install -g npm@latest
+      - run: npm audit --package-lock-only --audit-level=low
 
-      - run: npm ci
+      - run: npm ci --ignore-scripts
+      - run: npm audit signatures
       - run: npm run build
       - run: npm publish --provenance --access public
