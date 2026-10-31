@@ -12,6 +12,30 @@ const DEEP_SOURCE =
 const MANIFEST = { name: "parser-fixture", publisher: "test", version: "1.0.0", main: "main.js" };
 
 describe("AST traversal failures", () => {
+  it("preserves a fatal diagnostic after the parser has recovered", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "vsix-parser-recovery-"));
+    try {
+      await writeFile(join(directory, "package.json"), JSON.stringify(MANIFEST));
+      await writeFile(join(directory, "main.js"), `const missing;\n${DEEP_SOURCE}`);
+      const result = await scanExtension(directory, {
+        output: "json",
+        severity: "low",
+        network: false,
+        modules: ["ast"],
+      });
+      const failures = result.findings.filter((finding) => finding.id === "PARSE_FAILURE_AST");
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.metadata?.["analysisIncomplete"]).toBe(true);
+      expect(failures[0]?.metadata?.["error"]).toEqual(expect.stringContaining("stack"));
+      expect(failures[0]?.metadata?.["recoveryError"]).toEqual(
+        expect.stringContaining("initializer"),
+      );
+      expect(result.metadata.coverage?.degraded).toBe(true);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("reports incomplete analysis and continues with the following file", () => {
     const contents: VsixContents = {
       manifest: MANIFEST,

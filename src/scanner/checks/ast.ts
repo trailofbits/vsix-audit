@@ -495,6 +495,35 @@ function analyzeFile(
   visitor.visit(result.program);
 }
 
+function recordASTFailure(findings: Finding[], filename: string, error: unknown): void {
+  const previousIndex = findings.findIndex(
+    (finding) => finding.id === "PARSE_FAILURE_AST" && finding.location?.file === filename,
+  );
+  const previous = findings[previousIndex];
+  const metadata: Record<string, unknown> = {
+    ...previous?.metadata,
+    analysisIncomplete: true,
+    error: error instanceof Error ? error.message : String(error),
+  };
+  if (previous !== undefined) metadata["recoveryError"] = previous.metadata?.["error"];
+  const failure: Finding = {
+    id: "PARSE_FAILURE_AST",
+    title: "AST analysis failure",
+    description:
+      "AST analysis could not complete for this file. Inspect it manually; " +
+      "structural checks may have missed executable code.",
+    severity: "low",
+    category: "pattern",
+    location: { file: filename },
+    metadata,
+  };
+  if (previousIndex === -1) {
+    findings.push(failure);
+    return;
+  }
+  findings[previousIndex] = failure;
+}
+
 /** Analyze script files, reporting parser or traversal failures for each affected file. */
 export function checkAST(contents: VsixContents): Finding[] {
   const findings: Finding[] = [];
@@ -519,20 +548,7 @@ export function checkAST(contents: VsixContents): Finding[] {
     try {
       analyzeFile(filename, content, findings, bundlerCache);
     } catch (error) {
-      findings.push({
-        id: "PARSE_FAILURE_AST",
-        title: "AST analysis failure",
-        description:
-          "AST analysis could not complete for this file. Inspect it manually; " +
-          "structural checks may have missed executable code.",
-        severity: "low",
-        category: "pattern",
-        location: { file: filename },
-        metadata: {
-          analysisIncomplete: true,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      });
+      recordASTFailure(findings, filename, error);
     }
   }
 
