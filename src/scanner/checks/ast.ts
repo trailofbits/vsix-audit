@@ -386,10 +386,9 @@ const AST_PATTERNS: ASTPattern[] = [
 function analyzeFile(
   filename: string,
   content: string,
+  findings: Finding[],
   bundlerCache?: Map<string, BundlerInfo>,
-): Finding[] {
-  const findings: Finding[] = [];
-
+): void {
   // Determine lang from extension
   const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
   const langMap: Record<string, "js" | "jsx" | "ts" | "tsx"> = {
@@ -402,31 +401,10 @@ function analyzeFile(
   };
   const lang = langMap[ext] ?? "tsx"; // Default to tsx for maximum compatibility
 
-  // Try to parse the file
-  let result;
-  try {
-    result = parseSync(filename, content, {
-      lang,
-      sourceType: "unambiguous",
-    });
-  } catch (error) {
-    findings.push({
-      id: "PARSE_FAILURE_AST",
-      title: "AST parse failure",
-      description:
-        "File could not be parsed for AST analysis. " +
-        "A file that crashes the parser evades all " +
-        "AST-based checks. This may indicate " +
-        "intentional obfuscation or corruption.",
-      severity: "low",
-      category: "pattern",
-      location: { file: filename },
-      metadata: {
-        error: error instanceof Error ? error.message : String(error),
-      },
-    });
-    return findings;
-  }
+  const result = parseSync(filename, content, {
+    lang,
+    sourceType: "unambiguous",
+  });
 
   if (result.errors.length > 0) {
     findings.push({
@@ -515,10 +493,38 @@ function analyzeFile(
   });
 
   visitor.visit(result.program);
-
-  return findings;
 }
 
+function recordASTFailure(findings: Finding[], filename: string, error: unknown): void {
+  const previousIndex = findings.findIndex(
+    (finding) => finding.id === "PARSE_FAILURE_AST" && finding.location?.file === filename,
+  );
+  const previous = findings[previousIndex];
+  const metadata: Record<string, unknown> = {
+    ...previous?.metadata,
+    analysisIncomplete: true,
+    error: error instanceof Error ? error.message : String(error),
+  };
+  if (previous !== undefined) metadata["recoveryError"] = previous.metadata?.["error"];
+  const failure: Finding = {
+    id: "PARSE_FAILURE_AST",
+    title: "AST analysis failure",
+    description:
+      "AST analysis could not complete for this file. Inspect it manually; " +
+      "structural checks may have missed executable code.",
+    severity: "low",
+    category: "pattern",
+    location: { file: filename },
+    metadata,
+  };
+  if (previousIndex === -1) {
+    findings.push(failure);
+    return;
+  }
+  findings[previousIndex] = failure;
+}
+
+/** Analyze script files, reporting parser or traversal failures for each affected file. */
 export function checkAST(contents: VsixContents): Finding[] {
   const findings: Finding[] = [];
 
@@ -539,7 +545,11 @@ export function checkAST(contents: VsixContents): Finding[] {
     const content = getStringContent(contents, filename, buffer);
 
     const bundlerCache = contents.cache as Map<string, BundlerInfo> | undefined;
-    findings.push(...analyzeFile(filename, content, bundlerCache));
+    try {
+      analyzeFile(filename, content, findings, bundlerCache);
+    } catch (error) {
+      recordASTFailure(findings, filename, error);
+    }
   }
 
   return findings;
