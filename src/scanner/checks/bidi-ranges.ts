@@ -1,13 +1,13 @@
 import { RegExpParser, visitRegExpAST } from "@eslint-community/regexpp";
 import { parseSync, Visitor } from "oxc-parser";
-import type { RegExpLiteral, StringLiteral } from "oxc-parser";
-
-const LTR_EMBEDDING = /\u202a/g;
+import { regexStrings } from "#internal/scanner/checks/regex-strings.js";
 
 function patternRangeOffsets(pattern: string, flags: string): Set<number> {
   const offsets = new Set<number>();
   try {
-    const parsed = new RegExpParser().parsePattern(pattern, 0, pattern.length, {
+    const parser = new RegExpParser();
+    parser.parseFlags(flags);
+    const parsed = parser.parsePattern(pattern, 0, pattern.length, {
       unicode: flags.includes("u"),
       unicodeSets: flags.includes("v"),
     });
@@ -28,75 +28,6 @@ function patternRangeOffsets(pattern: string, flags: string): Set<number> {
   }
 }
 
-function collectRangeOffsets(
-  pattern: string,
-  start: number,
-  offsets: Set<number>,
-  flags: readonly string[],
-): void {
-  if (!pattern.includes("\u202a")) return;
-  for (const mode of flags) {
-    for (const offset of patternRangeOffsets(pattern, mode)) offsets.add(start + offset);
-  }
-}
-
-function findClassEnd(pattern: string, start: number, nested: boolean): number {
-  let depth = 1;
-  for (let i = start + 1; i < pattern.length; i++) {
-    const character = pattern.charAt(i);
-    if (character === "\\") {
-      i++;
-      continue;
-    }
-    if (character === "[" && nested) depth++;
-    if (character === "]" && --depth === 0) return i;
-  }
-  return -1;
-}
-
-function rangeOffsets(pattern: string, flags: readonly string[]): Set<number> {
-  const offsets = new Set<number>();
-  for (let i = 0; i < pattern.length; i++) {
-    if (pattern.charAt(i) === "\\") {
-      i++;
-      continue;
-    }
-    if (pattern.charAt(i) !== "[") continue;
-    const end = findClassEnd(pattern, i, flags.includes("v"));
-    if (end === -1) break;
-    collectRangeOffsets(pattern.slice(i, end + 1), i, offsets, flags);
-    i = end;
-  }
-  return offsets;
-}
-
-function stringRangeOffsets(node: StringLiteral, content: string): number[] {
-  const raw = content.slice(node.start + 1, node.end - 1);
-  const sourceMatches = Array.from(raw.matchAll(LTR_EMBEDDING));
-  const valueMatches = Array.from(node.value.matchAll(LTR_EMBEDDING));
-  if (sourceMatches.length !== valueMatches.length) return [];
-  const allowed = rangeOffsets(node.value, ["u", ""]);
-  for (const offset of rangeOffsets(node.value, ["v"])) allowed.add(offset);
-  const offsets: number[] = [];
-  for (const [index, match] of sourceMatches.entries()) {
-    const valueMatch = valueMatches[index];
-    if (valueMatch !== undefined && allowed.has(valueMatch.index)) {
-      offsets.push(node.start + 1 + match.index);
-    }
-  }
-  return offsets;
-}
-
-function literalRangeOffsets(node: StringLiteral | RegExpLiteral, content: string): number[] {
-  if ("regex" in node) {
-    return Array.from(
-      patternRangeOffsets(node.regex.pattern, node.regex.flags),
-      (index) => node.start + 1 + index,
-    );
-  }
-  return stringRangeOffsets(node, content);
-}
-
 function warnRangeFailure(filename: string, error: unknown): void {
   const reason = error instanceof Error ? error.message : String(error);
   process.emitWarning(
@@ -107,7 +38,7 @@ function warnRangeFailure(filename: string, error: unknown): void {
 }
 
 /**
- * Locate embeddings used as regex range endpoints in JS/TS string or regex literals.
+ * Locate embeddings used as range endpoints in regex literals or static RegExp constructions.
  *
  * Only U+202A can be exempted. Invalid or ambiguous source retains all alerts.
  * Unexpected parser or traversal failures emit a diagnostic and retain all alerts.
@@ -127,11 +58,18 @@ export function findLtrRangeOffsets(content: string, filename: string): Set<numb
     if (parsed.errors.length !== 0) return offsets;
     new Visitor({
       Literal(node): void {
-        if ("regex" in node || typeof node.value === "string") {
-          for (const offset of literalRangeOffsets(node, content)) offsets.add(offset);
+        if (!("regex" in node)) return;
+        for (const index of patternRangeOffsets(node.regex.pattern, node.regex.flags)) {
+          offsets.add(node.start + 1 + index);
         }
       },
     }).visit(parsed.program);
+    for (const { pattern, flags, origins } of regexStrings(parsed.program, content)) {
+      for (const index of patternRangeOffsets(pattern, flags)) {
+        const source = origins.get(index);
+        if (source !== undefined) offsets.add(source);
+      }
+    }
     return offsets;
   } catch (error) {
     warnRangeFailure(filename, error);
