@@ -44,3 +44,18 @@ updates:
       prefix: "ci"
     labels:
       - "ci"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      images:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "docker"
+    labels:
+      - "dependencies"
