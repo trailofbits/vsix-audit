@@ -1,10 +1,100 @@
-import { describe, expect, it } from "vitest";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getCachedPath } from "./cache.js";
 import {
+  downloadExtension,
   getCursorDownloadUrl,
   getMarketplaceDownloadUrl,
   getOpenVSXDownloadUrl,
   parseExtensionId,
 } from "./download.js";
+
+describe("downloadExtension cache behavior", () => {
+  let testDir: string;
+  let cachedPath: string;
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "vsix-audit-download-test-"));
+    vi.stubEnv("VSIX_AUDIT_CACHE_DIR", join(testDir, "cache"));
+    cachedPath = getCachedPath("openvsx", "test", "extension", "1.0.0");
+    await mkdir(join(testDir, "cache", "openvsx"), { recursive: true });
+    await writeFile(cachedPath, "cached VSIX");
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "https://open-vsx.org/api/test/extension") {
+        return Response.json({ namespace: "test", name: "extension", version: "1.0.0" });
+      }
+      if (url.endsWith("/test.extension-1.0.0.vsix")) {
+        return new Response("fresh VSIX");
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  it("reuses a cached extension by default", async () => {
+    const result = await downloadExtension("openvsx:test.extension");
+
+    expect(result.fromCache).toBe(true);
+    expect(await readFile(result.path, "utf8")).toBe("cached VSIX");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes the persistent cache when forced", async () => {
+    const result = await downloadExtension("openvsx:test.extension", { forceDownload: true });
+
+    expect(result.fromCache).toBe(false);
+    expect(result.path).toBe(cachedPath);
+    expect(await readFile(cachedPath, "utf8")).toBe("fresh VSIX");
+  });
+
+  it("bypasses cached content without writing to the cache", async () => {
+    const destDir = join(testDir, "downloads");
+    const result = await downloadExtension("openvsx:test.extension", {
+      useCache: false,
+      destDir,
+    });
+
+    expect(result.fromCache).toBe(false);
+    expect(result.path).toBe(join(destDir, "test.extension-1.0.0.vsix"));
+    expect(await readFile(result.path, "utf8")).toBe("fresh VSIX");
+    expect(await readFile(cachedPath, "utf8")).toBe("cached VSIX");
+  });
+
+  it("saves uncached downloads in the current directory by default", async () => {
+    vi.spyOn(process, "cwd").mockReturnValue(testDir);
+
+    const result = await downloadExtension("openvsx:test.extension", { useCache: false });
+
+    expect(result.path).toBe(join(testDir, "test.extension-1.0.0.vsix"));
+    expect(await readFile(result.path, "utf8")).toBe("fresh VSIX");
+    expect(await readFile(cachedPath, "utf8")).toBe("cached VSIX");
+  });
+
+  it("does not create a persistent cache for uncached downloads", async () => {
+    const emptyCache = join(testDir, "unused-cache");
+    vi.stubEnv("VSIX_AUDIT_CACHE_DIR", emptyCache);
+
+    const result = await downloadExtension("openvsx:test.extension", {
+      useCache: false,
+      destDir: join(testDir, "downloads"),
+    });
+
+    expect(await readFile(result.path, "utf8")).toBe("fresh VSIX");
+    await expect(readdir(emptyCache)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
 
 describe("parseExtensionId", () => {
   it("parses publisher.name format", () => {

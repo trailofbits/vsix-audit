@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { basename } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
 import {
@@ -13,7 +14,12 @@ import {
 } from "./formatters.js";
 import { clearCache, getCacheDir, getCachedVersions, listCached } from "./scanner/cache.js";
 import { extractCapabilities, type Capabilities } from "./scanner/capabilities.js";
-import { downloadExtension, parseExtensionId, type ParsedExtensionId } from "./scanner/download.js";
+import {
+  downloadExtension,
+  parseExtensionId,
+  type DownloadOptions,
+  type ParsedExtensionId,
+} from "./scanner/download.js";
 import {
   MODULE_NAMES,
   scanDirectory,
@@ -32,7 +38,7 @@ const REGISTRIES: Registry[] = ["marketplace", "openvsx", "cursor"];
 
 interface CliScanOptions extends Omit<ScanOptions, "intel"> {
   allRegistries?: boolean;
-  noCache?: boolean;
+  cache?: boolean;
   force?: boolean;
   recursive?: boolean;
   jobs?: string;
@@ -45,7 +51,7 @@ interface CliScanOptions extends Omit<ScanOptions, "intel"> {
 
 interface CliDownloadOptions {
   output?: string;
-  noCache?: boolean;
+  cache?: boolean;
   force?: boolean;
 }
 
@@ -117,6 +123,32 @@ function hasCoverageExitFailure(result: ScanResult, options: ScanOptions): boole
   return false;
 }
 
+async function scanDownloadedExtension(
+  extensionId: string,
+  downloadOptions: DownloadOptions,
+  scanOptions: ScanOptions,
+  statusLog: (...args: unknown[]) => void,
+): Promise<ScanResult> {
+  const tempDir =
+    downloadOptions.useCache === false
+      ? await mkdtemp(join(tmpdir(), "vsix-audit-scan-"))
+      : undefined;
+
+  try {
+    const downloaded = await downloadExtension(extensionId, {
+      ...downloadOptions,
+      ...(tempDir ? { destDir: tempDir } : {}),
+    });
+    statusLog(
+      pc.green(downloaded.fromCache ? "✓ Using cached" : "✓ Downloaded"),
+      pc.dim(downloaded.path),
+    );
+    return await scanExtension(downloaded.path, scanOptions);
+  } finally {
+    if (tempDir) await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
 export const cli = new Command()
   .name("vsix-audit")
   .description("Security scanner for VS Code extensions")
@@ -137,7 +169,7 @@ cli
   )
   .option("--no-network", "Disable network-based checks")
   .option("--all-registries", "Scan from all registries (Marketplace + OpenVSX + Cursor)")
-  .option("--no-cache", "Bypass cache, download fresh")
+  .option("--no-cache", "Download fresh without reading or writing the cache")
   .option("--force", "Re-download even if cached")
   .option("-r, --recursive", "Recursively scan all .vsix files in a directory")
   .option("-j, --jobs <n>", "Number of parallel scans (default: 4)", "4")
@@ -159,7 +191,7 @@ cli
   .option("--require-yara", "Exit with an error if YARA scanning cannot run")
   .action(async (target: string, options: CliScanOptions) => {
     try {
-      const useCache = options.noCache !== true;
+      const useCache = options.cache !== false;
       const forceDownload = options.force === true;
 
       // Parse and validate module filter
@@ -212,18 +244,12 @@ cli
           const prefixedId = `${registry}:${baseId}`;
           try {
             statusLog(pc.cyan(`Downloading from ${registry}:`), baseId);
-            const downloaded = await downloadExtension(prefixedId, {
-              useCache,
-              forceDownload,
-            });
-
-            if (downloaded.fromCache) {
-              statusLog(pc.green("✓ Using cached"), pc.dim(downloaded.path));
-            } else {
-              statusLog(pc.green("✓ Downloaded"), pc.dim(downloaded.path));
-            }
-
-            const result = await scanExtension(downloaded.path, scanOptions);
+            const result = await scanDownloadedExtension(
+              prefixedId,
+              { useCache, forceDownload },
+              scanOptions,
+              statusLog,
+            );
             result.metadata = { ...result.metadata, registry };
             results.push(result);
           } catch (error) {
@@ -335,26 +361,20 @@ cli
       }
 
       // Standard single-registry scan
-      let scanTarget: string;
+      let result: ScanResult;
       if (targetInfo.kind === "extension-id") {
         statusLog(pc.cyan("Downloading:"), targetInfo.extensionId);
-        const result = await downloadExtension(targetInfo.extensionId, {
-          useCache,
-          forceDownload,
-        });
-        scanTarget = result.path;
-
-        if (result.fromCache) {
-          statusLog(pc.green("✓ Using cached"), pc.dim(result.path));
-        } else {
-          statusLog(pc.green("✓ Downloaded"), pc.dim(result.path));
-        }
+        result = await scanDownloadedExtension(
+          targetInfo.extensionId,
+          { useCache, forceDownload },
+          scanOptions,
+          statusLog,
+        );
         statusLog();
       } else {
-        scanTarget = targetInfo.path;
+        result = await scanExtension(targetInfo.path, scanOptions);
       }
 
-      const result = await scanExtension(scanTarget, scanOptions);
       outputResult(result, outputFormat, VERSION);
       if (hasCoverageExitFailure(result, scanOptions)) {
         process.exit(2);
@@ -373,12 +393,12 @@ cli
     "<extension-id>",
     "Extension ID (e.g., ms-python.python, ms-python/python, or ms-python.python@2024.1.0)",
   )
-  .option("-o, --output <dir>", "Also copy to this directory (in addition to cache)")
-  .option("--no-cache", "Bypass cache, download fresh")
+  .option("-o, --output <dir>", "Directory to save the downloaded extension")
+  .option("--no-cache", "Download fresh without reading or writing the cache")
   .option("--force", "Re-download even if cached")
   .action(async (extensionId: string, options: CliDownloadOptions) => {
     try {
-      const useCache = options.noCache !== true;
+      const useCache = options.cache !== false;
       const forceDownload = options.force === true;
 
       console.log(pc.cyan("Downloading:"), extensionId);

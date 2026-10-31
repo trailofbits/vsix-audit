@@ -475,6 +475,7 @@ export async function downloadVsix(
 
 /**
  * Download an extension from the VS Code Marketplace or OpenVSX
+ * Uncached downloads without a destDir are saved in the current directory.
  *
  * @param extensionId - Extension ID in format "publisher.name", "publisher/name", with optional "@version",
  *                      or with registry prefix: "openvsx:publisher.name", "marketplace:publisher/name"
@@ -499,10 +500,12 @@ export async function downloadExtension(
     metadata = await queryExtension(publisher, name, version);
   }
 
-  // If destDir is explicitly provided, download directly there (bypasses cache)
-  if (options?.destDir) {
+  // Uncached downloads need a lasting destination unless the caller supplies
+  // a temporary directory and owns its cleanup, as the scan command does.
+  const destDir = options?.destDir || (useCache ? undefined : process.cwd());
+  if (destDir) {
     const filename = `${metadata.publisher}.${metadata.name}-${metadata.version}.vsix`;
-    const destPath = join(options.destDir, filename);
+    const destPath = join(destDir, filename);
 
     // Check cache first if enabled
     if (useCache && !forceDownload) {
@@ -516,7 +519,7 @@ export async function downloadExtension(
 
       if (cached) {
         // Copy from cache to destination
-        await mkdir(options.destDir, { recursive: true });
+        await mkdir(destDir, { recursive: true });
         await copyFile(cachedPath, destPath);
         return { path: destPath, metadata, fromCache: true };
       }
