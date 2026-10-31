@@ -48,41 +48,56 @@ const MAX_PATTERN_LENGTH = 65_536;
 const MAX_RESOLUTION_DEPTH = 64;
 const GLOBAL_OBJECTS = new Set(["globalThis", "global", "window", "self"]);
 
-function regExpProperty(node: MemberExpression): boolean {
-  if (node.computed) {
-    return node.property.type === "Literal" && node.property.value === "RegExp";
-  }
-  return node.property.type === "Identifier" && node.property.name === "RegExp";
+function regExpProperty(node: MemberExpression, scope: Scope, resolver: StringResolver): boolean {
+  if (!node.computed) return node.property.type === "Identifier" && node.property.name === "RegExp";
+  if (node.property.type === "Literal") return node.property.value === "RegExp";
+  const resolved = resolver.resolve(node.property, scope);
+  return resolved === undefined || resolved.value === "RegExp";
 }
 
-function writesWrappedTarget(node: Node): boolean {
-  if (node.type === "AssignmentPattern") return writesRegExp(node.left);
-  if (node.type === "RestElement") return writesRegExp(node.argument);
+function globalReceiver(node: Expression, scope: Scope, active = new Set<Binding>()): boolean {
+  if (node.type !== "Identifier") return false;
+  const binding = lookup(scope, node.name);
+  if (binding === undefined) return GLOBAL_OBJECTS.has(node.name);
+  if (binding === null || active.has(binding)) return false;
+  active.add(binding);
+  return globalReceiver(binding.expression, binding.scope, active);
+}
+
+function writesWrappedTarget(node: Node, scope: Scope, resolver: StringResolver): boolean {
+  if (node.type === "AssignmentPattern") return writesRegExp(node.left, scope, resolver);
+  if (node.type === "RestElement") return writesRegExp(node.argument, scope, resolver);
   if (
     node.type === "TSAsExpression" ||
     node.type === "TSSatisfiesExpression" ||
     node.type === "TSNonNullExpression" ||
     node.type === "TSTypeAssertion"
   ) {
-    return writesRegExp(node.expression);
+    return writesRegExp(node.expression, scope, resolver);
   }
   return false;
 }
 
-function writesRegExp(node: Node): boolean {
-  if (node.type === "Identifier") return node.name === "RegExp";
+function writesRegExp(node: Node, scope: Scope, resolver: StringResolver): boolean {
+  if (node.type === "Identifier") {
+    return node.name === "RegExp" && lookup(scope, node.name) === undefined;
+  }
   if (node.type === "ArrayPattern") {
-    return node.elements.some((element) => element !== null && writesRegExp(element));
+    return node.elements.some(
+      (element) => element !== null && writesRegExp(element, scope, resolver),
+    );
   }
   if (node.type === "ObjectPattern") {
     return node.properties.some((property) =>
-      writesRegExp(property.type === "RestElement" ? property.argument : property.value),
+      writesRegExp(
+        property.type === "RestElement" ? property.argument : property.value,
+        scope,
+        resolver,
+      ),
     );
   }
-  if (node.type !== "MemberExpression") return writesWrappedTarget(node);
-  const globalWrite =
-    node.computed && node.object.type === "Identifier" && GLOBAL_OBJECTS.has(node.object.name);
-  return globalWrite || regExpProperty(node);
+  if (node.type !== "MemberExpression") return writesWrappedTarget(node, scope, resolver);
+  return regExpProperty(node, scope, resolver) && globalReceiver(node.object, scope);
 }
 
 function lookup(scope: Scope, name: string): Binding | null | undefined {
@@ -124,6 +139,7 @@ function declarePattern(scope: Scope, pattern: BindingPattern | ParamPattern): v
 class Constructions {
   scope: Scope = { parent: undefined, functionScope: true, bindings: new Map() };
   calls: Construction[] = [];
+  writes: Array<{ node: Node; scope: Scope }> = [];
   modifiedBuiltin = false;
 
   enter(functionScope = false): void {
@@ -172,10 +188,15 @@ class Constructions {
         this.calls.push({ node, scope: this.scope });
       },
       AssignmentExpression: (node): void => {
-        if (writesRegExp(node.left)) this.modifiedBuiltin = true;
+        this.writes.push({ node: node.left, scope: this.scope });
       },
       UpdateExpression: (node): void => {
-        if (writesRegExp(node.argument)) this.modifiedBuiltin = true;
+        this.writes.push({ node: node.argument, scope: this.scope });
+      },
+      UnaryExpression: (node): void => {
+        if (node.operator === "delete") {
+          this.writes.push({ node: node.argument, scope: this.scope });
+        }
       },
       WithStatement: (): void => {
         this.modifiedBuiltin = true;
@@ -198,14 +219,20 @@ class Constructions {
       "ForStatement:exit": (): void => {
         this.exit();
       },
-      ForInStatement: (): void => {
+      ForInStatement: (node): void => {
         this.enter();
+        if (node.left.type !== "VariableDeclaration") {
+          this.writes.push({ node: node.left, scope: this.scope });
+        }
       },
       "ForInStatement:exit": (): void => {
         this.exit();
       },
-      ForOfStatement: (): void => {
+      ForOfStatement: (node): void => {
         this.enter();
+        if (node.left.type !== "VariableDeclaration") {
+          this.writes.push({ node: node.left, scope: this.scope });
+        }
       },
       "ForOfStatement:exit": (): void => {
         this.exit();
@@ -352,6 +379,8 @@ export function regexStrings(program: Program, content: string): RegexString[] {
   new Visitor(constructions.visitor()).visit(program);
   if (constructions.modifiedBuiltin) return [];
   const resolver = new StringResolver(content);
+  if (constructions.writes.some(({ node, scope }) => writesRegExp(node, scope, resolver)))
+    return [];
   const patterns: RegexString[] = [];
   for (const construction of constructions.calls) {
     const pattern = constructionPattern(construction, resolver);

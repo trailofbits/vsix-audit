@@ -26,6 +26,19 @@ const safePatterns = [
 
 describe("BIDI controls in resolved regex constructions", () => {
   it.each([
+    'globalThis["harmless"] = value;',
+    "globalThis[42] = value;",
+    'const key = "harm" + "less"; globalThis[key] = value;',
+    'const local = {}; local["RegExp"] = value;',
+    "const local = {}; const alias = local; alias.RegExp = value;",
+    "function update() { local.RegExp = value; } const local = {}; update();",
+    "function update(RegExp) { RegExp = value; }",
+  ])("accepts ranges after writes unrelated to the builtin: %j", (mutation) => {
+    const source = `${mutation} new RegExp("[a-${LRE}]");`;
+    expect(directionalFindings(source)).toEqual([]);
+  });
+
+  it.each([
     'globalThis["RegExp"] = consume;',
     'globalThis["Reg" + "Exp"] = consume;',
     'const key = "RegExp"; globalThis[key] = consume;',
@@ -35,6 +48,10 @@ describe("BIDI controls in resolved regex constructions", () => {
     'globalThis["RegExp"]++;',
     "({ RegExp } = replacement);",
     "[RegExp] = replacement;",
+    "for (RegExp of [consume]) {}",
+    "for (RegExp in replacement) {}",
+    'delete globalThis["RegExp"];',
+    'const alias = globalThis; const key = "Reg" + "Exp"; alias[key] = consume;',
   ])("retains alerts after builtin mutation: %j", (mutation) => {
     const pattern = JSON.stringify(Array.from({ length: 6 }, () => `[a-${LRE}]`).join(""));
     const source = `${mutation} RegExp(${pattern}); eval(payload);`;
