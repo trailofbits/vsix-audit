@@ -391,7 +391,7 @@ function normalizeManifestReference(reference: string): string | null {
   if ("reason" in normalized) {
     return null;
   }
-  return toExtensionRelativePath(normalized.path);
+  return normalized.path;
 }
 
 function collectManifestReferences(manifest: VsixManifest): Array<{ path: string; kind: string }> {
@@ -503,7 +503,7 @@ function unresolvedReferenceWarning(
           id: "ARCHIVE_REFERENCED_FILE_MISSING",
           title: "Manifest-referenced file is missing",
           path: ref.path,
-          reason: `manifest ${ref.kind} reference does not exist in the archive`,
+          reason: `manifest ${ref.kind} reference does not exist in the extension`,
         }
       : {
           id: "ARCHIVE_REFERENCED_FILE_SKIPPED",

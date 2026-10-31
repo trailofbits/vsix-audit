@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +11,21 @@ const bundledZoo = join(import.meta.dirname, "..", "..", "zoo");
 afterEach(() => vi.unstubAllEnvs());
 
 describe("required detection coverage", () => {
+  it("retries a failed dataset load after the required file is restored", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vsix-restored-data-"));
+    try {
+      await cp(bundledZoo, root, { recursive: true });
+      const file = join(root, "iocs/github-c2.txt");
+      const original = await readFile(file);
+      await unlink(file);
+      await expect(loadZooData(root)).rejects.toThrow(`Cannot load detection dataset ${file}`);
+      await writeFile(file, original);
+      expect((await loadZooData(root)).githubC2Accounts.size).toBeGreaterThan(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.each(["{}", '{"packages":null}', '{"packages":{}}'])(
     "rejects malformed package advisory datasets: %s",
     async (content) => {

@@ -224,9 +224,19 @@ function detectUnicodePattern(
   return matches.length >= minMatches ? matches : [];
 }
 
+function isEmojiSelector(content: string, index: number, matched: string): boolean {
+  const before = content.slice(Math.max(0, index - 2), index);
+  const base = Array.from(before).at(-1) ?? "";
+  // Emoji includes ASCII keycap bases; only complete emoji strings receive exemptions.
+  // Text-style selectors share their presentation bases with emoji-style selectors.
+  if (/^\p{Basic_Emoji}$/v.test(`${base}\ufe0f`)) return true;
+  const keycap = base + matched + content.slice(index + 1, index + 2);
+  return matched === "\ufe0f" && /^\p{Emoji_Keycap_Sequence}$/v.test(keycap);
+}
+
 function isTextPresentationControl(content: string, index: number, matched: string): boolean {
   const before = content.slice(Math.max(0, index - 2), index);
-  if (matched === "\ufe0e" || matched === "\ufe0f") return /\p{Emoji}$/u.test(before);
+  if (matched === "\ufe0e" || matched === "\ufe0f") return isEmojiSelector(content, index, matched);
   if (matched !== "\u200c" && matched !== "\u200d") return false;
   return (
     /\p{Script=Arabic}$/u.test(before) &&

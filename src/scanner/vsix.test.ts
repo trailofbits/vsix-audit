@@ -14,6 +14,34 @@ import {
 } from "#internal/scanner/vsix.js";
 
 describe("archive and directory coverage", () => {
+  it("preserves an extension subdirectory in manifest references in both formats", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vsix-inner-extension-"));
+    const files = [
+      {
+        name: "package.json",
+        content: JSON.stringify({ name: "fixture", version: "1.0.0", main: "extension/index.js" }),
+      },
+      { name: "extension/index.js", content: 'console.log("hello");' },
+    ];
+    try {
+      const directory = join(root, "unpacked");
+      await mkdir(join(directory, "extension"), { recursive: true });
+      for (const file of files) await writeFile(join(directory, file.name), file.content);
+      const archive = join(root, "fixture.vsix");
+      await writeFile(
+        archive,
+        createTestZip(files.map((file) => ({ ...file, name: `extension/${file.name}` }))),
+      );
+      for (const target of [directory, archive]) {
+        const contents = await loadExtension(target);
+        expect(contents.files.has("extension/index.js")).toBe(true);
+        expect(contents.archiveWarnings ?? []).toEqual([]);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.each([1, 99])(
     "reports an entry whose bytes disagree with its declared size %s",
     async (size) => {

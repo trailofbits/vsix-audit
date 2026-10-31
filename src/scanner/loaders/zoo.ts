@@ -219,7 +219,13 @@ let cachedZooData: { root: string; result: Promise<ZooData> } | undefined;
 
 /** Load required threat intelligence once for each selected dataset root. */
 export function loadZooData(root = getZooRoot()): Promise<ZooData> {
-  if (cachedZooData?.root !== root) cachedZooData = { root, result: readZooData(root) };
+  if (cachedZooData?.root !== root) {
+    const result: Promise<ZooData> = readZooData(root).catch((error: unknown): never => {
+      if (cachedZooData?.result === result) cachedZooData = undefined;
+      throw error instanceof Error ? error : new Error(String(error), { cause: error });
+    });
+    cachedZooData = { root, result };
+  }
   return cachedZooData.result;
 }
 

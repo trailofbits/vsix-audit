@@ -3,6 +3,22 @@ import type { VsixContents, VsixManifest } from "#internal/scanner/types.js";
 import { checkObfuscation } from "#internal/scanner/checks/obfuscation.js";
 
 describe("source-independent Unicode detection", () => {
+  it.each(["1\ufe0f", "#\ufe0e", "*\ufe0f", "🇦\ufe0f", "🏻\ufe0f"])(
+    "retains selector payload evidence after emoji-property characters %j",
+    (sequence) => {
+      const source = `const payload = "${sequence.repeat(60)}"; eval(payload);`;
+      const findings = checkObfuscation(makeContents({ "main.js": source }));
+      expect(findings.map((finding) => finding.id)).toEqual(
+        expect.arrayContaining(["VARIATION_SELECTOR", "INVISIBLE_CODE_EXECUTION"]),
+      );
+    },
+  );
+
+  it.each(["0", "5", "#", "*"])("allows complete keycap emoji sequences for %s", (base) => {
+    const source = `const text = "${`${base}\ufe0f\u20e3`.repeat(60)}";`;
+    expect(checkObfuscation(makeContents({ "main.js": source }))).toEqual([]);
+  });
+
   it("allows emoji presentation selectors and Arabic joining controls locally", () => {
     const text = `${"☀\ufe0f".repeat(60)}${"ب\u200cب\u200dب".repeat(5)}`;
     const findings = checkObfuscation(makeContents({ "main.js": `const text = "${text}";` }));
