@@ -1,6 +1,5 @@
 import { findLtrRangeOffsets } from "#internal/scanner/checks/bidi-ranges.js";
-import type { BundlerInfo } from "#internal/scanner/bundler.js";
-import { detectBundler } from "#internal/scanner/bundler.js";
+import { isBundledCode } from "#internal/scanner/bundler.js";
 import {
   isScannable,
   SCANNABLE_EXTENSIONS_PATTERN,
@@ -47,14 +46,6 @@ interface UnicodeRule {
 // ============================================================================
 // SHARED UTILITIES
 // ============================================================================
-
-/**
- * Check if file is in node_modules (third-party dependencies).
- * These are not extension code and generate many false positives.
- */
-function isNodeModules(filename: string): boolean {
-  return filename.includes("node_modules/") || filename.includes("node_modules\\");
-}
 
 // ============================================================================
 // ENTROPY ANALYSIS
@@ -124,18 +115,11 @@ function checkEntropy(contents: VsixContents): Finding[] {
 
   for (const [filename, buffer] of contents.files) {
     if (!isScannable(filename, SCANNABLE_EXTENSIONS_PATTERN)) continue;
-    // Skip node_modules - third-party deps generate many false positives
-    if (isNodeModules(filename)) continue;
 
     const content = getStringContent(contents, filename, buffer);
 
     // Skip bundled code - minification naturally increases entropy
-    const bundlerInfo = detectBundler(
-      content,
-      filename,
-      contents.cache as Map<string, BundlerInfo> | undefined,
-    );
-    if (bundlerInfo.isBundled) continue;
+    if (isBundledCode(content)) continue;
 
     const regions = findHighEntropyRegions(content);
     if (regions.length === 0) continue;
@@ -160,6 +144,7 @@ function checkEntropy(contents: VsixContents): Finding[] {
         "Code region has unusually high Shannon entropy (randomness). This often indicates obfuscated or encoded content.",
       severity: "medium",
       category: "obfuscation",
+      capabilities: ["obfuscation"],
       location: {
         file: filename,
         line: findLineNumberByIndex(content, firstRegion.start),
@@ -225,8 +210,10 @@ function detectUnicodePattern(
 
   while ((match = r.exec(content)) !== null) {
     if (excludedOffsets?.has(match.index) === true) continue;
+    if (isTextPresentationControl(content, match.index, match[0])) continue;
     const { line, column } = findLineAndColumn(match.index, starts);
     matches.push({
+      index: match.index,
       line,
       column,
       matched: match[0],
@@ -237,69 +224,14 @@ function detectUnicodePattern(
   return matches.length >= minMatches ? matches : [];
 }
 
-/**
- * Check if the file appears to be primarily i18n/localization content.
- */
-function isI18nFile(filename: string, content: string): boolean {
-  const i18nPatterns = [
-    /locales?\//i,
-    /i18n\//i,
-    /translations?\//i,
-    /lang\//i,
-    /messages/i,
-    /\.l10n\./i,
-    /nls\./i,
-    // moment locale files (e.g., moment/locale/ku.js)
-    /moment\/.*locale/i,
-    // Encoding tables (iconv-lite encodings/tables/*.js)
-    /encodings?\/(tables|sbcs)/i,
-    // HTML entities data
-    /entities\.json$/i,
-    // Emoji data files
-    /emoji\.json$/i,
-    // CLI spinners data
-    /spinners\.json$/i,
-    // Public Suffix List
-    /psl\//i,
-    // VS Code NLS localization files (package.nls.*.json)
-    /package\.nls\.[a-z]{2}(-[a-z]{2})?\.json$/i,
-  ];
-  if (i18nPatterns.some((p) => p.test(filename))) {
-    return true;
-  }
-
-  if (filename.endsWith(".json")) {
-    const keyValuePairs = (content.match(/"[^"]+"\s*:\s*"[^"]+"/g) ?? []).length;
-    const lines = content.split("\n").length;
-    if (keyValuePairs / lines > 0.5 && keyValuePairs > 10) {
-      return true;
-    }
-  }
-
-  // Persian (Farsi) and Arabic scripts use zero-width non-joiner (U+200C) legitimately
-  // for proper text rendering. Detect these scripts by their Unicode ranges.
-  const hasPersianArabicScript = /[\u0600-\u06FF\u0750-\u077F]/.test(content);
-  if (hasPersianArabicScript && filename.endsWith(".json")) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
- * Check if file has legitimate RTL text support (math, diagrams, language files).
- */
-function isRtlFile(filename: string): boolean {
-  const rtlPatterns = [
-    /katex/i, // KaTeX math rendering
-    /mermaid/i, // Mermaid diagram library
-    /mathjax/i, // MathJax math rendering
-    /drawio.*\/(dia_he|dia_fa|dia_ar)/i, // DrawIO Hebrew/Farsi/Arabic language files
-    /_he\.txt$/i, // Hebrew language files
-    /_fa\.txt$/i, // Farsi language files
-    /_ar\.txt$/i, // Arabic language files
-  ];
-  return rtlPatterns.some((p) => p.test(filename));
+function isTextPresentationControl(content: string, index: number, matched: string): boolean {
+  const before = content.slice(Math.max(0, index - 2), index);
+  if (matched === "\ufe0e" || matched === "\ufe0f") return /\p{Emoji}$/u.test(before);
+  if (matched !== "\u200c" && matched !== "\u200d") return false;
+  return (
+    /\p{Script=Arabic}$/u.test(before) &&
+    /^\p{Script=Arabic}/u.test(content.slice(index + 1, index + 3))
+  );
 }
 
 /**
@@ -330,24 +262,6 @@ function hasExecutionInProximity(
   return execPatterns.some((p) => p.test(region));
 }
 
-// Rules that should be skipped for bundled code and node_modules
-const SKIP_UNICODE_FOR_BUNDLED = new Set([
-  "ZERO_WIDTH_CHARS",
-  "CYRILLIC_HOMOGLYPH",
-  "OTHER_INVISIBLE_CHARS",
-  "UNICODE_ASCII_ESCAPE",
-]);
-
-// Rules that should be skipped for node_modules (third-party deps)
-// Critical rules (VARIATION_SELECTOR, BIDI_OVERRIDE, INVISIBLE_CODE_EXECUTION) still run
-const SKIP_UNICODE_FOR_NODE_MODULES = new Set([
-  "ZERO_WIDTH_CHARS",
-  "CYRILLIC_HOMOGLYPH",
-  "OTHER_INVISIBLE_CHARS",
-  "UNICODE_ASCII_ESCAPE",
-  "OBFUSCATION_HIGH_ENTROPY",
-]);
-
 const UNICODE_RULES: UnicodeRule[] = [
   {
     id: "ZERO_WIDTH_CHARS",
@@ -355,9 +269,7 @@ const UNICODE_RULES: UnicodeRule[] = [
     description:
       "File contains zero-width Unicode characters (U+200B-200D, U+FEFF). These invisible characters can hide malicious code or be used for steganography.",
     severity: "high",
-    detect: (content, filename) => {
-      // Skip i18n files - Persian, Arabic, Kurdish etc. use U+200C (ZWNJ) legitimately
-      if (isI18nFile(filename, content)) return [];
+    detect: (content) => {
       return detectUnicodePattern(content, ZERO_WIDTH_REGEX, 3);
     },
   },
@@ -367,28 +279,7 @@ const UNICODE_RULES: UnicodeRule[] = [
     description:
       "File contains many Unicode variation selectors (U+FE00-FE0F). GlassWorm malware uses these to hide executable code.",
     severity: "critical",
-    detect: (content, filename) => {
-      // Skip emoji/entity data files that legitimately use variation selectors
-      const emojiDataPatterns = [
-        /emoji/i,
-        /entities/i,
-        /spinners/i,
-        /\.md$/i, // README files often have emoji
-        /gemoji/i, // GitHub emoji library
-        /twemoji/i, // Twitter emoji
-        /node-emoji/i, // node-emoji package
-        /unicode.*data/i, // Unicode data files
-        /emojis?\.(json|js|ts)$/i, // emoji data files
-      ];
-      if (emojiDataPatterns.some((p) => p.test(filename))) return [];
-
-      // If file contains many actual emoji characters, it's likely legitimate emoji data
-      // Emoji ranges: Emoticons, Dingbats, Symbols, Flags, etc.
-      // eslint-disable-next-line no-misleading-character-class
-      const emojiPattern = /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu;
-      const emojiMatches = content.match(emojiPattern);
-      if (emojiMatches && emojiMatches.length > 100) return [];
-
+    detect: (content) => {
       // GlassWorm uses hundreds of variation selectors; 50 is well above normal emoji use
       return detectUnicodePattern(content, VARIATION_SELECTOR_REGEX, 50);
     },
@@ -399,9 +290,7 @@ const UNICODE_RULES: UnicodeRule[] = [
     description:
       "File contains Unicode bidirectional override characters (U+202A-202E). This is the Trojan Source attack technique.",
     severity: "critical",
-    detect: (content, filename, rangeOffsets) => {
-      // Skip files with legitimate RTL text support (math, diagrams, language files)
-      if (isRtlFile(filename)) return [];
+    detect: (content, _filename, rangeOffsets) => {
       return detectUnicodePattern(content, BIDI_OVERRIDE_REGEX, 1, rangeOffsets);
     },
   },
@@ -419,13 +308,7 @@ const UNICODE_RULES: UnicodeRule[] = [
     description:
       "File contains a token with Cyrillic look-alike characters: either mixed into Latin text (e.g., 'gооgle') or forming a domain label entirely from Cyrillic look-alikes (e.g., 'раураӏ.com'). Pure Cyrillic words outside domain-spoof contexts are not flagged.",
     severity: "high",
-    detect: (content, filename) => {
-      if (filename.endsWith(".md") || filename.endsWith(".txt")) {
-        return [];
-      }
-      if (isI18nFile(filename, content)) {
-        return [];
-      }
+    detect: (content) => {
       return detectCyrillicHomoglyphs(content);
     },
   },
@@ -443,27 +326,14 @@ const UNICODE_RULES: UnicodeRule[] = [
     description:
       "File contains many invisible Unicode characters in proximity to code execution functions. Strong indicator of hidden malicious code.",
     severity: "critical",
-    detect: (content, filename, rangeOffsets) => {
-      if (isI18nFile(filename, content)) {
-        return [];
-      }
-
+    detect: (content, _filename, rangeOffsets) => {
       const suspiciousInvisible = new RegExp(
         `${VARIATION_SELECTOR_REGEX.source}|${BIDI_OVERRIDE_REGEX.source}`,
         "g",
       );
       const matches = detectUnicodePattern(content, suspiciousInvisible, 5, rangeOffsets);
 
-      return matches.filter((m) => {
-        const matchIndex =
-          content.slice(0, m.line).split("\n").length > 1
-            ? content
-                .split("\n")
-                .slice(0, m.line - 1)
-                .join("\n").length + m.column
-            : m.column;
-        return hasExecutionInProximity(content, matchIndex);
-      });
+      return matches.filter((match) => hasExecutionInProximity(content, match.index));
     },
   },
 ];
@@ -477,23 +347,7 @@ function checkUnicodeHiding(contents: VsixContents): Finding[] {
 
     const content = getStringContent(contents, filename, buffer);
     const rangeOffsets = findLtrRangeOffsets(buffer, filename);
-    const bundlerInfo = detectBundler(
-      content,
-      filename,
-      contents.cache as Map<string, BundlerInfo> | undefined,
-    );
-    const inNodeModules = isNodeModules(filename);
-
     for (const rule of UNICODE_RULES) {
-      // Skip non-critical rules for bundled code
-      if (bundlerInfo.isBundled && SKIP_UNICODE_FOR_BUNDLED.has(rule.id)) {
-        continue;
-      }
-      // Skip non-critical rules for node_modules (third-party deps)
-      if (inNodeModules && SKIP_UNICODE_FOR_NODE_MODULES.has(rule.id)) {
-        continue;
-      }
-
       const matches = rule.detect(content, filename, rangeOffsets);
       if (matches.length === 0) continue;
 
@@ -510,6 +364,7 @@ function checkUnicodeHiding(contents: VsixContents): Finding[] {
         description: rule.description,
         severity: rule.severity,
         category: "obfuscation",
+        capabilities: ["obfuscation"],
         location: {
           file: filename,
           line: firstMatch.line,

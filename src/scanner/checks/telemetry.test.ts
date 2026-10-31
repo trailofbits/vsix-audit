@@ -1,6 +1,30 @@
 import { describe, expect, it } from "vitest";
-import type { TelemetryServiceInfo, VsixContents, VsixManifest, ZooData } from "../types.js";
-import { checkTelemetry } from "./telemetry.js";
+import type {
+  TelemetryServiceInfo,
+  VsixContents,
+  VsixManifest,
+  ZooData,
+} from "#internal/scanner/types.js";
+import { checkTelemetry } from "#internal/scanner/checks/telemetry.js";
+
+describe("unverified opt-out references", () => {
+  it.each(["", "// vscode.env.isTelemetryEnabled\n", "void vscode.env.isTelemetryEnabled;\n"])(
+    "does not infer enforcement or reduce severity from a reference",
+    (prefix) => {
+      const contents = makeContents({
+        "main.js": `${prefix}import * as Sentry from "@sentry/node"; Sentry.captureMessage("always sends");`,
+      });
+      const findings = checkTelemetry(contents, makeZooData());
+      expect(findings).toContainEqual(
+        expect.objectContaining({
+          id: "TELEMETRY_DETECTED",
+          severity: "high",
+        }),
+      );
+      expect(findings[0]?.metadata?.["optOut"]).toMatchObject({ enforcement: "unverified" });
+    },
+  );
+});
 
 function makeContents(
   files: Record<string, string>,
@@ -255,246 +279,57 @@ describe("checkTelemetry", () => {
   // OPT-OUT DETECTION
   // ============================================================================
 
-  describe("opt-out detection", () => {
-    it("detects VS Code API opt-out (vscode.env.isTelemetryEnabled)", () => {
-      const content = `
-        import * as Sentry from "@sentry/node";
-        import * as vscode from "vscode";
-
-        if (vscode.env.isTelemetryEnabled) {
-          Sentry.init({ dsn: "..." });
-        }
-      `;
-      const contents = makeContents({ "extension.ts": content });
-      const zooData = makeZooData();
-
-      const findings = checkTelemetry(contents, zooData);
-
-      const finding = findings.find((f) => f.id === "TELEMETRY_DETECTED");
-      expect(finding?.metadata?.["optOut"]).toEqual({
-        available: true,
-        method: "vscode-api",
-        settingName: "vscode.env.isTelemetryEnabled",
+  describe("opt-out references", () => {
+    it.each([
+      "if (vscode.env.isTelemetryEnabled) {}",
+      'const alias = require("vscode"); if (alias.env.isTelemetryEnabled) {}',
+      'import { env as settings } from "vscode"; void settings.isTelemetryEnabled;',
+      "// isTelemetryEnabled is mentioned in documentation",
+    ])("records a flag reference without claiming enforcement", (code) => {
+      const findings = checkTelemetry(
+        makeContents({
+          "extension.ts": `import * as Sentry from "@sentry/node"; ${code}`,
+        }),
+        makeZooData(),
+      );
+      expect(findings[0]?.metadata?.["optOut"]).toEqual({
+        enforcement: "unverified",
+        references: ["isTelemetryEnabled"],
       });
-      expect(finding?.severity).toBe("medium");
+      expect(findings[0]?.severity).toBe("high");
     });
 
-    it("detects VS Code API opt-out in minified bundles (aliased vscode)", () => {
-      // Real case from hashicorp.terraform's dist/extension.js: the `vscode`
-      // import is renamed to a short identifier (e.g. `oU`) during bundling,
-      // so the opt-out call appears as `oU.env.isTelemetryEnabled` rather
-      // than the literal `vscode.env.isTelemetryEnabled`.
-      const content = `
-        var oU=require("vscode"),appInsights=require("applicationinsights");
-        function init(){oU.env.isTelemetryEnabled&&appInsights.setup("...").start();}
-      `;
-      const contents = makeContents({ "dist/extension.js": content });
-      const zooData = makeZooData();
-
-      const findings = checkTelemetry(contents, zooData);
-
-      const finding = findings.find((f) => f.id === "TELEMETRY_DETECTED");
-      expect(finding?.metadata?.["optOut"]).toMatchObject({
-        available: true,
-        method: "vscode-api",
-      });
-      expect(finding?.severity).toBe("medium");
-    });
-
-    it("detects VS Code API opt-out through an ESM namespace alias", () => {
-      const content = `
-        import * as code from "vscode";
-        import * as Sentry from "@sentry/node";
-
-        if (code.env.isTelemetryEnabled) {
-          Sentry.init({ dsn: "..." });
-        }
-      `;
-      const contents = makeContents({ "extension.ts": content });
-      const zooData = makeZooData();
-
-      const findings = checkTelemetry(contents, zooData);
-
-      const finding = findings.find((f) => f.id === "TELEMETRY_DETECTED");
-      expect(finding?.metadata?.["optOut"]).toMatchObject({
-        available: true,
-        method: "vscode-api",
-      });
-      expect(finding?.severity).toBe("medium");
-    });
-
-    it("detects VS Code API opt-out through a destructured env alias", () => {
-      const content = `
-        const { env: telemetryEnv } = require("vscode");
-        const Sentry = require("@sentry/node");
-
-        if (telemetryEnv.isTelemetryEnabled) {
-          Sentry.init({ dsn: "..." });
-        }
-      `;
-      const contents = makeContents({ "extension.js": content });
-      const zooData = makeZooData();
-
-      const findings = checkTelemetry(contents, zooData);
-
-      const finding = findings.find((f) => f.id === "TELEMETRY_DETECTED");
-      expect(finding?.metadata?.["optOut"]).toMatchObject({
-        available: true,
-        method: "vscode-api",
-      });
-      expect(finding?.severity).toBe("medium");
-    });
-
-    it("does not attribute vscode-api opt-out to unrelated env.isTelemetryEnabled", () => {
-      // The `.env.isTelemetryEnabled` token alone is not enough — a custom
-      // config object could share the method name. Without a `"vscode"`
-      // module import in the same file, we must not claim a VS Code API
-      // opt-out exists.
-      const content = `
-        const Sentry = require("@sentry/node");
-        const config = require("./my-config");
-        if (config.env.isTelemetryEnabled) {
-          Sentry.init({ dsn: "..." });
-        }
-      `;
-      const contents = makeContents({ "extension.js": content });
-      const zooData = makeZooData();
-
-      const findings = checkTelemetry(contents, zooData);
-
-      const finding = findings.find((f) => f.id === "TELEMETRY_DETECTED");
-      // We do not attribute vscode-api here; some other opt-out path may
-      // still detect this (code-conditional via the `if` statement isn't
-      // matched by the existing patterns), but vscode-api must not appear.
-      expect(finding?.metadata?.["optOut"]).not.toMatchObject({ method: "vscode-api" });
-    });
-
-    it("does not attribute vscode-api opt-out when vscode is imported but receiver is unrelated", () => {
-      const content = `
-        const vscode = require("vscode");
-        const Sentry = require("@sentry/node");
-        const config = require("./my-config");
-
-        if (config.env.isTelemetryEnabled) {
-          Sentry.init({ dsn: "..." });
-        }
-      `;
-      const contents = makeContents({ "extension.js": content });
-      const zooData = makeZooData();
-
-      const findings = checkTelemetry(contents, zooData);
-
-      const finding = findings.find((f) => f.id === "TELEMETRY_DETECTED");
-      expect(finding?.metadata?.["optOut"]).toEqual({
-        available: false,
-        method: "none",
-        settingName: null,
-      });
-      expect(finding?.severity).toBe("high");
-    });
-
-    it("detects manifest configuration opt-out", () => {
-      const content = `
-        import * as Sentry from "@sentry/node";
-        Sentry.init({ dsn: "..." });
-      `;
+    it("records declared settings once for all detected services", () => {
       const contents = makeContents(
-        { "extension.ts": content },
+        {
+          "extension.ts":
+            'import * as Sentry from "@sentry/node"; import Mixpanel from "mixpanel";',
+        },
         {
           contributes: {
-            configuration: {
-              properties: {
-                "myext.enableTelemetry": {
-                  type: "boolean",
-                  default: true,
-                  description: "Enable telemetry",
-                },
-              },
-            },
+            configuration: { properties: { "fixture.enableTelemetry": { type: "boolean" } } },
           },
         },
       );
-      const zooData = makeZooData();
-
-      const findings = checkTelemetry(contents, zooData);
-
-      const finding = findings.find((f) => f.id === "TELEMETRY_DETECTED");
-      expect(finding?.metadata?.["optOut"]).toEqual({
-        available: true,
-        method: "manifest-config",
-        settingName: "myext.enableTelemetry",
-      });
-      expect(finding?.severity).toBe("medium");
+      for (const finding of checkTelemetry(contents, makeZooData())) {
+        expect(finding.metadata?.["optOut"]).toEqual({
+          enforcement: "unverified",
+          references: ["fixture.enableTelemetry"],
+        });
+        expect(finding.severity).toBe("high");
+      }
     });
 
-    it("detects code conditional opt-out via getConfiguration", () => {
-      const content = `
-        import * as Sentry from "@sentry/node";
-        const config = vscode.workspace.getConfiguration("myext");
-        if (config.get("enableTelemetry")) {
-          Sentry.init({ dsn: "..." });
-        }
-      `;
-      const contents = makeContents({ "extension.ts": content });
-      const zooData = makeZooData();
-
-      const findings = checkTelemetry(contents, zooData);
-
-      const finding = findings.find((f) => f.id === "TELEMETRY_DETECTED");
-      expect(finding?.metadata?.["optOut"]).toMatchObject({
-        available: true,
-        method: "code-conditional",
-      });
-      expect(finding?.severity).toBe("medium");
-    });
-
-    it("sets high severity when no opt-out is detected", () => {
-      const content = `
-        import * as Sentry from "@sentry/node";
-        Sentry.init({ dsn: "..." });
-      `;
-      const contents = makeContents({ "extension.ts": content });
-      const zooData = makeZooData();
-
-      const findings = checkTelemetry(contents, zooData);
-
-      const finding = findings.find((f) => f.id === "TELEMETRY_DETECTED");
-      expect(finding?.metadata?.["optOut"]).toEqual({
-        available: false,
-        method: "none",
-        settingName: null,
-      });
-      expect(finding?.severity).toBe("high");
-    });
-
-    it("detects opt-out in a different file (cross-file detection)", () => {
-      const telemetryFile = `
-        import * as Sentry from "@sentry/node";
-        export function init() {
-          Sentry.init({ dsn: "..." });
-        }
-      `;
-      const mainFile = `
-        import * as vscode from "vscode";
-        import { init } from "./telemetry";
-
-        if (vscode.env.isTelemetryEnabled) {
-          init();
-        }
-      `;
-      const contents = makeContents({
-        "src/telemetry.ts": telemetryFile,
-        "src/extension.ts": mainFile,
-      });
-      const zooData = makeZooData();
-
-      const findings = checkTelemetry(contents, zooData);
-
-      const finding = findings.find((f) => f.id === "TELEMETRY_DETECTED");
-      expect(finding?.metadata?.["optOut"]).toEqual({
-        available: true,
-        method: "vscode-api",
-        settingName: "vscode.env.isTelemetryEnabled",
+    it("records a configuration read as an unverified reference", () => {
+      const findings = checkTelemetry(
+        makeContents({
+          "extension.ts": 'import * as Sentry from "@sentry/node"; config.get("enableTelemetry");',
+        }),
+        makeZooData(),
+      );
+      expect(findings[0]?.metadata?.["optOut"]).toEqual({
+        enforcement: "unverified",
+        references: ["enableTelemetry"],
       });
     });
   });
@@ -563,8 +398,8 @@ describe("checkTelemetry", () => {
   // NODE_MODULES EXCLUSIONS
   // ============================================================================
 
-  describe("node_modules exclusions", () => {
-    it("skips files in node_modules", () => {
+  describe("dependency coverage", () => {
+    it("retains telemetry references in node_modules", () => {
       const content = `
         import * as Sentry from "@sentry/node";
         Sentry.init({ dsn: "..." });
@@ -574,10 +409,10 @@ describe("checkTelemetry", () => {
 
       const findings = checkTelemetry(contents, zooData);
 
-      expect(findings).toHaveLength(0);
+      expect(findings).toHaveLength(1);
     });
 
-    it("skips files in vendor directory", () => {
+    it("retains telemetry references in vendor directory", () => {
       const content = `
         import * as Sentry from "@sentry/node";
         Sentry.init({ dsn: "..." });
@@ -587,7 +422,7 @@ describe("checkTelemetry", () => {
 
       const findings = checkTelemetry(contents, zooData);
 
-      expect(findings).toHaveLength(0);
+      expect(findings).toHaveLength(1);
     });
   });
 
@@ -760,7 +595,7 @@ import * as Sentry from "@sentry/node";`;
   // ============================================================================
 
   describe("severity determination", () => {
-    it("returns medium severity with VS Code API opt-out", () => {
+    it("keeps severity when opt-out enforcement is unverified", () => {
       const content = `
         import * as Sentry from "@sentry/node";
         if (vscode.env.isTelemetryEnabled) {
@@ -773,7 +608,7 @@ import * as Sentry from "@sentry/node";`;
       const findings = checkTelemetry(contents, zooData);
       const finding = findings.find((f) => f.id === "TELEMETRY_DETECTED");
 
-      expect(finding?.severity).toBe("medium");
+      expect(finding?.severity).toBe("high");
     });
 
     it("returns high severity without opt-out", () => {

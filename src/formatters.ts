@@ -214,45 +214,51 @@ function printTimings(timings: ModuleTimings): void {
   console.log();
 }
 
+function printCheckInventory(inventory: ScanResult["inventory"]): void {
+  if (inventory.length === 0) return;
+  console.log(pc.cyan("Checks performed:"));
+  for (const check of inventory) {
+    if (check.enabled) {
+      console.log(`  ${pc.green("✓")} ${pc.bold(check.name.padEnd(14))}${check.description}`);
+    } else {
+      console.log(
+        `  ${pc.yellow("⚠")} ${pc.bold(check.name.padEnd(14))}` +
+          pc.dim(`Skipped (${check.skipReason})`),
+      );
+    }
+  }
+  console.log();
+}
+
+function printCoverageWarnings(coverage: ScanResult["metadata"]["coverage"]): void {
+  if (!coverage.degraded) return;
+  console.log(pc.yellow("Coverage degraded:"));
+  for (const warning of coverage.warnings.slice(0, 10)) {
+    console.log(`  ${pc.yellow("⚠")} ${warning}`);
+  }
+  if (coverage.warnings.length > 10) {
+    console.log(`  ${pc.dim(`... and ${coverage.warnings.length - 10} more`)}`);
+  }
+  console.log();
+}
+
 export function printTextReport(result: ScanResult): void {
   console.log();
   console.log(pc.bold("vsix-audit scan results"));
   console.log(pc.dim("─".repeat(50)));
   console.log();
   console.log(`${pc.cyan("Extension:")} ${result.extension.name} v${result.extension.version}`);
-  console.log(`${pc.cyan("Publisher:")} ${result.extension.publisher}`);
+  console.log(`${pc.cyan("Publisher:")} ${result.extension.publisher ?? "(unknown)"}`);
   console.log(`${pc.cyan("Scanned:")} ${result.metadata.scannedAt}`);
   console.log();
 
-  if (result.inventory.length > 0) {
-    console.log(pc.cyan("Checks performed:"));
-    for (const check of result.inventory) {
-      if (check.enabled) {
-        console.log(`  ${pc.green("✓")} ${pc.bold(check.name.padEnd(14))}${check.description}`);
-      } else {
-        console.log(
-          `  ${pc.yellow("⚠")} ${pc.bold(check.name.padEnd(14))}` +
-            pc.dim(`Skipped (${check.skipReason})`),
-        );
-      }
-    }
-    console.log();
-  }
+  printCheckInventory(result.inventory);
 
   if (result.metadata.timings) {
     printTimings(result.metadata.timings);
   }
 
-  if (result.metadata.coverage?.degraded === true) {
-    console.log(pc.yellow("Coverage degraded:"));
-    for (const warning of result.metadata.coverage.warnings.slice(0, 10)) {
-      console.log(`  ${pc.yellow("⚠")} ${warning}`);
-    }
-    if (result.metadata.coverage.warnings.length > 10) {
-      console.log(`  ${pc.dim(`... and ${result.metadata.coverage.warnings.length - 10} more`)}`);
-    }
-    console.log();
-  }
+  printCoverageWarnings(result.metadata.coverage);
 
   if (result.findings.length === 0) {
     console.log(pc.green("✓ No security issues found"));
@@ -322,7 +328,7 @@ function printBatchTimings(results: ScanResult[]): void {
 function printBatchCoverage(results: ScanResult[]): void {
   for (const result of results) {
     const coverage = result.metadata.coverage;
-    if (coverage?.degraded !== true) continue;
+    if (coverage.degraded !== true) continue;
     const source = result.metadata.sourcePath ?? result.extension.id;
     console.log(pc.yellow(`Coverage degraded: ${source}`));
     for (const warning of coverage.warnings) console.log(`  ${warning}`);
@@ -345,8 +351,7 @@ export function printBatchSummary(batch: BatchScanResult): void {
   printBatchTimings(results);
   printBatchCoverage(results);
   const incomplete =
-    summary.failedFiles > 0 ||
-    results.some((result) => result.metadata.coverage?.degraded === true);
+    summary.failedFiles > 0 || results.some((result) => result.metadata.coverage.degraded === true);
   if (summary.totalFindings === 0) {
     const message = incomplete
       ? "No findings in completed checks. The scan is incomplete."
@@ -373,24 +378,6 @@ export function outputResult(result: ScanResult, format: string, toolVersion: st
     console.log(JSON.stringify(toSarif(result, toolVersion), null, 2));
   } else {
     printTextReport(result);
-  }
-}
-
-/**
- * Dispatch combined multi-result output.
- */
-export function outputResults(results: ScanResult[], format: string, toolVersion: string): void {
-  if (format === "json") {
-    console.log(JSON.stringify(results, null, 2));
-  } else if (format === "sarif") {
-    console.log(JSON.stringify(toSarifCombined(results, toolVersion), null, 2));
-  } else {
-    for (const result of results) {
-      const registry = (result.metadata as { registry?: string }).registry ?? "unknown";
-      console.log(pc.bold(`Registry: ${registry}`));
-      printTextReport(result);
-      console.log();
-    }
   }
 }
 

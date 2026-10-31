@@ -1,4 +1,4 @@
-import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "#internal/scanner/constants.js";
+import { isScannable, JS_EXTENSIONS } from "#internal/scanner/constants.js";
 import type {
   Finding,
   TelemetryCategory,
@@ -105,14 +105,6 @@ const DATA_COLLECTION_PATTERNS: Array<{ pattern: RegExp; field: string }> = [
   { pattern: /performance[_-]?metrics/i, field: "performance_metrics" },
 ];
 
-type OptOutMethod = "vscode-api" | "manifest-config" | "code-conditional" | "none";
-
-interface OptOutInfo {
-  available: boolean;
-  method: OptOutMethod;
-  settingName: string | null;
-}
-
 interface TelemetryDetection {
   serviceName: string;
   serviceCategory: TelemetryCategory;
@@ -120,7 +112,7 @@ interface TelemetryDetection {
   sdkPackage: string | null;
   isKnownService: boolean;
   dataCollected: string[];
-  optOut: OptOutInfo;
+  optOutReferences: string[];
   file: string;
   line: number | undefined;
 }
@@ -254,170 +246,31 @@ function detectSdkImports(
   return results;
 }
 
-/**
- * Detect VS Code API opt-out usage.
- *
- * `vscode.env.isTelemetryEnabled` is the canonical signal. Two accepted
- * forms:
- *   1. Literal `vscode.env.isTelemetryEnabled` — unambiguous, attribute
- *      directly.
- *   2. Aliased `<ident>.env.isTelemetryEnabled` (from a bundler that
- *      renamed the `vscode` import). On its own this is ambiguous — a
- *      custom config object could share the method name — so we only
- *      accept it when the same file also imports the `"vscode"` module.
- *
- * The literal module specifier `"vscode"` survives bundling, so the
- * import-presence check is reliable even for minified extensions.
- */
-const IDENTIFIER_PATTERN = "[A-Za-z_$][\\w$]*";
-
-const VSCODE_NAMESPACE_IMPORT_REGEX = new RegExp(
-  `\\bimport\\s+(?!type\\b)\\*\\s+as\\s+(${IDENTIFIER_PATTERN})\\s+from\\s*["']vscode["']`,
-  "g",
-);
-
-const VSCODE_DEFAULT_IMPORT_REGEX = new RegExp(
-  `\\bimport\\s+(?!type\\b)(${IDENTIFIER_PATTERN})(?:\\s*,\\s*\\{[^}]*\\})?\\s+from\\s*["']vscode["']`,
-  "g",
-);
-
-const VSCODE_REQUIRE_ALIAS_REGEX = new RegExp(
-  `(?:^|[;,(\\n]|\\b(?:const|let|var)\\s+)\\s*(${IDENTIFIER_PATTERN})\\s*=\\s*` +
-    `(?:(?:__importStar|__toESM|__importDefault)\\s*\\(\\s*)?` +
-    `require\\s*\\(\\s*["']vscode["']\\s*\\)\\s*\\)?`,
-  "g",
-);
-
-const VSCODE_NAMED_ENV_IMPORT_REGEX =
-  /\bimport\s+(?!type\b)(?:[^"';]*,\s*)?\{([^}]*)\}\s+from\s*["']vscode["']/g;
-
-const VSCODE_DESTRUCTURED_ENV_REQUIRE_REGEX =
-  /\b(?:const|let|var)\s*\{([^}]*)\}\s*=\s*(?:(?:__importStar|__toESM|__importDefault)\s*\(\s*)?require\s*\(\s*["']vscode["']\s*\)\s*\)?/g;
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function collectVsCodeModuleAliases(content: string): Set<string> {
-  const aliases = new Set<string>(["vscode"]);
-
-  for (const match of content.matchAll(VSCODE_NAMESPACE_IMPORT_REGEX)) {
-    if (match[1] !== undefined && match[1] !== "") aliases.add(match[1]);
-  }
-
-  for (const match of content.matchAll(VSCODE_DEFAULT_IMPORT_REGEX)) {
-    if (match[1] !== undefined && match[1] !== "") aliases.add(match[1]);
-  }
-
-  for (const match of content.matchAll(VSCODE_REQUIRE_ALIAS_REGEX)) {
-    if (match[1] !== undefined && match[1] !== "") aliases.add(match[1]);
-  }
-
-  return aliases;
-}
-
-function collectVsCodeEnvAliases(content: string): Set<string> {
-  const aliases = new Set<string>();
-
-  for (const match of content.matchAll(VSCODE_NAMED_ENV_IMPORT_REGEX)) {
-    addEnvAliasesFromDestructure(match[1], aliases);
-  }
-
-  for (const match of content.matchAll(VSCODE_DESTRUCTURED_ENV_REQUIRE_REGEX)) {
-    addEnvAliasesFromDestructure(match[1], aliases);
-  }
-
-  return aliases;
-}
-
-function addEnvAliasesFromDestructure(specifiers: string | undefined, aliases: Set<string>): void {
-  if (specifiers === undefined || specifiers === "") return;
-
-  for (const specifier of specifiers.split(",")) {
-    const trimmed = specifier.trim();
-    const match = trimmed.match(
-      new RegExp(`^env(?:\\s+(?:as\\s+)?|\\s*:\\s*)?(${IDENTIFIER_PATTERN})?$`),
+function manifestTelemetrySettings(manifest: VsixManifest): string[] {
+  const configuration = manifest.contributes?.["configuration"];
+  const configurations: unknown[] = Array.isArray(configuration) ? configuration : [configuration];
+  const settings: string[] = [];
+  for (const item of configurations) {
+    if (typeof item !== "object" || item === null || !("properties" in item)) continue;
+    const properties = item.properties;
+    if (typeof properties !== "object" || properties === null) continue;
+    settings.push(
+      ...Object.keys(properties).filter((key) => /telemetry|analytics|tracking/i.test(key)),
     );
-    if (match) aliases.add(match[1] ?? "env");
   }
+  return settings;
 }
 
-function detectVsCodeApiOptOut(content: string): boolean {
-  for (const alias of collectVsCodeModuleAliases(content)) {
-    const pattern = new RegExp(
-      `\\b${escapeRegExp(alias)}\\s*\\.\\s*env\\s*\\.\\s*isTelemetryEnabled\\b`,
-      "i",
-    );
-    if (pattern.test(content)) return true;
-  }
-
-  for (const alias of collectVsCodeEnvAliases(content)) {
-    const pattern = new RegExp(`\\b${escapeRegExp(alias)}\\s*\\.\\s*isTelemetryEnabled\\b`, "i");
-    if (pattern.test(content)) return true;
-  }
-
-  return false;
-}
-
-/**
- * Detect code conditional opt-out patterns.
- */
-function detectCodeConditionalOptOut(content: string): {
-  found: boolean;
-  settingName: string | null;
-} {
-  // Common patterns for configuration-based opt-out
-  const patterns = [
-    /getConfiguration\s*\([^)]*\)\s*\.\s*get\s*\(\s*["']([^"']*telemetry[^"']*)["']/i,
-    /getConfiguration\s*\(\s*["']([^"']+)["']\s*\)\s*\.\s*get\s*\(\s*["']([^"']*enable[^"']*)["']/i,
-    /config\s*\.\s*get\s*\(\s*["']([^"']*telemetry[^"']*)["']/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = content.match(pattern);
-    if (match) {
-      return { found: true, settingName: match[1] ?? match[2] ?? null };
+function collectOptOutReferences(manifest: VsixManifest, files: Map<string, string>): string[] {
+  const references = new Set(manifestTelemetrySettings(manifest));
+  for (const content of files.values()) {
+    if (/\bisTelemetryEnabled\b/.test(content)) references.add("isTelemetryEnabled");
+    const settings = /(?:get|config\.get)\s*\(\s*["']([^"']*telemetry[^"']*)["']/gi;
+    for (const match of content.matchAll(settings)) {
+      if (match[1] !== undefined) references.add(match[1]);
     }
   }
-
-  return { found: false, settingName: null };
-}
-
-/**
- * Check manifest for telemetry configuration settings.
- */
-function detectManifestOptOut(manifest: VsixManifest): {
-  found: boolean;
-  settingName: string | null;
-} {
-  const contributes = manifest.contributes;
-  if (!contributes) return { found: false, settingName: null };
-
-  const configuration = contributes["configuration"];
-  if (configuration === undefined) return { found: false, settingName: null };
-
-  // configuration can be an object or array
-  const configs = Array.isArray(configuration) ? configuration : [configuration];
-
-  for (const config of configs) {
-    if (typeof config !== "object" || config === null) continue;
-
-    const properties = (config as { properties?: Record<string, unknown> }).properties;
-    if (!properties) continue;
-
-    for (const [key, _value] of Object.entries(properties)) {
-      const keyLower = key.toLowerCase();
-      if (
-        keyLower.includes("telemetry") ||
-        keyLower.includes("analytics") ||
-        keyLower.includes("tracking")
-      ) {
-        return { found: true, settingName: key };
-      }
-    }
-  }
-
-  return { found: false, settingName: null };
+  return [...references];
 }
 
 /**
@@ -439,44 +292,25 @@ function detectDataCollection(content: string, nearIndex: number): string[] {
   return collected;
 }
 
-/**
- * Determine opt-out information for a file.
- */
-function determineOptOut(manifest: VsixManifest, allFileContents: Map<string, string>): OptOutInfo {
-  // Check VS Code API across all files
-  for (const fileContent of allFileContents.values()) {
-    if (detectVsCodeApiOptOut(fileContent)) {
-      return {
-        available: true,
-        method: "vscode-api",
-        settingName: "vscode.env.isTelemetryEnabled",
-      };
-    }
-  }
+interface EndpointService {
+  name: string;
+  category: TelemetryCategory;
+  key: string;
+  known: boolean;
+}
 
-  // Check manifest for configuration
-  const manifestOptOut = detectManifestOptOut(manifest);
-  if (manifestOptOut.found) {
-    return {
-      available: true,
-      method: "manifest-config",
-      settingName: manifestOptOut.settingName,
-    };
+function endpointService(
+  url: string,
+  services: Map<string, TelemetryServiceInfo>,
+): EndpointService | undefined {
+  const domain = extractDomain(url);
+  if (domain === null || domain === "" || isDocumentationUrl(url)) return undefined;
+  const info = services.get(domain);
+  if (info !== undefined) {
+    return { name: info.name, category: info.category, key: `${info.name}:endpoint`, known: true };
   }
-
-  // Check code conditional patterns across all files
-  for (const fileContent of allFileContents.values()) {
-    const codeOptOut = detectCodeConditionalOptOut(fileContent);
-    if (codeOptOut.found) {
-      return {
-        available: true,
-        method: "code-conditional",
-        settingName: codeOptOut.settingName,
-      };
-    }
-  }
-
-  return { available: false, method: "none", settingName: null };
+  if (!isTelemetryPath(url)) return undefined;
+  return { name: domain, category: "analytics", key: `unknown:endpoint:${domain}`, known: false };
 }
 
 /**
@@ -485,11 +319,13 @@ function determineOptOut(manifest: VsixManifest, allFileContents: Map<string, st
 function analyzeFile(
   filename: string,
   content: string,
-  manifest: VsixManifest,
-  telemetryServices: Map<string, TelemetryServiceInfo>,
-  allFileContents: Map<string, string>,
-  seenServices: Set<string>,
+  context: {
+    telemetryServices: Map<string, TelemetryServiceInfo>;
+    optOutReferences: string[];
+    seenServices: Set<string>;
+  },
 ): TelemetryDetection[] {
+  const { telemetryServices, optOutReferences, seenServices } = context;
   const detections: TelemetryDetection[] = [];
   const lineStarts = computeLineStarts(content);
 
@@ -502,7 +338,6 @@ function analyzeFile(
 
     const line = findLineNumberByString(content, pkg, lineStarts);
     const dataCollected = detectDataCollection(content, index);
-    const optOut = determineOptOut(manifest, allFileContents);
 
     detections.push({
       serviceName: info.name,
@@ -511,67 +346,27 @@ function analyzeFile(
       sdkPackage: pkg,
       isKnownService: true,
       dataCollected,
-      optOut,
+      optOutReferences,
       file: filename,
       line,
     });
   }
 
-  // Detect telemetry endpoints
-  const urls = extractUrls(content);
-  for (const { url, index } of urls) {
-    const domain = extractDomain(url);
-    if (domain === null || domain === "") continue;
-
-    // Skip documentation URLs for known services
-    // (e.g., https://posthog.com/docs/... is not a telemetry endpoint)
-    if (isDocumentationUrl(url)) continue;
-
-    // Check against known telemetry services
-    const serviceInfo = telemetryServices.get(domain);
-    if (serviceInfo) {
-      // Only flag one endpoint per service per file
-      const serviceKey = `${serviceInfo.name}:endpoint`;
-      if (seenServices.has(serviceKey)) continue;
-      seenServices.add(serviceKey);
-
-      const line = findLineNumberByString(content, url, lineStarts);
-      const dataCollected = detectDataCollection(content, index);
-      const optOut = determineOptOut(manifest, allFileContents);
-
-      detections.push({
-        serviceName: serviceInfo.name,
-        serviceCategory: serviceInfo.category,
-        endpoint: url,
-        sdkPackage: null,
-        isKnownService: true,
-        dataCollected,
-        optOut,
-        file: filename,
-        line,
-      });
-    } else if (isTelemetryPath(url)) {
-      // Unknown service but telemetry-like URL path
-      const serviceKey = `unknown:endpoint:${domain}`;
-      if (seenServices.has(serviceKey)) continue;
-      seenServices.add(serviceKey);
-
-      const line = findLineNumberByString(content, url, lineStarts);
-      const dataCollected = detectDataCollection(content, index);
-      const optOut = determineOptOut(manifest, allFileContents);
-
-      detections.push({
-        serviceName: domain,
-        serviceCategory: "analytics",
-        endpoint: url,
-        sdkPackage: null,
-        isKnownService: false,
-        dataCollected,
-        optOut,
-        file: filename,
-        line,
-      });
-    }
+  for (const { url, index } of extractUrls(content)) {
+    const service = endpointService(url, telemetryServices);
+    if (service === undefined || seenServices.has(service.key)) continue;
+    seenServices.add(service.key);
+    detections.push({
+      serviceName: service.name,
+      serviceCategory: service.category,
+      endpoint: url,
+      sdkPackage: null,
+      isKnownService: service.known,
+      dataCollected: detectDataCollection(content, index),
+      optOutReferences,
+      file: filename,
+      line: findLineNumberByString(content, url, lineStarts),
+    });
   }
 
   return detections;
@@ -581,28 +376,22 @@ function analyzeFile(
  * Convert a detection to a finding.
  */
 function detectionToFinding(detection: TelemetryDetection): Finding {
-  const settingName = detection.optOut.settingName;
-  const setting = settingName !== null && settingName !== "" ? ` (${settingName})` : "";
-  const optOutStatus = detection.optOut.available
-    ? `Opt-out available via ${detection.optOut.method}${setting}.`
-    : "No opt-out mechanism detected.";
-
   const detectionMethod =
     detection.sdkPackage !== null && detection.sdkPackage !== ""
       ? `via SDK import (${detection.sdkPackage})`
       : `via endpoint URL`;
 
-  const description = `Extension sends telemetry to ${detection.serviceName} ${detectionMethod}. ${optOutStatus}`;
-
-  // High severity if no opt-out, medium if opt-out exists
-  const severity = detection.optOut.available ? "medium" : "high";
+  const description =
+    `Extension references telemetry service ${detection.serviceName} ${detectionMethod}. ` +
+    "Opt-out enforcement has not been verified.";
 
   return {
     id: "TELEMETRY_DETECTED",
     title: `Telemetry detected: ${detection.serviceName}`,
     description,
-    severity,
+    severity: "high",
     category: "telemetry",
+    capabilities: ["network"],
     location:
       detection.line !== undefined
         ? { file: detection.file, line: detection.line }
@@ -614,7 +403,7 @@ function detectionToFinding(detection: TelemetryDetection): Finding {
       sdkPackage: detection.sdkPackage,
       serviceCategory: detection.serviceCategory,
       dataCollected: detection.dataCollected,
-      optOut: detection.optOut,
+      optOut: { enforcement: "unverified", references: detection.optOutReferences },
     },
   };
 }
@@ -628,27 +417,20 @@ export function checkTelemetry(contents: VsixContents, zooData: ZooData): Findin
   // Pre-load all file contents for cross-file opt-out detection
   const allFileContents = new Map<string, string>();
   for (const [filename, buffer] of contents.files) {
-    if (filename.includes("node_modules/") || filename.includes("vendor/")) continue;
-    if (!isScannable(filename, SCANNABLE_EXTENSIONS_PATTERN)) continue;
-
-    const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
-    if (![".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"].includes(ext)) continue;
+    if (!isScannable(filename, JS_EXTENSIONS)) continue;
 
     allFileContents.set(filename, getStringContent(contents, filename, buffer));
   }
 
   // Track services seen across all files to avoid duplicate findings
-  const seenServices = new Set<string>();
+  const context = {
+    telemetryServices: zooData.telemetryServices,
+    optOutReferences: collectOptOutReferences(contents.manifest, allFileContents),
+    seenServices: new Set<string>(),
+  };
 
   for (const [filename, content] of allFileContents) {
-    const detections = analyzeFile(
-      filename,
-      content,
-      contents.manifest,
-      zooData.telemetryServices,
-      allFileContents,
-      seenServices,
-    );
+    const detections = analyzeFile(filename, content, context);
 
     for (const detection of detections) {
       findings.push(detectionToFinding(detection));

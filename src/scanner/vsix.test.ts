@@ -1,8 +1,9 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateRawSync } from "node:zlib";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { scanExtension } from "#internal/scanner/index.js";
 import {
   MAX_COMPRESSION_RATIO,
   MAX_ENTRY_SIZE,
@@ -11,6 +12,100 @@ import {
   loadDirectory,
   loadExtension,
 } from "#internal/scanner/vsix.js";
+
+describe("archive and directory coverage", () => {
+  it.each([1, 99])(
+    "reports an entry whose bytes disagree with its declared size %s",
+    async (size) => {
+      const root = await mkdtemp(join(tmpdir(), "vsix-size-mismatch-"));
+      try {
+        const archive = join(root, "fixture.vsix");
+        await writeFile(
+          archive,
+          createSpoofedZip([
+            {
+              name: "extension/package.json",
+              content: JSON.stringify({ name: "fixture", version: "1.0.0" }),
+            },
+            {
+              name: "extension/main.js",
+              content: "console.log('hello');",
+              spoofedUncompressedSize: size,
+            },
+          ]),
+        );
+        const contents = await extractVsix(archive);
+        expect(contents.files.has("main.js")).toBe(false);
+        expect(contents.archiveWarnings?.[0]).toMatchObject({
+          id: "ARCHIVE_SKIPPED_ENTRY",
+          normalizedPath: "main.js",
+        });
+        expect(contents.archiveWarnings?.[0]?.reason).toMatch(
+          /uncompressed size does not match|exceeds \d+ byte limit/,
+        );
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("detects bundled malicious versions in either representation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vsix-loader-parity-"));
+    const files = [
+      {
+        name: "package.json",
+        content: JSON.stringify({ name: "fixture", publisher: "test", version: "1.0.0" }),
+      },
+      {
+        name: "node_modules/debug/package.json",
+        content: JSON.stringify({ name: "debug", version: "4.4.2" }),
+      },
+    ];
+    try {
+      const directory = join(root, "extension");
+      await mkdir(join(directory, "node_modules", "debug"), { recursive: true });
+      for (const file of files) await writeFile(join(directory, file.name), file.content);
+      const archive = join(root, "extension.vsix");
+      await writeFile(
+        archive,
+        createTestZip(files.map((file) => ({ ...file, name: `extension/${file.name}` }))),
+      );
+      const options = { output: "json", severity: "critical", modules: ["intel"] } as const;
+      const results = [];
+      for (const target of [directory, archive]) {
+        results.push(await scanExtension(target, { ...options, modules: ["intel"] }));
+      }
+      for (const result of results) {
+        expect(result.findings.map((finding) => finding.id)).toEqual([
+          "MALICIOUS_NPM_PACKAGE_VERSION",
+        ]);
+        expect(result.metadata.coverage.degraded).toBe(false);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports missing directory entry points and oversized skipped files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vsix-directory-limits-"));
+    try {
+      await writeFile(
+        join(root, "package.json"),
+        JSON.stringify({ name: "fixture", publisher: "test", version: "1.0.0", main: "large.js" }),
+      );
+      await writeFile(join(root, "large.js"), "");
+      await truncate(join(root, "large.js"), MAX_ENTRY_SIZE + 1);
+      const contents = await loadDirectory(root);
+      expect(contents.files.has("large.js")).toBe(false);
+      expect(contents.archiveWarnings?.map((warning) => warning.id)).toEqual([
+        "ARCHIVE_SKIPPED_ENTRY",
+        "ARCHIVE_REFERENCED_FILE_SKIPPED",
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
 
 /**
  * Create a minimal ZIP file buffer for testing.
@@ -295,7 +390,7 @@ describe("loadDirectory", () => {
     expect(contents.files.has("README.md")).toBe(true);
   });
 
-  it("excludes node_modules and .git directories", async () => {
+  it("includes bundled dependencies and excludes .git directories", async () => {
     // Create node_modules and .git directories
     await mkdir(join(testDir, "node_modules", "dep"), { recursive: true });
     await mkdir(join(testDir, ".git", "objects"), { recursive: true });
@@ -304,8 +399,7 @@ describe("loadDirectory", () => {
 
     const contents = await loadDirectory(testDir);
 
-    // Should not include node_modules or .git files
-    expect([...contents.files.keys()].some((f) => f.includes("node_modules"))).toBe(false);
+    expect(contents.files.has("node_modules/dep/index.js")).toBe(true);
     expect([...contents.files.keys()].some((f) => f.includes(".git"))).toBe(false);
   });
 
@@ -1050,10 +1144,10 @@ describe("decompression bomb protection", () => {
 
       expect(contents.files.has("bomb.bin")).toBe(false);
       expect(contents.files.has("package.json")).toBe(true);
-      expect(contents.warnings).toBeDefined();
-      expect(contents.warnings?.length).toBe(1);
-      expect(contents.warnings?.[0]).toContain("bomb.bin");
-      expect(contents.warnings?.[0]).toContain("declared size");
+      expect(contents.archiveWarnings).toBeDefined();
+      expect(contents.archiveWarnings?.length).toBe(1);
+      expect(contents.archiveWarnings?.[0]?.message).toContain("bomb.bin");
+      expect(contents.archiveWarnings?.[0]?.message).toContain("declared size");
     } finally {
       await rm(vsixPath, { force: true });
     }
@@ -1078,9 +1172,9 @@ describe("decompression bomb protection", () => {
 
       expect(contents.files.has("suspicious.bin")).toBe(false);
       expect(contents.files.has("package.json")).toBe(true);
-      expect(contents.warnings).toBeDefined();
-      expect(contents.warnings?.[0]).toContain("compression ratio");
-      expect(contents.warnings?.[0]).toContain(`${MAX_COMPRESSION_RATIO}:1`);
+      expect(contents.archiveWarnings).toBeDefined();
+      expect(contents.archiveWarnings?.[0]?.message).toContain("compression ratio");
+      expect(contents.archiveWarnings?.[0]?.message).toContain(`${MAX_COMPRESSION_RATIO}:1`);
     } finally {
       await rm(vsixPath, { force: true });
     }
@@ -1121,10 +1215,12 @@ describe("decompression bomb protection", () => {
       const contents = await extractVsix(vsixPath);
 
       expect(contents.files.has("package.json")).toBe(true);
-      expect(contents.warnings).toBeDefined();
-      expect(contents.warnings?.length).toBeGreaterThanOrEqual(1);
+      expect(contents.archiveWarnings).toBeDefined();
+      expect(contents.archiveWarnings?.length).toBeGreaterThanOrEqual(1);
 
-      const totalWarning = contents.warnings?.find((w) => w.includes("total extracted size"));
+      const totalWarning = contents.archiveWarnings?.find((w) =>
+        w.message.includes("total extracted size"),
+      );
       expect(totalWarning).toBeDefined();
     } finally {
       await rm(vsixPath, { force: true });
@@ -1132,14 +1228,11 @@ describe("decompression bomb protection", () => {
   });
 
   it("allows entry at exact compression ratio boundary", async () => {
-    const zipBuffer = createSpoofedZip([
+    const content = "a".repeat(1200);
+    expect(content.length / deflateRawSync(content).length).toBe(MAX_COMPRESSION_RATIO);
+    const zipBuffer = createTestZip([
       { name: "extension/package.json", content: manifest },
-      {
-        name: "extension/border.bin",
-        content: "some data here",
-        spoofedUncompressedSize: 10000,
-        spoofedCompressedSize: 100,
-      },
+      { name: "extension/border.bin", content },
     ]);
 
     const vsixPath = join(tmpdir(), `test-bomb-boundary-${Date.now()}.vsix`);
@@ -1150,7 +1243,7 @@ describe("decompression bomb protection", () => {
 
       expect(contents.files.has("package.json")).toBe(true);
       expect(contents.files.has("border.bin")).toBe(true);
-      expect(contents.warnings).toBeUndefined();
+      expect(contents.archiveWarnings).toBeUndefined();
     } finally {
       await rm(vsixPath, { force: true });
     }
@@ -1173,7 +1266,7 @@ describe("decompression bomb protection", () => {
 
       expect(contents.files.has("package.json")).toBe(true);
       expect(contents.files.has("normal.js")).toBe(true);
-      expect(contents.warnings).toBeUndefined();
+      expect(contents.archiveWarnings).toBeUndefined();
     } finally {
       await rm(vsixPath, { force: true });
     }
@@ -1204,11 +1297,13 @@ describe("decompression bomb protection", () => {
       expect(contents.files.has("package.json")).toBe(true);
       expect(contents.files.has("oversized.bin")).toBe(false);
       expect(contents.files.has("high-ratio.bin")).toBe(false);
-      expect(contents.warnings).toBeDefined();
-      expect(contents.warnings?.length).toBe(2);
+      expect(contents.archiveWarnings).toBeDefined();
+      expect(contents.archiveWarnings?.length).toBe(2);
 
-      expect(contents.warnings?.some((w) => w.includes("declared size"))).toBe(true);
-      expect(contents.warnings?.some((w) => w.includes("compression ratio"))).toBe(true);
+      expect(contents.archiveWarnings?.some((w) => w.message.includes("declared size"))).toBe(true);
+      expect(contents.archiveWarnings?.some((w) => w.message.includes("compression ratio"))).toBe(
+        true,
+      );
     } finally {
       await rm(vsixPath, { force: true });
     }

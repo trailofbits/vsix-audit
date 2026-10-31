@@ -5,6 +5,7 @@
 
 rule C2_JS_Discord_Webhook_Jan25 {
   meta:
+    capabilities = "network"
     description = "Detects Discord webhook URL patterns commonly used for data exfiltration and C2 communication"
     severity    = "high"
     score       = 75
@@ -23,6 +24,7 @@ rule C2_JS_Discord_Webhook_Jan25 {
 
 rule C2_JS_Free_Hosting_Jan25 {
   meta:
+    capabilities = "network"
     description = "Detects free hosting service domains commonly abused for C2 infrastructure and data exfiltration"
     severity    = "medium"
     score       = 60
@@ -83,6 +85,7 @@ rule C2_JS_Free_Hosting_Jan25 {
 
 rule STEALER_JS_SSH_Key_Exfil_Jan25 {
   meta:
+    capabilities = "network,credentials,fileAccess"
     description = "Detects SSH private key file access combined with network transmission for credential theft"
     severity    = "critical"
     score       = 90
@@ -116,8 +119,10 @@ rule STEALER_JS_SSH_Key_Exfil_Jan25 {
 
 rule STEALER_JS_Credential_File_Exfil_Jan25 {
   meta:
-    description = "Detects credential file access (.npmrc, .env, .aws/credentials) combined with network exfiltration"
-    severity    = "critical"
+    evidence = "co-occurring references"
+    capabilities = "network,credentials,fileAccess"
+    description = "File contains credential-file, file-read, and network references. Exfiltration has not been established."
+    severity = "medium"
     score       = 90
     author      = "vsix-audit"
     date        = "2025-01-29"
@@ -147,6 +152,7 @@ rule STEALER_JS_Credential_File_Exfil_Jan25 {
 
 rule STEALER_JS_Browser_Data_Theft_Jan25 {
   meta:
+    capabilities = "credentials,fileAccess"
     description = "Detects browser credential and cookie theft pattern targeting Chrome/Firefox/Edge storage files"
     severity    = "critical"
     score       = 95
@@ -181,6 +187,7 @@ rule STEALER_JS_Browser_Data_Theft_Jan25 {
 
 rule STEALER_JS_Env_Token_Exfil_Jan25 {
   meta:
+    capabilities = "network,credentials"
     description = "Detects API token access from process.env variables combined with network transmission"
     severity    = "high"
     score       = 80

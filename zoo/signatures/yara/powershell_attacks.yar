@@ -5,6 +5,7 @@
 
 rule SUSP_PS_Hidden_Window_Jan25 {
   meta:
+    capabilities = "execution"
     description = "Detects PowerShell execution with hidden window flag to avoid user detection"
     severity    = "critical"
     score       = 90
@@ -25,6 +26,7 @@ rule SUSP_PS_Hidden_Window_Jan25 {
 
 rule LOADER_PS_Download_Execute_Jan25 {
   meta:
+    capabilities = "network,execution"
     description = "Detects PowerShell download and execute cradle using IEX with Invoke-WebRequest or WebClient"
     severity    = "critical"
     score       = 95
@@ -58,6 +60,7 @@ rule LOADER_PS_Download_Execute_Jan25 {
 
 rule SUSP_PS_Encoded_Command_Jan25 {
   meta:
+    capabilities = "execution,obfuscation"
     description = "Detects PowerShell with base64 encoded command flag used to hide malicious payload"
     severity    = "high"
     score       = 85
@@ -78,6 +81,7 @@ rule SUSP_PS_Encoded_Command_Jan25 {
 
 rule SUSP_PS_Bypass_Policy_Jan25 {
   meta:
+    capabilities = "execution"
     description = "Detects PowerShell execution policy bypass used to run unsigned or restricted scripts"
     severity    = "high"
     score       = 80
@@ -99,6 +103,7 @@ rule SUSP_PS_Bypass_Policy_Jan25 {
 
 rule SUSP_PS_AMSI_Bypass_Jan25 {
   meta:
+    capabilities = "execution"
     description = "Detects attempt to bypass Windows AMSI (Anti-Malware Scan Interface) for evasion"
     severity    = "critical"
     score       = 95

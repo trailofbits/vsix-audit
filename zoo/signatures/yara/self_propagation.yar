@@ -6,6 +6,7 @@
 
 rule MAL_JS_GlassWorm_Auto_Publish_Jan25 {
   meta:
+    capabilities = "execution,fileAccess,network"
     description = "Detects GlassWorm-style automated package publishing using stolen credentials for worm propagation"
     severity    = "high"
     score       = "85"
@@ -53,6 +54,7 @@ rule MAL_JS_GlassWorm_Auto_Publish_Jan25 {
 
 rule MAL_JS_GlassWorm_Credential_Reuse_Jan25 {
   meta:
+    capabilities = "execution,fileAccess,network"
     description = "Detects GlassWorm-style credential reuse pattern for compromising multiple accounts"
     severity    = "high"
     score       = "80"
@@ -99,6 +101,7 @@ rule MAL_JS_GlassWorm_Credential_Reuse_Jan25 {
 
 rule MAL_JS_GlassWorm_Git_Automation_Jan25 {
   meta:
+    capabilities = "execution,fileAccess,network"
     description = "Detects GlassWorm-style automated git operations for spreading malicious code to repositories"
     severity    = "high"
     score       = "85"
@@ -146,6 +149,7 @@ rule MAL_JS_GlassWorm_Git_Automation_Jan25 {
 
 rule MAL_JS_GlassWorm_Worm_Propagation_Jan25 {
   meta:
+    capabilities = "execution,fileAccess,network"
     description = "Detects GlassWorm-style worm self-replication and autonomous propagation mechanisms"
     severity    = "critical"
     score       = "95"
@@ -193,6 +197,7 @@ rule MAL_JS_GlassWorm_Worm_Propagation_Jan25 {
 
 rule MAL_JS_GlassWorm_Supply_Chain_Abuse_Jan25 {
   meta:
+    capabilities = "execution,fileAccess,network"
     description = "Detects GlassWorm-style supply chain abuse through package ecosystem and dependency injection"
     severity    = "high"
     score       = "90"

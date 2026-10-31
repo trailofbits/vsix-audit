@@ -18,7 +18,11 @@ const result: ScanResult = {
     },
   ],
   inventory: [],
-  metadata: { scannedAt: "2026-10-31T00:00:00Z", scanDuration: 1 },
+  metadata: {
+    scannedAt: "2026-10-31T00:00:00Z",
+    scanDuration: 1,
+    coverage: { degraded: false, warnings: [], incompleteModules: [] },
+  },
 };
 
 function failedBatch(): BatchScanResult {
@@ -138,7 +142,7 @@ describe("batch diagnostics", () => {
           coverage: {
             degraded: true,
             warnings: ["YARA unavailable"],
-            unavailableModules: ["yara"],
+            incompleteModules: ["yara"],
           },
         },
       },

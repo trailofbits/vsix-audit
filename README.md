@@ -14,9 +14,8 @@ VS Code extensions run with full trust and the same permissions as the editor it
 
 ## Detection Modules
 
-The scanner runs 9 first-class detection modules against each extension. The legacy
-`package` module selector remains as a compatibility alias for `manifest`, `execution`,
-`deps`, and `intel`.
+The scanner runs nine detection modules. Select individual checks with `--module`, for
+example `--module manifest,execution,deps,intel` for package and execution analysis.
 
 ### Manifest, Execution, Dependency, And Intel Analysis (`package.ts`)
 
@@ -111,20 +110,20 @@ External YARA-X engine for complex pattern matching. Rules loaded from `zoo/sign
 
 ### Telemetry Detection (`telemetry.ts`)
 
-Detects when extensions send data to external analytics, crash-reporting, or APM services.
+Reports references to external analytics, crash-reporting, and application performance
+monitoring services. Static references do not establish that a request executes.
 
 | Check           | What It Detects                                                   | Severity      |
 | --------------- | ----------------------------------------------------------------- | ------------- |
-| SDK imports     | Known telemetry packages (Sentry, Mixpanel, PostHog, AppInsights) | High/Medium   |
-| Endpoint URLs   | URLs matching known telemetry services from `zoo/telemetry/`      | High/Medium   |
-| Telemetry paths | API paths like `/collect`, `/track`, `/ingest`, `/metrics`        | High/Medium   |
+| SDK imports     | Known telemetry packages (Sentry, Mixpanel, PostHog, AppInsights) | High          |
+| Endpoint URLs   | URLs matching known telemetry services from `zoo/telemetry/`      | High          |
+| Telemetry paths | API paths like `/collect`, `/track`, `/ingest`, `/metrics`        | High          |
 | Data collection | Patterns near telemetry code (machine_id, user_id, file_paths)    | Informational |
 
-**Opt-out detection:** Severity is reduced from High to Medium when extensions respect user preferences:
-
-- `vscode.env.isTelemetryEnabled` - VS Code's global telemetry setting
-- Manifest configuration - Extension exposes a telemetry toggle setting
-- Code conditional - Checks a user preference before sending
+The report records telemetry settings and `isTelemetryEnabled` references as hints.
+It marks opt-out enforcement as unverified and retains the finding severity. A reference
+in a comment, unused setting, or unrelated file cannot establish that telemetry respects
+user preferences.
 
 ### Triage-Friendly Output
 
@@ -259,25 +258,37 @@ Displays: name, publisher, version, activation events, entry points, contributio
 
 ### Scan Options
 
-| Option                   | Description                                                                       |
-| ------------------------ | --------------------------------------------------------------------------------- |
-| `-o, --output <format>`  | Output format: `text`, `json`, or `sarif` (default: `text`)                       |
-| `-s, --severity <level>` | Minimum severity to report: `low`, `medium`, `high`, `critical` (default: `low`)  |
-| `-m, --module <names>`   | Comma-separated modules to run; `package` aliases `manifest,execution,deps,intel` |
-| `-r, --recursive`        | Recursively scan all .vsix files in a directory                                   |
-| `-j, --jobs <n>`         | Number of parallel scans (default: 4, used with --recursive)                      |
-| `--no-network`           | Disable network-based checks                                                      |
-| `--no-cache`             | Bypass cache, download fresh                                                      |
-| `--force`                | Re-download even if cached                                                        |
-| `--all-registries`       | Scan from all registries (Marketplace + OpenVSX + Cursor)                         |
-| `--threat-intel <mode>`  | Threat intelligence mode: `local` or `none` (default: `local`)                    |
-| `--no-threat-intel`      | Disable threat-intelligence datasets while keeping generic detections             |
-| `--strict`               | Exit with an error if scan coverage is degraded                                   |
-| `--require-yara`         | Exit with an error if YARA scanning cannot run                                    |
+| Option                   | Description                                                                      |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| `-o, --output <format>`  | Output format: `text`, `json`, or `sarif` (default: `text`)                      |
+| `-s, --severity <level>` | Minimum severity to report: `low`, `medium`, `high`, `critical` (default: `low`) |
+| `-m, --module <names>`   | Comma-separated detection modules to run                                         |
+| `-r, --recursive`        | Recursively scan all .vsix files in a directory                                  |
+| `-j, --jobs <n>`         | Number of parallel scans (default: 4, used with --recursive)                     |
+| `--no-cache`             | Bypass cache, download fresh                                                     |
+| `--force`                | Re-download even if cached                                                       |
+| `--all-registries`       | Scan from all registries (Marketplace + OpenVSX + Cursor)                        |
+| `--threat-intel <mode>`  | Threat intelligence mode: `local` or `none` (default: `local`)                   |
+| `--no-threat-intel`      | Disable threat-intelligence datasets while keeping generic detections            |
+| `--strict`               | Exit with an error if scan coverage is degraded                                  |
+| `--require-yara`         | Exit with an error if YARA scanning cannot run                                   |
 
 ### Coverage Degradation
 
-`vsix-audit` reports coverage problems as findings and in JSON metadata. Examples include skipped ZIP entries, duplicate normalized archive paths, manifest entry points that were missing or skipped, AST parser recovery errors, and unavailable scanner modules.
+`vsix-audit` reports incomplete work in `metadata.coverage`, independently of the
+minimum severity selected for findings. `incompleteModules` names checks that failed or
+could not finish. Empty or invalid YARA rules, parser recovery errors, skipped input
+files, and missing entry points degrade coverage. `--require-yara` returns exit code `2`
+when YARA coverage is incomplete. Missing detection datasets fail with a named error;
+required data never silently becomes an empty dataset.
+
+Directory scans include bundled dependencies and apply the archive entry-point and size
+checks. Symbolic links and special files inside an extension are skipped with a coverage
+warning. The scanner reads extension contents without executing them.
+
+Generated and dependency paths receive the same detection checks. Unicode exceptions
+use validated regex ranges, the pinned KaTeX occurrence, and local emoji or Arabic
+joining context. Filenames cannot exempt directional controls.
 
 Use `--strict` for production gating when an incomplete scan should fail closed. Use `--require-yara` when YARA coverage is mandatory in CI.
 
@@ -350,7 +361,9 @@ transfer preserves an existing file.
 In `--strict` mode, exit code `2` is also used for degraded scanner coverage. With `--require-yara`, exit code `2` is used when YARA scanning cannot run.
 
 Batch scans return `2` if any target fails, even when other extensions scan successfully or
-have findings.
+have findings. `--all-registries` uses the same JSON batch result and SARIF error reporting
+as directory scans. Missing registry entries, download errors, and scan failures remain
+visible alongside successful results.
 
 ## Threat Intelligence
 
@@ -386,7 +399,7 @@ Pinned benign extension metadata lives in `test-corpus/clean/manifest.json`. The
 npm run corpus:download
 
 # Scan the local clean corpus
-vsix-audit scan test-corpus/clean --recursive --no-network
+vsix-audit scan test-corpus/clean --recursive
 
 # Generate a false-positive report
 npm run corpus:report

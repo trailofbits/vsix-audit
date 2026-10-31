@@ -155,7 +155,6 @@ async function collectFindings(textOutput: boolean): Promise<CollectionReport> {
       const scanResult = await scanExtension(path, {
         output: "json",
         severity: "low",
-        network: false,
       });
       extReport.scanResult = scanResult;
       report.summary.scanned++;

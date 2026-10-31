@@ -1,9 +1,8 @@
 import { parseSync, Visitor } from "oxc-parser";
 import type { Argument, CallExpression, NewExpression, Node, OxcError, Span } from "oxc-parser";
-import type { BundlerInfo } from "#internal/scanner/bundler.js";
-import { detectBundler, hasGenuineObfuscation } from "#internal/scanner/bundler.js";
-import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "#internal/scanner/constants.js";
-import type { Finding, Severity, VsixContents } from "#internal/scanner/types.js";
+import { hasGenuineObfuscation } from "#internal/scanner/bundler.js";
+import { isScannable, JS_EXTENSIONS } from "#internal/scanner/constants.js";
+import type { CheckResult, Finding, Severity, VsixContents } from "#internal/scanner/types.js";
 import {
   computeLineStarts,
   getStringContent,
@@ -32,13 +31,8 @@ interface ASTContext {
   filename: string;
   content: string;
   hasObfuscationIndicators: boolean;
-  isBundled: boolean;
   lineStarts: number[];
 }
-
-/**
- * Pre-compute line start positions for fast line/column lookup from byte offsets.
- */
 
 /**
  * Get code snippet around a node's location.
@@ -139,7 +133,7 @@ function isLiteral(node: Argument | Node | undefined): boolean {
   const type = node.type;
   // OXC uses "Literal" for string/number/boolean/null/regex/bigint
   // TemplateLiteral keeps its own type
-  return type === "Literal" || type === "TemplateLiteral";
+  return type === "Literal" || (node.type === "TemplateLiteral" && node.expressions.length === 0);
 }
 
 /**
@@ -164,10 +158,6 @@ const AST_PATTERNS: ASTPattern[] = [
       "eval() is called with a non-literal argument (variable or expression). This executes arbitrary code at runtime, making static analysis impossible.",
     severity: "high",
     detect: (node, context) => {
-      // Skip in bundled code - bundlers use eval for CSS-in-JS, source maps,
-      // hot module replacement, WASM initialization, etc.
-      if (context.isBundled && !context.hasObfuscationIndicators) return null;
-
       if (!isCallTo(node, "eval")) return null;
 
       const arg = node.arguments[0];
@@ -195,9 +185,6 @@ const AST_PATTERNS: ASTPattern[] = [
     detect: (node, context) => {
       if (!isNewExpression(node, "Function")) return null;
 
-      // Skip in bundled code - webpack/rollup use Function() for module loading
-      if (context.isBundled && !context.hasObfuscationIndicators) return null;
-
       // Check if any argument is non-literal
       const hasDynamicArg = node.arguments.some((arg) => !isLiteral(arg));
 
@@ -219,9 +206,6 @@ const AST_PATTERNS: ASTPattern[] = [
       "require() is called with a variable or expression instead of a string literal. This can load arbitrary modules at runtime.",
     severity: "medium",
     detect: (node, context) => {
-      // Skip in bundled code - __webpack_require__ uses dynamic requires
-      if (context.isBundled) return null;
-
       if (node.type !== "CallExpression") return null;
       const callExpr = node;
       if (!isIdentifier(callExpr.callee, "require")) {
@@ -274,9 +258,6 @@ const AST_PATTERNS: ASTPattern[] = [
       "Function is called using computed property access like obj[var](). This can hide which function is being called.",
     severity: "low",
     detect: (node, context) => {
-      // Skip in bundled code - this is extremely common in bundled code
-      if (context.isBundled) return null;
-
       if (node.type !== "CallExpression") return null;
       const callExpr = node;
       if (callExpr.callee.type !== "MemberExpression") return null;
@@ -407,39 +388,19 @@ function recordParseRecovery(
 /**
  * Parse and analyze a JavaScript/TypeScript file for suspicious patterns.
  */
-function analyzeFile(
-  filename: string,
-  content: string,
-  findings: Finding[],
-  bundlerCache?: Map<string, BundlerInfo>,
-): void {
-  // Determine lang from extension
-  const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
-  const langMap: Record<string, "js" | "jsx" | "ts" | "tsx"> = {
-    ".js": "js",
-    ".mjs": "js",
-    ".cjs": "js",
-    ".jsx": "jsx",
-    ".ts": "ts",
-    ".tsx": "tsx",
-  };
-  const lang = langMap[ext] ?? "tsx"; // Default to tsx for maximum compatibility
-
+function analyzeFile(filename: string, content: string, findings: Finding[]): boolean {
   const result = parseSync(filename, content, {
-    lang,
     sourceType: "unambiguous",
   });
 
   recordParseRecovery(filename, result.errors, findings);
 
-  const bundlerInfo = detectBundler(content, filename, bundlerCache);
   const lineStarts = computeLineStarts(content);
 
   const context: ASTContext = {
     filename,
     content,
     hasObfuscationIndicators: hasObfuscationIndicators(content) || hasGenuineObfuscation(content),
-    isBundled: bundlerInfo.isBundled,
     lineStarts,
   };
 
@@ -457,6 +418,7 @@ function analyzeFile(
       description: pattern.description,
       severity: pattern.severity,
       category: "ast",
+      capabilities: ["execution"],
       location: {
         file: filename,
         line,
@@ -501,6 +463,7 @@ function analyzeFile(
   });
 
   visitor.visit(result.program);
+  return result.errors.length === 0;
 }
 
 function recordASTFailure(findings: Finding[], filename: string, error: unknown): void {
@@ -533,32 +496,30 @@ function recordASTFailure(findings: Finding[], filename: string, error: unknown)
 }
 
 /** Analyze script files, reporting parser or traversal failures for each affected file. */
-export function checkAST(contents: VsixContents): Finding[] {
+export function checkAST(contents: VsixContents): CheckResult {
   const findings: Finding[] = [];
+  const warnings: string[] = [];
 
   for (const [filename, buffer] of contents.files) {
-    // Skip vendor/third-party code - extension authors don't control this code
-    // and popular packages like protobufjs, @babel/*, pino legitimately use eval/Function
-    if (filename.includes("node_modules/") || filename.includes("vendor/")) {
-      continue;
-    }
-
     // Only analyze JS/TS files
-    if (!isScannable(filename, SCANNABLE_EXTENSIONS_PATTERN)) continue;
+    if (!isScannable(filename, JS_EXTENSIONS)) continue;
 
     // Skip non-JS/TS files that might be in the scannable set (like .sh, .ps1)
-    const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
-    if (![".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"].includes(ext)) continue;
-
     const content = getStringContent(contents, filename, buffer);
 
-    const bundlerCache = contents.cache as Map<string, BundlerInfo> | undefined;
     try {
-      analyzeFile(filename, content, findings, bundlerCache);
+      if (!analyzeFile(filename, content, findings)) {
+        warnings.push(
+          `AST analysis incomplete for ${JSON.stringify(filename)}; inspect it manually.`,
+        );
+      }
     } catch (error) {
       recordASTFailure(findings, filename, error);
+      warnings.push(
+        `AST analysis incomplete for ${JSON.stringify(filename)}; inspect it manually.`,
+      );
     }
   }
 
-  return findings;
+  return { findings, warnings };
 }

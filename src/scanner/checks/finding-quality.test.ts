@@ -41,7 +41,6 @@ describe.skipIf(!INTEGRATION_TESTS_ENABLED)("finding quality (integration)", () 
         const result = await scanExtension(path, {
           output: "json",
           severity: "low",
-          network: false,
         });
         scanResults.set(ext.id, result);
       } catch (error) {

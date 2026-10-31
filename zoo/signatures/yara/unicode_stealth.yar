@@ -8,6 +8,7 @@
 
 rule MAL_JS_GlassWorm_Unicode_Stealth_Jan25 {
   meta:
+    capabilities = "obfuscation,execution"
     description = "Detects GlassWorm-style invisible Unicode variation selectors used to hide malicious code"
     severity    = "critical"
     score       = "95"

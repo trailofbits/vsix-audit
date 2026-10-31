@@ -81,7 +81,6 @@ function scan(name, status) {
       "scan",
       `/fixtures/extensions/${name}`,
       "--output=json",
-      "--no-network",
       "--no-cache",
       "--strict",
       "--require-yara",
@@ -89,7 +88,7 @@ function scan(name, status) {
     status,
   );
   const result = /** @type {ScanResult} */ (JSON.parse(output));
-  assert.equal(result.metadata.coverage?.degraded, false);
+  assert.equal(result.metadata.coverage.degraded, false);
   assert.ok(result.inventory.every((check) => check.enabled));
   return result;
 }
@@ -138,7 +137,6 @@ try {
           "scan-installed",
           "--extensions-dir=/fixtures/extensions",
           "--output=json",
-          "--no-network",
           "--strict",
           "--require-yara",
         ],

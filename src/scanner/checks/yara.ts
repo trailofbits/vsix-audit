@@ -1,16 +1,18 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, readdir, writeFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import type { Finding, VsixContents } from "#internal/scanner/types.js";
+import { getZooRoot } from "#internal/scanner/loaders/zoo.js";
+import type {
+  Capability,
+  CheckResult,
+  Finding,
+  Severity,
+  VsixContents,
+} from "#internal/scanner/types.js";
+import { CAPABILITY_NAMES, SEVERITIES } from "#internal/scanner/types.js";
 
-/**
- * Binary file extensions that should be skipped for YARA scanning.
- * These cause false positives because YARA pattern matching on binary
- * content often matches arbitrary byte sequences.
- */
 const BINARY_EXTENSIONS = new Set([
   // Java
   ".jar",
@@ -55,7 +57,7 @@ const BINARY_EXTENSIONS = new Set([
   ".rar",
   // Documents
   ".pdf",
-  // Native binaries (scanned separately by checkNativeFiles)
+  // Native binaries are outside these script-oriented rules
   ".node",
   ".dll",
   ".dylib",
@@ -66,81 +68,10 @@ const BINARY_EXTENSIONS = new Set([
   ".dat",
 ]);
 
-/**
- * Check if a file should be skipped for YARA scanning
- */
-function shouldSkipForYara(filename: string): boolean {
-  const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
-  return BINARY_EXTENSIONS.has(ext);
-}
-
 const execFileAsync = promisify(execFile);
+const MAX_YARA_FILE_SIZE = 10 * 1024 * 1024;
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-/**
- * Find the YARA rules directory, checking multiple locations.
- * Priority:
- * 1. VSIX_AUDIT_ZOO_PATH environment variable + /signatures/yara
- * 2. Development: ../../../zoo/signatures/yara relative to module
- * 3. Installed: ../../zoo/signatures/yara relative to dist
- */
-async function findYaraRulesDir(): Promise<string> {
-  // Check environment variable first
-  const envPath = process.env["VSIX_AUDIT_ZOO_PATH"];
-  if (envPath !== undefined && envPath !== "") {
-    return join(envPath, "signatures", "yara");
-  }
-
-  // Development path: src/scanner/checks -> zoo/signatures/yara
-  const devPath = join(__dirname, "..", "..", "..", "zoo", "signatures", "yara");
-  try {
-    await access(devPath);
-    return devPath;
-  } catch {
-    // Not found, try installed path
-  }
-
-  // Installed path: dist/scanner/checks -> zoo/signatures/yara
-  const installedPath = join(__dirname, "..", "..", "zoo", "signatures", "yara");
-  try {
-    await access(installedPath);
-    return installedPath;
-  } catch {
-    // Fall back to dev path (will error with helpful message later)
-    return devPath;
-  }
-}
-
-// Cached result of findYaraRulesDir
-let cachedYaraRulesDir: string | undefined;
-
-/** Reset module caches (for testing) */
-export function resetYaraCaches(): void {
-  cachedYaraRulesDir = undefined;
-  ruleMetaCache.clear();
-}
-
-/**
- * Get the default YARA rules directory (cached)
- */
-export async function getDefaultYaraRulesDir(): Promise<string> {
-  if (cachedYaraRulesDir === undefined || cachedYaraRulesDir === "") {
-    cachedYaraRulesDir = await findYaraRulesDir();
-  }
-  return cachedYaraRulesDir;
-}
-
-interface YaraMatch {
-  rule: string;
-  file: string;
-  strings?: string[];
-  meta?: Record<string, string>;
-}
-
-/**
- * Check if YARA-X is installed and available
- */
+/** Check whether the YARA-X executable can run. */
 export async function isYaraAvailable(): Promise<boolean> {
   try {
     const { stdout } = await execFileAsync("yr", ["--version"]);
@@ -150,398 +81,224 @@ export async function isYaraAvailable(): Promise<boolean> {
   }
 }
 
-/**
- * List all YARA rule files in a directory
- */
+/** List rule files, preserving errors instead of silently disabling scanning. */
 export async function listYaraRules(rulesDir: string): Promise<string[]> {
-  try {
-    const entries = await readdir(rulesDir);
-    return entries.filter((f) => f.endsWith(".yar") || f.endsWith(".yara"));
-  } catch {
-    return [];
-  }
+  const entries = await readdir(rulesDir, { recursive: true });
+  return entries.filter((name) => /\.yara?$/.test(name));
 }
 
-/**
- * Parse YARA output into structured matches
- */
-function parseYaraOutput(output: string): YaraMatch[] {
-  const matches: YaraMatch[] = [];
-  const lines = output.trim().split("\n").filter(Boolean);
-
-  for (const line of lines) {
-    // YARA output format: rule_name file_path
-    // With -s flag: rule_name file_path\n0xoffset:$string_name: string_content
-    const match = line.match(/^(\S+)\s+(.+)$/);
-    if (match) {
-      const [, rule, file] = match;
-      if (rule !== undefined && rule !== "" && file !== undefined && file !== "") {
-        matches.push({ rule, file });
-      }
-    }
-  }
-
-  return matches;
-}
-
-/**
- * Cache for parsed YARA rule metadata to avoid re-reading files
- */
-const ruleMetaCache = new Map<string, Map<string, { severity?: string; description?: string }>>();
-
-/**
- * Accumulated errors from parseRuleFile, drained by checkYara.
- */
-const ruleFileErrors: { ruleFile: string; error: string }[] = [];
-
-/**
- * Parse YARA rule file and extract metadata for all rules
- */
-async function parseRuleFile(
-  ruleFile: string,
-): Promise<Map<string, { severity?: string; description?: string }>> {
-  const cached = ruleMetaCache.get(ruleFile);
-  if (cached !== undefined) return cached;
-
-  const { readFile } = await import("node:fs/promises");
-  const ruleMap = new Map<string, { severity?: string; description?: string }>();
-
-  try {
-    const content = await readFile(ruleFile, "utf8");
-
-    // Match rule blocks: rule NAME { meta: ... }
-    const rulePattern = /rule\s+(\w+)\s*\{[^}]*meta\s*:\s*([^}]+?)(?:strings|condition)\s*:/gs;
-
-    for (const match of content.matchAll(rulePattern)) {
-      const ruleName = match[1];
-      const metaBlock = match[2];
-
-      if (ruleName === undefined || ruleName === "" || metaBlock === undefined || metaBlock === "")
-        continue;
-
-      const meta: { severity?: string; description?: string } = {};
-
-      // Extract severity from meta block
-      const severityMatch = metaBlock.match(/severity\s*=\s*["'](\w+)["']/);
-      if (severityMatch?.[1] !== undefined && severityMatch[1] !== "") {
-        meta.severity = severityMatch[1];
-      }
-
-      // Extract description from meta block
-      const descMatch = metaBlock.match(/description\s*=\s*["']([^"']+)["']/);
-      if (descMatch?.[1] !== undefined && descMatch[1] !== "") {
-        meta.description = descMatch[1];
-      }
-
-      ruleMap.set(ruleName, meta);
-    }
-  } catch (error) {
-    ruleFileErrors.push({
-      ruleFile,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  ruleMetaCache.set(ruleFile, ruleMap);
-  return ruleMap;
-}
-
-/**
- * Extract metadata from YARA rule file for a specific rule
- */
-async function getRuleMeta(
-  ruleFile: string,
-  ruleName: string,
-): Promise<{ severity?: string; description?: string }> {
-  const ruleMap = await parseRuleFile(ruleFile);
-  const meta = ruleMap.get(ruleName);
-
-  if (meta?.severity !== undefined && meta.severity !== "") {
-    return meta;
-  }
-
-  // Fallback: derive severity from rule name patterns
-  const result: { severity?: string; description?: string } = {};
-  if (meta?.description !== undefined && meta.description !== "") {
-    result.description = meta.description;
-  }
-
-  const lowerName = ruleName.toLowerCase();
-  if (lowerName.includes("critical") || lowerName.startsWith("mal_")) {
-    result.severity = "critical";
-  } else if (
-    lowerName.includes("stealth") ||
-    lowerName.startsWith("stealer_") ||
-    lowerName.startsWith("rat_") ||
-    lowerName.startsWith("c2_")
-  ) {
-    result.severity = "high";
-  } else if (lowerName.startsWith("susp_") || lowerName.startsWith("loader_")) {
-    result.severity = "medium";
-  } else {
-    result.severity = "medium"; // Default
-  }
-
-  return result;
-}
-
-const VALID_SEVERITIES = new Set(["low", "medium", "high", "critical"]);
-const DEPENDENCY_PATH_SUPPRESSED_RULES = new Set([
-  "LOADER_JS_Download_Write_Execute_Jan25",
-  "STEALER_JS_Credential_File_Exfil_Jan25",
-  "SUSP_JS_Eval_Base64_Jan25",
-  "SUSP_JS_Eval_Charcode_Jan25",
-  "SUSP_JS_Obfuscation_Eval_Jan25",
-  "SUSP_JS_Function_Constructor_Jan25",
-  "SUSP_JS_Child_Process_Variable_Jan25",
-  "SUSP_JS_Decimal_Byte_Array_Jan25",
-  "SUSP_JS_Hex_Escape_Chain_Jan25",
-  "SUSP_JS_String_Array_Rotation_Jan25",
-]);
-const GENERATED_PATH_SUPPRESSED_RULES = new Set([
-  "LOADER_JS_Download_Write_Execute_Jan25",
-  "RAT_JS_GlassWorm_Remote_Exec_Jan25",
-  "STEALER_JS_Credential_File_Exfil_Jan25",
-  "SUSP_JS_Eval_Base64_Jan25",
-  "SUSP_JS_Eval_Charcode_Jan25",
-  "SUSP_JS_Obfuscation_Eval_Jan25",
-  "SUSP_JS_Function_Constructor_Jan25",
-  "SUSP_JS_Child_Process_Variable_Jan25",
-  "SUSP_JS_Decimal_Byte_Array_Jan25",
-  "SUSP_JS_Hex_Escape_Chain_Jan25",
-  "SUSP_JS_String_Array_Rotation_Jan25",
-]);
-const LOW_SIGNAL_CONTEXT_SUPPRESSED_RULES = new Set(["SUSP_JS_WebAssembly_Remote_Jan25"]);
-
-function isDocumentationOrDeclarationPath(normalizedPath: string): boolean {
-  const lowerPath = normalizedPath.toLowerCase();
-  return (
-    lowerPath.endsWith(".md") ||
-    lowerPath.endsWith(".markdown") ||
-    lowerPath.endsWith(".d.ts") ||
-    lowerPath.includes("/readme.")
-  );
-}
-
-function shouldSuppressYaraMatch(rule: string, relativePath: string): boolean {
-  const normalizedPath = relativePath.replace(/\\/g, "/");
-  const isDependencyPath =
-    normalizedPath.startsWith("node_modules/") || normalizedPath.includes("/node_modules/");
-  const isGeneratedPath =
-    normalizedPath.startsWith("dist/") ||
-    normalizedPath.startsWith("out/") ||
-    normalizedPath.startsWith("build/") ||
-    normalizedPath.startsWith("lib/");
-
-  if (
-    (isDependencyPath && DEPENDENCY_PATH_SUPPRESSED_RULES.has(rule)) ||
-    (isGeneratedPath && GENERATED_PATH_SUPPRESSED_RULES.has(rule))
-  ) {
-    return true;
-  }
-
-  if (
-    LOW_SIGNAL_CONTEXT_SUPPRESSED_RULES.has(rule) &&
-    (isDependencyPath || isGeneratedPath || isDocumentationOrDeclarationPath(normalizedPath))
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-async function buildYaraFinding(
-  match: YaraMatch,
-  ruleSourceMap: Map<string, string>,
-  targetRulesDir: string,
-  tempDir: string,
-): Promise<Finding> {
-  const ruleFile = ruleSourceMap.get(match.rule) ?? "unknown";
-  const rulePath = join(targetRulesDir, ruleFile);
-  const meta = await getRuleMeta(rulePath, match.rule);
-  const relativePath = match.file.replace(tempDir + "/", "");
-  const fileExt = relativePath.slice(relativePath.lastIndexOf(".")).toLowerCase();
-  const severity = VALID_SEVERITIES.has(meta.severity ?? "")
-    ? (meta.severity as Finding["severity"])
-    : "medium";
-
-  return {
-    id: `YARA_${match.rule}`,
-    title: `YARA rule match: ${match.rule}`,
-    description:
-      `YARA rule "${match.rule}" from ${ruleFile} ` +
-      "matched this file. This indicates the file " +
-      "contains patterns associated with known " +
-      "malware or suspicious behavior.",
-    severity,
+function addFailure(result: CheckResult, id: string, message: string): void {
+  result.warnings.push(message);
+  result.findings.push({
+    id,
+    title: "YARA coverage incomplete",
+    description: message,
+    severity: "low",
     category: "yara",
-    location: { file: relativePath },
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function ruleMetadata(value: unknown): Map<string, unknown> {
+  if (!Array.isArray(value)) throw new Error("YARA-X rule metadata must be an array.");
+  const metadata = new Map<string, unknown>();
+  for (const entry of value) {
+    if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string") {
+      throw new Error("YARA-X rule metadata must contain name/value pairs.");
+    }
+    metadata.set(entry[0], entry[1]);
+  }
+  return metadata;
+}
+
+function ruleCapabilities(value: unknown): Capability[] {
+  if (value === undefined) return [];
+  if (typeof value !== "string") throw new Error("YARA rule capabilities must be a string.");
+  const names = value.split(",").map((name) => name.trim());
+  if (!names.every((name) => CAPABILITY_NAMES.includes(name as Capability))) {
+    throw new Error("YARA rule capabilities contain an unknown capability.");
+  }
+  return names as Capability[];
+}
+
+function toFinding(rule: unknown, file: string, rulesDir: string): Finding {
+  if (
+    !isRecord(rule) ||
+    typeof rule["identifier"] !== "string" ||
+    typeof rule["namespace"] !== "string"
+  ) {
+    throw new Error("YARA-X match is missing its rule identifier or source namespace.");
+  }
+  const metadata = ruleMetadata(rule["meta"]);
+  const severity = metadata.get("severity");
+  if (typeof severity !== "string" || !SEVERITIES.includes(severity as Severity)) {
+    throw new Error(`YARA rule ${rule["identifier"]} must declare a valid severity.`);
+  }
+  const ruleFile = relative(rulesDir, rule["namespace"]).split(sep).join("/");
+  const description = metadata.get("description");
+  return {
+    id: `YARA_${rule["identifier"]}`,
+    title: `YARA rule match: ${rule["identifier"]}`,
+    description:
+      typeof description === "string"
+        ? description
+        : `YARA rule "${rule["identifier"]}" from ${ruleFile} matched this file. Review the matched behavior.`,
+    severity: severity as Severity,
+    category: "yara",
+    location: { file },
+    capabilities: ruleCapabilities(metadata.get("capabilities")),
     metadata: {
-      rule: match.rule,
+      rule: rule["identifier"],
       ruleFile,
-      fileType: fileExt,
+      ...(metadata.has("evidence") ? { evidence: metadata.get("evidence") } : {}),
+      fileType: file.slice(file.lastIndexOf(".")).toLowerCase(),
     },
   };
 }
 
-/**
- * Run YARA rules against extension contents
- */
-export async function checkYara(contents: VsixContents, rulesDir?: string): Promise<Finding[]> {
-  const findings: Finding[] = [];
-  const targetRulesDir = rulesDir ?? (await getDefaultYaraRulesDir());
-
-  // Check if YARA is available
-  const available = await isYaraAvailable();
-  if (!available) {
-    findings.push({
-      id: "YARA_NOT_INSTALLED",
-      title: "YARA-X scanner not available",
-      description:
-        "YARA-X is not installed. Install with 'brew install yara-x' to enable advanced malware detection using signature rules.",
-      severity: "low",
-      category: "yara",
-      metadata: {
-        suggestion: "brew install yara-x",
-      },
-    });
-    return findings;
+function parseRecord(line: string): { path: string; rules: unknown[] } {
+  const record: unknown = JSON.parse(line);
+  if (!isRecord(record) || typeof record["path"] !== "string" || !Array.isArray(record["rules"])) {
+    throw new Error("YARA-X output must contain a path and rules array.");
   }
+  return { path: record["path"], rules: record["rules"] };
+}
 
-  // Check if rules directory exists and has rules
-  const rules = await listYaraRules(targetRulesDir);
-  if (rules.length === 0) {
-    return findings;
-  }
-
-  // Create a temporary directory for scanning (mkdtemp is atomic + unpredictable)
-  const tempDir = await mkdtemp(join(tmpdir(), "vsix-audit-"));
-
-  try {
-    // Collect files to write, filtering out binary/large/traversal
-    const filesToWrite: Array<{ path: string; buffer: Buffer }> = [];
-    const dirsNeeded = new Set<string>();
-
-    for (const [filename, buffer] of contents.files) {
-      if (buffer.length > 10 * 1024 * 1024) continue;
-      if (shouldSkipForYara(filename)) continue;
-      const filePath = join(tempDir, filename);
-      if (!resolve(filePath).startsWith(resolve(tempDir))) continue;
-      dirsNeeded.add(dirname(filePath));
-      filesToWrite.push({ path: filePath, buffer });
-    }
-
-    // Create all directories in parallel
-    await Promise.all([...dirsNeeded].map((d) => mkdir(d, { recursive: true })));
-
-    // Write all files in parallel
-    await Promise.all(filesToWrite.map((f) => writeFile(f.path, f.buffer)));
-
-    // Pre-parse rule files to build ruleName -> ruleFile map
-    const ruleSourceMap = new Map<string, string>();
-    for (const ruleFile of rules) {
-      const rulePath = join(targetRulesDir, ruleFile);
-      const ruleMap = await parseRuleFile(rulePath);
-      for (const ruleName of ruleMap.keys()) {
-        ruleSourceMap.set(ruleName, ruleFile);
+function readMatches(output: string, tempDir: string, rulesDir: string, result: CheckResult): void {
+  for (const line of output.split("\n").filter(Boolean)) {
+    try {
+      const record = parseRecord(line);
+      const file = relative(tempDir, record.path);
+      if (file === "" || isAbsolute(file) || file === ".." || file.startsWith(`..${sep}`)) {
+        throw new Error("YARA-X reported a path outside its scan directory.");
       }
+      for (const rule of record.rules)
+        result.findings.push(toFinding(rule, file.split(sep).join("/"), rulesDir));
+    } catch (error) {
+      addFailure(
+        result,
+        "YARA_OUTPUT_ERROR",
+        `Cannot read YARA-X matches: ${String(error)}. ` +
+          "Check the rule metadata and YARA-X installation, then retry.",
+      );
     }
+  }
+}
 
-    // Single YARA-X invocation scanning all rules at once
+async function writeScanFiles(
+  contents: VsixContents,
+  directory: string,
+  result: CheckResult,
+): Promise<void> {
+  const files: Array<{ path: string; buffer: Buffer }> = [];
+  const directories = new Set<string>();
+  for (const [filename, buffer] of contents.files) {
+    const extension = filename.slice(filename.lastIndexOf(".")).toLowerCase();
+    if (BINARY_EXTENSIONS.has(extension)) continue;
+    const path = resolve(directory, filename);
+    if (!path.startsWith(resolve(directory) + sep) || buffer.length > MAX_YARA_FILE_SIZE) {
+      addFailure(
+        result,
+        "YARA_SKIPPED_FILE",
+        `YARA-X skipped ${JSON.stringify(filename)}: ` +
+          "unsafe path or file exceeds 10 MiB. Inspect the file manually.",
+      );
+      continue;
+    }
+    directories.add(dirname(path));
+    files.push({ path, buffer });
+  }
+  await Promise.all([...directories].map((path) => mkdir(path, { recursive: true })));
+  await Promise.all(files.map((file) => writeFile(file.path, file.buffer)));
+}
+
+function processOutput(error: unknown, field: "stdout" | "stderr"): string {
+  if (!(error instanceof Error) || !(field in error)) return "";
+  const value = (error as unknown as Record<string, unknown>)[field];
+  return typeof value === "string" ? value : "";
+}
+
+async function removeScanDirectory(directory: string, result: CheckResult): Promise<void> {
+  try {
+    await rm(directory, { recursive: true, force: true });
+  } catch (error) {
+    addFailure(
+      result,
+      "YARA_CLEANUP_FAILURE",
+      `Cannot remove YARA-X temporary directory ${directory}: ` +
+        `${String(error)}. Remove the temporary files after fixing permissions.`,
+    );
+  }
+}
+
+/** Scan eligible files using YARA-X structured output, retaining partial matches and failures. */
+export async function checkYara(contents: VsixContents, rulesDir?: string): Promise<CheckResult> {
+  const result: CheckResult = { findings: [], warnings: [] };
+  const targetRulesDir = rulesDir ?? join(getZooRoot(), "signatures", "yara");
+  if (!(await isYaraAvailable())) {
+    addFailure(
+      result,
+      "YARA_NOT_INSTALLED",
+      "YARA-X is unavailable. Install 'yr' with " +
+        "'brew install yara-x' or use the Docker image, then retry.",
+    );
+    return result;
+  }
+  let directory: string | undefined;
+  try {
+    if ((await listYaraRules(targetRulesDir)).length === 0) {
+      throw new Error(
+        `No YARA rules in ${targetRulesDir}. Restore the bundled rules or fix VSIX_AUDIT_ZOO_PATH.`,
+      );
+    }
+    directory = await mkdtemp(join(tmpdir(), "vsix-audit-"));
+    await writeScanFiles(contents, directory, result);
     try {
       const { stdout, stderr } = await execFileAsync(
         "yr",
-        ["scan", "-r", targetRulesDir, tempDir],
+        [
+          "scan",
+          "-r",
+          "--output-format=ndjson",
+          "--print-meta",
+          "--print-namespace",
+          "--path-as-namespace",
+          targetRulesDir,
+          directory,
+        ],
         { maxBuffer: 10 * 1024 * 1024 },
       );
-
-      if (stderr && !stderr.includes("warning")) {
-        // Log but don't fail - partial results may still be useful
-      }
-
-      const matches = parseYaraOutput(stdout);
-
-      for (const match of matches) {
-        const relativePath = match.file.replace(tempDir + "/", "");
-        if (shouldSuppressYaraMatch(match.rule, relativePath)) {
-          continue;
-        }
-        findings.push(await buildYaraFinding(match, ruleSourceMap, targetRulesDir, tempDir));
+      readMatches(stdout, directory, targetRulesDir, result);
+      if (stderr.trim() !== "") {
+        addFailure(
+          result,
+          "YARA_DIAGNOSTIC",
+          `YARA-X diagnostics: ${stderr.trim()}. Review the rules and retry.`,
+        );
       }
     } catch (error) {
-      // YARA-X (yr) exit codes: 0 = success (matches or no matches), 1+ = error.
-      // execFileAsync throws on any non-zero exit code. Unlike legacy YARA,
-      // YARA-X does NOT use exit code 1 for "no matches" — it always means
-      // an actual error (bad rules, missing files, etc.).
-      // Recover any partial matches from stdout before reporting the error.
-      const execError = error as { stdout?: string; stderr?: string; code?: number };
-      if (execError.stdout !== undefined && execError.stdout !== "") {
-        const partialMatches = parseYaraOutput(execError.stdout);
-        for (const match of partialMatches) {
-          const relativePath = match.file.replace(tempDir + "/", "");
-          if (shouldSuppressYaraMatch(match.rule, relativePath)) {
-            continue;
-          }
-          findings.push(await buildYaraFinding(match, ruleSourceMap, targetRulesDir, tempDir));
-        }
-      }
-
-      findings.push({
-        id: "YARA_SCAN_ERROR",
-        title: "YARA scan encountered errors",
-        description:
-          "YARA-X reported errors during scan. " +
-          "Some rules may not have been applied, " +
-          "reducing detection coverage.",
-        severity: "low",
-        category: "yara",
-        metadata: {
-          error: error instanceof Error ? error.message : String(error),
-          stderr: execError.stderr ?? "",
-          exitCode: execError.code,
-        },
-      });
+      readMatches(processOutput(error, "stdout"), directory, targetRulesDir, result);
+      addFailure(
+        result,
+        "YARA_SCAN_ERROR",
+        `YARA-X scan failed: ${String(error)}. ` +
+          `${processOutput(error, "stderr")} Check the rules and retry.`,
+      );
     }
+  } catch (error) {
+    addFailure(
+      result,
+      "YARA_SCAN_ERROR",
+      `Cannot prepare YARA-X scan: ${String(error)}. ` +
+        "Check the rule directory and file permissions, then retry.",
+    );
   } finally {
-    // Clean up temp directory
-    try {
-      await rm(tempDir, { recursive: true, force: true });
-    } catch (error) {
-      findings.push({
-        id: "YARA_CLEANUP_FAILURE",
-        title: "Failed to clean up temp scan files",
-        description:
-          "Temporary files from YARA scanning " +
-          "could not be removed. Extension data " +
-          "may remain in the temp directory.",
-        severity: "low",
-        category: "yara",
-        metadata: {
-          tempDir,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      });
+    if (directory !== undefined) {
+      await removeScanDirectory(directory, result);
     }
   }
-
-  // Drain any rule-file parse errors into findings
-  for (const err of ruleFileErrors.splice(0).reverse()) {
-    findings.push({
-      id: "YARA_RULE_PARSE_ERROR",
-      title: "Failed to parse YARA rule file metadata",
-      description:
-        "A YARA rule file could not be read or " +
-        "parsed for metadata. Rule severity may " +
-        "default to medium, degrading triage accuracy.",
-      severity: "low",
-      category: "yara",
-      location: { file: err.ruleFile },
-      metadata: {
-        ruleFile: err.ruleFile,
-        error: err.error,
-      },
-    });
-  }
-
-  return findings;
+  return result;
 }

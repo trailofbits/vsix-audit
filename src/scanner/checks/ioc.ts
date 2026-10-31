@@ -3,6 +3,7 @@ import { isScannable, SCANNABLE_EXTENSIONS_IOC } from "#internal/scanner/constan
 import type { Finding, VsixContents, ZooData } from "#internal/scanner/types.js";
 import {
   computeLineStarts,
+  extensionId,
   findLineNumberByIndex,
   findLineNumberByString,
   getStringContent,
@@ -185,6 +186,7 @@ export function checkDomains(contents: VsixContents, knownDomains: Set<string>):
         const line = findLineNumberByString(content, domain, lineStarts);
         findings.push({
           id: "KNOWN_C2_DOMAIN",
+          capabilities: ["network"],
           title: "Known C2 domain detected",
           description: `File "${filename}" contains known C2 domain: ${domain}`,
           severity: "critical",
@@ -219,6 +221,7 @@ export function checkIps(contents: VsixContents, knownIps: Set<string>): Finding
         const line = findLineNumberByString(content, ip, lineStarts);
         findings.push({
           id: "KNOWN_C2_IP",
+          capabilities: ["network"],
           title: "Known C2 IP address detected",
           description: `File "${filename}" contains known C2 IP: ${ip}`,
           severity: "critical",
@@ -483,8 +486,8 @@ export function checkWallets(
   knownWallets: Set<string>,
   blockchainAllowlist?: Set<string>,
 ): Finding[] {
-  const extensionId = `${contents.manifest.publisher}.${contents.manifest.name}`;
-  if (blockchainAllowlist?.has(extensionId) === true) return [];
+  const id = extensionId(contents.manifest);
+  if (blockchainAllowlist?.has(id) === true) return [];
 
   const findings: Finding[] = [];
   for (const [filename, buffer] of contents.files) {
@@ -520,6 +523,7 @@ export function checkGithubC2(contents: VsixContents, githubC2Accounts: Set<stri
         const line = findLineNumberByString(content, pattern, lineStarts);
         findings.push({
           id: "KNOWN_GITHUB_C2",
+          capabilities: ["network"],
           title: "Known GitHub C2 account reference",
           description:
             `File "${filename}" references GitHub account ` +

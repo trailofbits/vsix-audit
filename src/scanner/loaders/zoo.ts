@@ -1,4 +1,4 @@
-import { access, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -9,48 +9,16 @@ import type {
   ZooData,
 } from "#internal/scanner/types.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-/**
- * Find the zoo directory, checking multiple locations.
- * Priority:
- * 1. VSIX_AUDIT_ZOO_PATH environment variable
- * 2. Development: ../../.. relative to module (src/scanner/loaders -> zoo)
- * 3. Installed: ../.. relative to dist (dist/scanner/loaders -> zoo)
- */
-async function findZooRoot(): Promise<string> {
-  // Check environment variable first
-  const envPath = process.env["VSIX_AUDIT_ZOO_PATH"];
-  if (envPath !== undefined && envPath !== "") {
-    return envPath;
-  }
-
-  // Development path: src/scanner/loaders -> zoo
-  const devPath = join(__dirname, "..", "..", "..", "zoo");
-  try {
-    await access(devPath);
-    return devPath;
-  } catch {
-    // Not found, try installed path
-  }
-
-  // Installed path: dist/scanner/loaders -> zoo
-  const installedPath = join(__dirname, "..", "..", "zoo");
-  try {
-    await access(installedPath);
-    return installedPath;
-  } catch {
-    // Fall back to dev path (will error with helpful message later)
-    return devPath;
-  }
+/** Locate bundled detection data, with an explicit override for custom datasets. */
+export function getZooRoot(): string {
+  const override = process.env["VSIX_AUDIT_ZOO_PATH"];
+  return override === undefined || override === ""
+    ? join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "zoo")
+    : override;
 }
 
 interface BlocklistFile {
   extensions: BlocklistEntry[];
-}
-
-interface MaliciousNpmVersionsFile {
-  packages?: unknown[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -183,14 +151,48 @@ function parseTelemetryServices(content: string): Map<string, TelemetryServiceIn
   return result;
 }
 
+function parseVersionAdvisory(
+  entry: Record<string, unknown>,
+  context: string,
+): MaliciousNpmVersionAdvisory {
+  const name = expectStringField(entry, "name", context).toLowerCase();
+  const affectedVersions = expectStringArrayField(entry, "affectedVersions", context);
+  const advisory: MaliciousNpmVersionAdvisory = {
+    name,
+    affectedVersions,
+    advisory: expectStringField(entry, "advisory", context),
+    reason: expectStringField(entry, "reason", context),
+  };
+
+  const campaign = entry["campaign"];
+  if (campaign !== undefined) {
+    if (typeof campaign !== "string" || campaign.length === 0) {
+      throw new Error(`${context}: field "campaign" must be a non-empty string when present`);
+    }
+    advisory.campaign = campaign;
+  }
+
+  const references = entry["references"];
+  if (references !== undefined) {
+    if (
+      !Array.isArray(references) ||
+      !references.every((item): item is string => typeof item === "string" && item.length > 0)
+    ) {
+      throw new Error(`${context}: field "references" must be a string array when present`);
+    }
+    advisory.references = references;
+  }
+
+  return advisory;
+}
+
 function parseMaliciousNpmVersions(content: string): Map<string, MaliciousNpmVersionAdvisory[]> {
   const parsed = JSON.parse(content) as unknown;
   if (!isRecord(parsed)) {
     throw new Error("malicious-npm-versions.json must contain a JSON object");
   }
 
-  const file = parsed as MaliciousNpmVersionsFile;
-  const packages = file.packages ?? [];
+  const packages = parsed["packages"];
   if (!Array.isArray(packages)) {
     throw new Error('malicious-npm-versions.json field "packages" must be an array');
   }
@@ -202,33 +204,8 @@ function parseMaliciousNpmVersions(content: string): Map<string, MaliciousNpmVer
       throw new Error(`${context} must be an object`);
     }
 
-    const name = expectStringField(entry, "name", context).toLowerCase();
-    const affectedVersions = expectStringArrayField(entry, "affectedVersions", context);
-    const advisory: MaliciousNpmVersionAdvisory = {
-      name,
-      affectedVersions,
-      advisory: expectStringField(entry, "advisory", context),
-      reason: expectStringField(entry, "reason", context),
-    };
-
-    const campaign = entry["campaign"];
-    if (campaign !== undefined) {
-      if (typeof campaign !== "string" || campaign.length === 0) {
-        throw new Error(`${context}: field "campaign" must be a non-empty string when present`);
-      }
-      advisory.campaign = campaign;
-    }
-
-    const references = entry["references"];
-    if (references !== undefined) {
-      if (
-        !Array.isArray(references) ||
-        !references.every((item): item is string => typeof item === "string" && item.length > 0)
-      ) {
-        throw new Error(`${context}: field "references" must be a string array when present`);
-      }
-      advisory.references = references;
-    }
+    const advisory = parseVersionAdvisory(entry, context);
+    const name = advisory.name;
 
     const existing = result.get(name) ?? [];
     existing.push(advisory);
@@ -238,15 +215,27 @@ function parseMaliciousNpmVersions(content: string): Map<string, MaliciousNpmVer
   return result;
 }
 
-let cachedZooData: ZooData | undefined;
+let cachedZooData: { root: string; result: Promise<ZooData> } | undefined;
 
-export async function loadZooData(): Promise<ZooData> {
-  if (cachedZooData) {
-    return cachedZooData;
+/** Load required threat intelligence once for each selected dataset root. */
+export function loadZooData(root = getZooRoot()): Promise<ZooData> {
+  if (cachedZooData?.root !== root) cachedZooData = { root, result: readZooData(root) };
+  return cachedZooData.result;
+}
+
+async function readDataset(root: string, path: string): Promise<string> {
+  const file = join(root, path);
+  try {
+    return await readFile(file, "utf8");
+  } catch (error) {
+    throw new Error(
+      `Cannot load detection dataset ${file}. Restore the file or fix VSIX_AUDIT_ZOO_PATH.`,
+      { cause: error },
+    );
   }
+}
 
-  const zooRoot = await findZooRoot();
-
+async function readZooData(zooRoot: string): Promise<ZooData> {
   const [
     blocklistContent,
     hashesContent,
@@ -259,23 +248,21 @@ export async function loadZooData(): Promise<ZooData> {
     githubC2Content,
     npmVersionsContent,
   ] = await Promise.all([
-    readFile(join(zooRoot, "blocklist", "extensions.json"), "utf8"),
-    readFile(join(zooRoot, "iocs", "hashes.txt"), "utf8"),
-    readFile(join(zooRoot, "iocs", "c2-domains.txt"), "utf8"),
-    readFile(join(zooRoot, "iocs", "c2-ips.txt"), "utf8"),
-    readFile(join(zooRoot, "iocs", "malicious-npm.txt"), "utf8"),
-    readFile(join(zooRoot, "iocs", "wallets.txt"), "utf8"),
-    readFile(join(zooRoot, "iocs", "blockchain-extensions.txt"), "utf8"),
-    readFile(join(zooRoot, "telemetry", "known-services.txt"), "utf8").catch(() => ""),
-    readFile(join(zooRoot, "iocs", "github-c2.txt"), "utf8").catch(() => ""),
-    readFile(join(zooRoot, "iocs", "malicious-npm-versions.json"), "utf8").catch(
-      () => '{"packages":[]}',
-    ),
+    readDataset(zooRoot, "blocklist/extensions.json"),
+    readDataset(zooRoot, "iocs/hashes.txt"),
+    readDataset(zooRoot, "iocs/c2-domains.txt"),
+    readDataset(zooRoot, "iocs/c2-ips.txt"),
+    readDataset(zooRoot, "iocs/malicious-npm.txt"),
+    readDataset(zooRoot, "iocs/wallets.txt"),
+    readDataset(zooRoot, "iocs/blockchain-extensions.txt"),
+    readDataset(zooRoot, "telemetry/known-services.txt"),
+    readDataset(zooRoot, "iocs/github-c2.txt"),
+    readDataset(zooRoot, "iocs/malicious-npm-versions.json"),
   ]);
 
   const blocklistFile = JSON.parse(blocklistContent) as BlocklistFile;
 
-  cachedZooData = {
+  return {
     blocklist: blocklistFile.extensions,
     hashes: parseIOCFile(hashesContent, (hash) =>
       /^[a-f0-9]{64}$/i.test(hash) ? hash.toLowerCase() : null,
@@ -289,6 +276,4 @@ export async function loadZooData(): Promise<ZooData> {
     telemetryServices: parseTelemetryServices(telemetryContent),
     githubC2Accounts: parseIOCFile(githubC2Content, (username) => username.toLowerCase()),
   };
-
-  return cachedZooData;
 }

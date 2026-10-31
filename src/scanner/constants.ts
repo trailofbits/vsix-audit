@@ -4,19 +4,9 @@
  */
 
 /** Code files - JavaScript, TypeScript, and script files */
-export const CODE_EXTENSIONS = new Set([
-  ".js",
-  ".ts",
-  ".mjs",
-  ".cjs",
-  ".jsx",
-  ".tsx",
-  ".ps1",
-  ".sh",
-  ".bat",
-  ".cmd",
-  ".py",
-]);
+export const JS_EXTENSIONS = new Set([".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"]);
+
+export const CODE_EXTENSIONS = new Set([...JS_EXTENSIONS, ".ps1", ".sh", ".bat", ".cmd", ".py"]);
 
 /** Data files that may contain IOCs */
 export const DATA_EXTENSIONS = new Set([".json"]);

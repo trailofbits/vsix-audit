@@ -11,6 +11,14 @@ import {
 } from "#internal/scanner/cache.js";
 import type { Registry } from "#internal/scanner/types.js";
 
+/** A registry explicitly reports that an extension is absent. */
+export class ExtensionNotFoundError extends Error {
+  constructor(registry: string, extensionId: string) {
+    super(`Extension not found on ${registry}: ${extensionId}`);
+    this.name = "ExtensionNotFoundError";
+  }
+}
+
 export interface ExtensionMetadata {
   extensionId: string;
   publisher: string;
@@ -231,17 +239,22 @@ export function parseExtensionId(input: string): ParsedExtensionId {
   return result;
 }
 
+function hasText(value: string | undefined): value is string {
+  return value !== undefined && value !== "";
+}
+
 function selectGalleryVersion(
-  versions: GalleryVersion[],
+  versions: GalleryVersion[] | undefined,
   version: string | undefined,
   extensionId: string,
 ): GalleryVersion {
-  const pinned = version !== undefined && version !== "";
-  const selected = pinned ? versions.find((item) => item.version === version) : versions[0];
+  const pinned = hasText(version);
+  const available = versions ?? [];
+  const selected = pinned ? available.find((item) => item.version === version) : available[0];
   if (selected !== undefined) return selected;
   if (pinned) {
     throw new Error(
-      `Version ${version} not found for ${extensionId}. Latest: ${versions[0]?.version}`,
+      `Version ${version} not found for ${extensionId}. Latest: ${available[0]?.version}`,
     );
   }
   throw new Error(`No versions available for ${extensionId}`);
@@ -260,7 +273,7 @@ async function queryGalleryApi(
 ): Promise<ExtensionMetadata> {
   const extensionId = `${publisher}.${name}`;
   const { url: apiUrl, label: registryLabel } = GALLERY_APIS[registry];
-  const pinned = version !== undefined && version !== "";
+  const pinned = hasText(version);
   const latestOnly = pinned ? 0 : INCLUDE_LATEST_VERSION_ONLY;
 
   const requestBody = {
@@ -283,6 +296,7 @@ async function queryGalleryApi(
     body: JSON.stringify(requestBody),
   });
 
+  if (response.status === 404) throw new ExtensionNotFoundError(registryLabel, extensionId);
   if (!response.ok) {
     throw new Error(`${registryLabel} API error: ${response.status} ${response.statusText}`);
   }
@@ -291,10 +305,10 @@ async function queryGalleryApi(
   const ext = data.results[0]?.extensions[0];
 
   if (!ext) {
-    throw new Error(`Extension not found on ${registryLabel}: ${extensionId}`);
+    throw new ExtensionNotFoundError(registryLabel, extensionId);
   }
 
-  const targetVersion = selectGalleryVersion(ext.versions ?? [], version, extensionId);
+  const targetVersion = selectGalleryVersion(ext.versions, version, extensionId);
 
   const installStat = ext.statistics?.find((s) => s.statisticName === "install");
 
@@ -307,10 +321,10 @@ async function queryGalleryApi(
     registry,
   };
 
-  if (ext.displayName !== undefined && ext.displayName !== "") {
+  if (hasText(ext.displayName)) {
     result.displayName = ext.displayName;
   }
-  if (ext.shortDescription !== undefined && ext.shortDescription !== "") {
+  if (hasText(ext.shortDescription)) {
     result.description = ext.shortDescription;
   }
   if (installStat?.value !== undefined) {
@@ -340,15 +354,14 @@ export async function queryOpenVSX(
   version?: string,
 ): Promise<ExtensionMetadata> {
   const extensionId = `${publisher}.${name}`;
-  const url =
-    version !== undefined && version !== ""
-      ? `${OPENVSX_API_URL}/${publisher}/${name}/${version}`
-      : `${OPENVSX_API_URL}/${publisher}/${name}`;
+  const url = hasText(version)
+    ? `${OPENVSX_API_URL}/${publisher}/${name}/${version}`
+    : `${OPENVSX_API_URL}/${publisher}/${name}`;
 
   const response = await fetch(url);
   if (!response.ok) {
     if (response.status === 404) {
-      throw new Error(`Extension not found on OpenVSX: ${extensionId}`);
+      throw new ExtensionNotFoundError("OpenVSX", extensionId);
     }
     throw new Error(`OpenVSX API error: ${response.status} ${response.statusText}`);
   }
@@ -363,13 +376,13 @@ export async function queryOpenVSX(
     registry: "openvsx",
   };
 
-  if (data.timestamp !== undefined && data.timestamp !== "") {
+  if (hasText(data.timestamp)) {
     result.lastUpdated = data.timestamp;
   }
-  if (data.displayName !== undefined && data.displayName !== "") {
+  if (hasText(data.displayName)) {
     result.displayName = data.displayName;
   }
-  if (data.description !== undefined && data.description !== "") {
+  if (hasText(data.description)) {
     result.description = data.description;
   }
   if (data.downloadCount !== undefined) {
