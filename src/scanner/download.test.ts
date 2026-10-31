@@ -2,14 +2,14 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getCachedPath } from "./cache.js";
+import { getCachedPath } from "#internal/scanner/cache.js";
 import {
   downloadExtension,
   getCursorDownloadUrl,
   getMarketplaceDownloadUrl,
   getOpenVSXDownloadUrl,
   parseExtensionId,
-} from "./download.js";
+} from "#internal/scanner/download.js";
 
 describe("downloadExtension cache behavior", () => {
   let testDir: string;
@@ -82,8 +82,9 @@ describe("downloadExtension cache behavior", () => {
     expect(await readFile(cachedPath, "utf8")).toBe("cached VSIX");
   });
 
-  it("does not create a persistent cache for uncached downloads", async () => {
+  it.each([false, true])("does not access the cache with an existing file=%s", async (existing) => {
     const emptyCache = join(testDir, "unused-cache");
+    if (existing) await writeFile(emptyCache, "blocked persistent cache");
     vi.stubEnv("VSIX_AUDIT_CACHE_DIR", emptyCache);
 
     const result = await downloadExtension("openvsx:test.extension", {
@@ -92,7 +93,10 @@ describe("downloadExtension cache behavior", () => {
     });
 
     expect(await readFile(result.path, "utf8")).toBe("fresh VSIX");
-    await expect(readdir(emptyCache)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readdir(emptyCache)).rejects.toMatchObject({
+      code: existing ? "ENOTDIR" : "ENOENT",
+    });
+    if (existing) expect(await readFile(emptyCache, "utf8")).toBe("blocked persistent cache");
   });
 });
 

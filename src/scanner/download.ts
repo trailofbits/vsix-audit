@@ -1,10 +1,15 @@
 import { createWriteStream } from "node:fs";
-import { copyFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { Readable } from "node:stream";
-import { ensureCacheDir, evictStaleEntries, getCachedPath, isCached } from "./cache.js";
-import type { Registry } from "./types.js";
+import { Readable, Transform } from "node:stream";
+import {
+  ensureCacheDir,
+  evictStaleEntries,
+  getCachedPath,
+  isCached,
+} from "#internal/scanner/cache.js";
+import type { Registry } from "#internal/scanner/types.js";
 
 export interface ExtensionMetadata {
   extensionId: string;
@@ -404,7 +409,7 @@ export function getCursorDownloadUrl(publisher: string, name: string, version: s
 const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
 
 /**
- * Download a VSIX from a URL with size limit enforcement.
+ * Download a size-limited VSIX and replace the destination after completion.
  */
 async function downloadVsixFromUrl(url: string, destPath: string): Promise<void> {
   const response = await fetch(url);
@@ -427,32 +432,36 @@ async function downloadVsixFromUrl(url: string, destPath: string): Promise<void>
 
   await mkdir(dirname(destPath), { recursive: true });
 
-  // Stream with byte counter to enforce limit
-  let bytesWritten = 0;
-  const nodeStream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream);
-  const fileStream = createWriteStream(destPath);
+  const tempDir = await mkdtemp(join(dirname(destPath), ".vsix-audit-download-"));
+  const tempPath = join(tempDir, "download.part");
+  try {
+    let bytesWritten = 0;
+    const nodeStream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream);
+    const fileStream = createWriteStream(tempPath);
+    const limiter = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        bytesWritten += chunk.length;
+        if (bytesWritten > MAX_DOWNLOAD_BYTES) {
+          callback(
+            new Error(
+              `Download exceeded ${MAX_DOWNLOAD_BYTES} ` + `byte limit at ${bytesWritten} bytes`,
+            ),
+          );
+          return;
+        }
+        callback(null, chunk);
+      },
+    });
 
-  const { Transform } = await import("node:stream");
-  const limiter = new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      bytesWritten += chunk.length;
-      if (bytesWritten > MAX_DOWNLOAD_BYTES) {
-        callback(
-          new Error(
-            `Download exceeded ${MAX_DOWNLOAD_BYTES} ` + `byte limit at ${bytesWritten} bytes`,
-          ),
-        );
-        return;
-      }
-      callback(null, chunk);
-    },
-  });
-
-  await pipeline(nodeStream, limiter, fileStream);
+    await pipeline(nodeStream, limiter, fileStream);
+    await rename(tempPath, destPath);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 }
 
 /**
- * Download a VSIX from the marketplace
+ * Download a VSIX, replacing the destination only after the transfer succeeds.
  */
 export async function downloadVsix(
   publisher: string,

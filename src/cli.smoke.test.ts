@@ -307,6 +307,7 @@ globalThis.fetch = async (input) => {
   it.each([false, true])(
     "keeps an uncached download with explicit output=%s",
     async (explicitOutput) => {
+      await writeFile(join(downloadDir, filename), "existing local VSIX");
       const args = ["download", "openvsx:test.extension", "--no-cache"];
       if (explicitOutput) args.push("--output", downloadDir);
 
@@ -315,6 +316,30 @@ globalThis.fetch = async (input) => {
       expect(result.status).toBe(0);
       expect(result.stdout).not.toContain("Using cached");
       expect(await readFile(join(downloadDir, filename))).toEqual(await readFile(payloadPath));
+      expect(await readdir(downloadDir)).toEqual([filename]);
+      expect(await readdir(scanTempDir)).toEqual([]);
+      await expectCacheUnchanged();
+    },
+  );
+
+  it.each([false, true])(
+    "preserves an existing VSIX after a failed uncached download with explicit output=%s",
+    async (explicitOutput) => {
+      const destination = join(downloadDir, filename);
+      const original = await readFile(payloadPath);
+      await writeFile(destination, original);
+      const args = ["download", "openvsx:test.extension", "--no-cache"];
+      if (explicitOutput) args.push("--output", downloadDir);
+
+      const result = await runCli(args, {
+        cwd: explicitOutput ? testDir : downloadDir,
+        env: { ...env, VSIX_AUDIT_TEST_DOWNLOAD_FAILURE: "1" },
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("Download interrupted");
+      expect(await readFile(destination)).toEqual(original);
+      expect(await readdir(downloadDir)).toEqual([filename]);
       expect(await readdir(scanTempDir)).toEqual([]);
       await expectCacheUnchanged();
     },
