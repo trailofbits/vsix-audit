@@ -51,7 +51,8 @@
     "check:static": "npm run typecheck && npm run lint && npm run format:check",
     "check": "npm run check:static && npm test && npm run test:cli",
     "prepublishOnly": "npm run check && npm run build",
-    "typecheck:scripts": "npm run build && tsc --noEmit --project tsconfig.scripts.json"
+    "typecheck:scripts": "npm run build && tsc --noEmit --project tsconfig.scripts.json",
+    "findings:collect": "npm run --silent build && node scripts/collect-findings.ts"
   },
   "dependencies": {
     "@types/yauzl": "3.4.0",

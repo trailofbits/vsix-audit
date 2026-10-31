@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CleanCorpusEntry } from "#internal/scanner/clean-corpus.js";
 
@@ -119,4 +119,44 @@ describe("clean corpus download", () => {
     expect(result.stdout).toContain(`ok test.extension-1.0.0.vsix ${entry.sha256}`);
     expect(result.stderr).toBe("");
   });
+});
+
+describe("findings collector", () => {
+  it("builds a fresh checkout and reports registry failures without fetching packages", async () => {
+    const npmCli = process.env["npm_execpath"];
+    if (npmCli === undefined) throw new Error("Run smoke tests with npm run test:cli");
+    await cp(join(repoRoot, "src"), join(root, "src"), { recursive: true });
+    await cp(join(repoRoot, "tsconfig.json"), join(root, "tsconfig.json"));
+    await cp(join(repoRoot, "package.json"), join(root, "package.json"));
+    await mkdir(join(root, "scripts"));
+    await cp(
+      join(repoRoot, "scripts", "collect-findings.ts"),
+      join(root, "scripts", "collect-findings.ts"),
+    );
+    await symlink(join(repoRoot, "node_modules"), join(root, "node_modules"), "junction");
+    const preload = join(root, "offline.mjs");
+    await writeFile(
+      preload,
+      [
+        "globalThis.fetch = async () => new Response(null, {",
+        '  status: 503, statusText: "Offline fixture",',
+        "});",
+      ].join("\n"),
+    );
+
+    const result = spawnSync(process.execPath, [npmCli, "run", "--silent", "findings:collect"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 30_000,
+      env: { ...process.env, NODE_OPTIONS: `--import=${pathToFileURL(preload).href}` },
+    });
+    if (result.error !== undefined) throw result.error;
+    const report = JSON.parse(result.stdout) as { summary: { total: number; failed: number } };
+    expect(result.status).toBe(1);
+    expect(report.summary.total).toBeGreaterThan(0);
+    expect(report.summary.failed).toBe(report.summary.total);
+    expect(result.stdout).toContain("Offline fixture");
+    expect(result.stderr).toBe("");
+    expect((await stat(join(root, "dist", "scanner", "index.js"))).isFile()).toBe(true);
+  }, 40_000);
 });
