@@ -261,7 +261,7 @@ async function queryGalleryApi(
   const extensionId = `${publisher}.${name}`;
   const { url: apiUrl, label: registryLabel } = GALLERY_APIS[registry];
   const pinned = version !== undefined && version !== "";
-  const selection = pinned ? INCLUDE_VERSIONS : INCLUDE_LATEST_VERSION_ONLY;
+  const latestOnly = pinned ? 0 : INCLUDE_LATEST_VERSION_ONLY;
 
   const requestBody = {
     filters: [
@@ -271,7 +271,7 @@ async function queryGalleryApi(
         pageNumber: 1,
       },
     ],
-    flags: INCLUDE_ASSET_URI | INCLUDE_STATISTICS | selection,
+    flags: INCLUDE_VERSIONS | INCLUDE_ASSET_URI | INCLUDE_STATISTICS | latestOnly,
   };
 
   const response = await fetch(apiUrl, {

@@ -20,7 +20,7 @@ beforeEach(() => {
               publisher: { publisherName: "dbaeumer" },
               extensionName: "vscode-eslint",
               versions:
-                (flags & 0x200) !== 0 ? versions.slice(0, 1) : (flags & 0x1) !== 0 ? versions : [],
+                (flags & 0x1) === 0 ? [] : (flags & 0x200) !== 0 ? versions.slice(0, 1) : versions,
               statistics: (flags & 0x100) !== 0 ? [{ statisticName: "install", value: 42 }] : [],
             },
           ],
