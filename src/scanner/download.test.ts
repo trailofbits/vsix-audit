@@ -4,7 +4,7 @@ import {
   getMarketplaceDownloadUrl,
   getOpenVSXDownloadUrl,
   parseExtensionId,
-} from "./download.js";
+} from "#internal/scanner/download.js";
 
 describe("parseExtensionId", () => {
   it("parses publisher.name format", () => {
@@ -223,21 +223,5 @@ describe("getCursorDownloadUrl", () => {
     expect(url).toBe(
       "https://marketplace.cursorapi.com/_apis/public/gallery/publishers/eamodio/vsextensions/gitlens/15.0.0/vspackage",
     );
-  });
-});
-
-// Integration tests that require network access
-describe.skip("downloadExtension (integration)", () => {
-  // These tests are skipped by default as they require network access
-  // Run manually with: npm test -- --run download.test.ts
-
-  it("downloads a real extension", async () => {
-    // This would actually download from the marketplace
-    // Skipped to avoid network requests in normal test runs
-  });
-
-  it("queries extension metadata", async () => {
-    // This would actually query the marketplace API
-    // Skipped to avoid network requests in normal test runs
   });
 });

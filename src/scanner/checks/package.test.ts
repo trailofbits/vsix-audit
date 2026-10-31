@@ -5,7 +5,7 @@ import type {
   VsixContents,
   VsixManifest,
   ZooData,
-} from "../types.js";
+} from "#internal/scanner/types.js";
 import {
   checkActivationEvents,
   checkBlocklist,
@@ -15,7 +15,7 @@ import {
   checkPackage,
   checkThemeAbuse,
   checkTyposquattingPackages,
-} from "./package.js";
+} from "#internal/scanner/checks/package.js";
 
 // --- Test helpers ---
 
@@ -1056,8 +1056,10 @@ describe("checkPackage (integration)", () => {
     const findings = checkPackage(contents, zooData);
 
     expect(findings).toHaveLength(1);
-    expect(findings[0]!.id).toBe("PARSE_FAILURE_PACKAGE");
-    expect(findings[0]!.severity).toBe("low");
-    expect(findings[0]!.category).toBe("pattern");
+    expect(findings[0]).toMatchObject({
+      id: "PARSE_FAILURE_PACKAGE",
+      severity: "low",
+      category: "pattern",
+    });
   });
 });

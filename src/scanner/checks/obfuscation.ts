@@ -1,20 +1,20 @@
-import type { BundlerInfo } from "../bundler.js";
-import { detectBundler } from "../bundler.js";
+import type { BundlerInfo } from "#internal/scanner/bundler.js";
+import { detectBundler } from "#internal/scanner/bundler.js";
 import {
   isScannable,
   SCANNABLE_EXTENSIONS_PATTERN,
   SCANNABLE_EXTENSIONS_UNICODE,
-} from "../constants.js";
-import type { Finding, Severity, VsixContents } from "../types.js";
-import { detectCyrillicHomoglyphs } from "./homoglyph.js";
-import type { UnicodeMatch } from "./homoglyph.js";
+} from "#internal/scanner/constants.js";
+import type { Finding, Severity, VsixContents } from "#internal/scanner/types.js";
+import { detectCyrillicHomoglyphs } from "#internal/scanner/checks/homoglyph.js";
+import type { UnicodeMatch } from "#internal/scanner/checks/homoglyph.js";
 import {
   computeLineStarts,
   findLineNumberByIndex,
   getStringContent,
   offsetToColumn,
   offsetToLine,
-} from "../utils.js";
+} from "#internal/scanner/utils.js";
 
 /**
  * Obfuscation detection module.
@@ -515,13 +515,11 @@ function checkUnicodeHiding(contents: VsixContents): Finding[] {
         metadata: {
           matchCount: matches.length,
           firstMatch: firstMatch.context,
-          codePoints: matches
-            .slice(0, 5)
-            .map((m) =>
-              [...m.matched]
-                .map((c) => `U+${c.codePointAt(0)?.toString(16).toUpperCase().padStart(4, "0")}`)
-                .join(", "),
-            ),
+          codePoints: matches.slice(0, 5).map((m) =>
+            Array.from(m.matched)
+              .map((c) => `U+${c.codePointAt(0)?.toString(16).toUpperCase().padStart(4, "0")}`)
+              .join(", "),
+          ),
         },
       });
     }

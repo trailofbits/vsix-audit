@@ -1,18 +1,15 @@
 import { parseSync, Visitor } from "oxc-parser";
-import type {
-  Argument,
-  CallExpression,
-  ImportExpression,
-  MemberExpression,
-  NewExpression,
-  Node,
-  Span,
-} from "oxc-parser";
-import type { BundlerInfo } from "../bundler.js";
-import { detectBundler, hasGenuineObfuscation } from "../bundler.js";
-import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "../constants.js";
-import type { Finding, Severity, VsixContents } from "../types.js";
-import { computeLineStarts, getStringContent, offsetToColumn, offsetToLine } from "../utils.js";
+import type { Argument, CallExpression, NewExpression, Node, Span } from "oxc-parser";
+import type { BundlerInfo } from "#internal/scanner/bundler.js";
+import { detectBundler, hasGenuineObfuscation } from "#internal/scanner/bundler.js";
+import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "#internal/scanner/constants.js";
+import type { Finding, Severity, VsixContents } from "#internal/scanner/types.js";
+import {
+  computeLineStarts,
+  getStringContent,
+  offsetToColumn,
+  offsetToLine,
+} from "#internal/scanner/utils.js";
 
 interface ASTPattern {
   id: string;
@@ -56,7 +53,7 @@ function getCodeSnippet(
   const lineNum = offsetToLine(start, lineStarts);
   const lines = content.split("\n");
   const line = lines[lineNum - 1];
-  if (!line) return "(no line)";
+  if (line === undefined || line === "") return "(no line)";
 
   const lineStart = lineStarts[lineNum - 1] ?? 0;
   const colStart = start - lineStart;
@@ -76,7 +73,7 @@ function getCodeSnippet(
  * Check if a node is an Identifier with a specific name.
  */
 function isIdentifier(node: Node | undefined, name?: string): boolean {
-  if (!node || node.type !== "Identifier") return false;
+  if (node?.type !== "Identifier") return false;
   if (name !== undefined) {
     return (node as { name: string }).name === name;
   }
@@ -100,22 +97,22 @@ function isCallTo(node: Node, name: string | string[]): node is CallExpression {
   if (node.type !== "CallExpression") return false;
 
   const names = Array.isArray(name) ? name : [name];
-  const callee = (node as CallExpression).callee;
+  const callee = node.callee;
 
   // Direct call: eval()
   if (isIdentifier(callee)) {
     const calleeName = getIdentifierName(callee);
-    if (calleeName && names.includes(calleeName)) {
+    if (calleeName !== null && calleeName !== "" && names.includes(calleeName)) {
       return true;
     }
   }
 
   // Member call: require("child_process").exec()
   if (callee.type === "MemberExpression") {
-    const memberExpr = callee as MemberExpression;
+    const memberExpr = callee;
     if (isIdentifier(memberExpr.property)) {
       const propName = getIdentifierName(memberExpr.property);
-      if (propName && names.includes(propName)) {
+      if (propName !== null && propName !== "" && names.includes(propName)) {
         return true;
       }
     }
@@ -129,7 +126,7 @@ function isCallTo(node: Node, name: string | string[]): node is CallExpression {
  */
 function isNewExpression(node: Node, name: string): node is NewExpression {
   if (node.type !== "NewExpression") return false;
-  const newExpr = node as NewExpression;
+  const newExpr = node;
   return isIdentifier(newExpr.callee, name);
 }
 
@@ -173,7 +170,7 @@ const AST_PATTERNS: ASTPattern[] = [
 
       if (!isCallTo(node, "eval")) return null;
 
-      const arg = (node as CallExpression).arguments[0];
+      const arg = node.arguments[0];
       if (!arg || isLiteral(arg)) return null;
 
       const span = node as Span;
@@ -202,7 +199,7 @@ const AST_PATTERNS: ASTPattern[] = [
       if (context.isBundled && !context.hasObfuscationIndicators) return null;
 
       // Check if any argument is non-literal
-      const hasDynamicArg = (node as NewExpression).arguments.some((arg) => !isLiteral(arg));
+      const hasDynamicArg = node.arguments.some((arg) => !isLiteral(arg));
 
       const span = node as Span;
       return {
@@ -226,7 +223,7 @@ const AST_PATTERNS: ASTPattern[] = [
       if (context.isBundled) return null;
 
       if (node.type !== "CallExpression") return null;
-      const callExpr = node as CallExpression;
+      const callExpr = node;
       if (!isIdentifier(callExpr.callee, "require")) {
         return null;
       }
@@ -255,9 +252,9 @@ const AST_PATTERNS: ASTPattern[] = [
       // OXC uses ImportExpression for dynamic imports
       if (node.type !== "ImportExpression") return null;
 
-      const importExpr = node as ImportExpression;
+      const importExpr = node;
       const source = importExpr.source;
-      if (isLiteral(source as Argument)) return null;
+      if (isLiteral(source)) return null;
 
       const span = node as Span;
       return {
@@ -281,14 +278,14 @@ const AST_PATTERNS: ASTPattern[] = [
       if (context.isBundled) return null;
 
       if (node.type !== "CallExpression") return null;
-      const callExpr = node as CallExpression;
+      const callExpr = node;
       if (callExpr.callee.type !== "MemberExpression") return null;
 
-      const memberExpr = callExpr.callee as MemberExpression;
+      const memberExpr = callExpr.callee;
       if (!memberExpr.computed) return null;
 
       // Skip if property is a literal
-      if (isLiteral(memberExpr.property as Argument)) return null;
+      if (isLiteral(memberExpr.property)) return null;
 
       // Only flag in obfuscated contexts
       if (!context.hasObfuscationIndicators) return null;
@@ -313,10 +310,10 @@ const AST_PATTERNS: ASTPattern[] = [
       if (!isCallTo(node, ["binding", "_linkedBinding"])) return null;
 
       // Check if it's on process object
-      const callExpr = node as CallExpression;
+      const callExpr = node;
       if (callExpr.callee.type !== "MemberExpression") return null;
 
-      const memberExpr = callExpr.callee as MemberExpression;
+      const memberExpr = callExpr.callee;
       if (!isIdentifier(memberExpr.object, "process")) return null;
 
       const span = node as Span;
@@ -338,12 +335,16 @@ const AST_PATTERNS: ASTPattern[] = [
     detect: (node, context) => {
       if (node.type !== "MemberExpression") return null;
 
-      const memberExpr = node as MemberExpression;
+      const memberExpr = node;
       const obj = memberExpr.object;
       if (!isIdentifier(obj)) return null;
 
       const objName = getIdentifierName(obj);
-      if (!objName || !["globalThis", "window", "global", "self"].includes(objName)) {
+      if (
+        objName === null ||
+        objName === "" ||
+        !["globalThis", "window", "global", "self"].includes(objName)
+      ) {
         return null;
       }
 
@@ -399,7 +400,7 @@ function analyzeFile(
     ".ts": "ts",
     ".tsx": "tsx",
   };
-  const lang = langMap[ext] || "tsx"; // Default to tsx for maximum compatibility
+  const lang = langMap[ext] ?? "tsx"; // Default to tsx for maximum compatibility
 
   // Try to parse the file
   let result;
@@ -440,7 +441,7 @@ function analyzeFile(
       location: { file: filename },
       metadata: {
         errorCount: result.errors.length,
-        error: String(result.errors[0]),
+        error: result.errors[0]?.message ?? "Unknown parser error",
       },
     });
   }
@@ -458,7 +459,7 @@ function analyzeFile(
 
   const seenFindings = new Set<string>();
 
-  const addFinding = (pattern: ASTPattern, match: ASTMatch) => {
+  const addFinding = (pattern: ASTPattern, match: ASTMatch): void => {
     const line = offsetToLine(match.start, lineStarts);
     const key = `${pattern.id}:${filename}:${line}`;
     if (seenFindings.has(key)) return;
@@ -477,6 +478,9 @@ function analyzeFile(
       },
       metadata: {
         codeSnippet: match.codeSnippet,
+        ...(match.additionalInfo !== null && match.additionalInfo !== ""
+          ? { additionalInfo: match.additionalInfo }
+          : {}),
         ...(pattern.legitimateUses && {
           legitimateUses: pattern.legitimateUses,
         }),
@@ -484,15 +488,11 @@ function analyzeFile(
       },
     };
 
-    if (match.additionalInfo) {
-      finding.metadata!["additionalInfo"] = match.additionalInfo;
-    }
-
     findings.push(finding);
   };
 
   // Process patterns for each node type using typed visitors
-  const processNode = (node: Node) => {
+  const processNode = (node: Node): void => {
     for (const pattern of AST_PATTERNS) {
       const match = pattern.detect(node, context);
       if (match) addFinding(pattern, match);
@@ -500,16 +500,16 @@ function analyzeFile(
   };
 
   const visitor = new Visitor({
-    CallExpression(node) {
+    CallExpression(node): void {
       processNode(node);
     },
-    NewExpression(node) {
+    NewExpression(node): void {
       processNode(node);
     },
-    MemberExpression(node) {
+    MemberExpression(node): void {
       processNode(node);
     },
-    ImportExpression(node) {
+    ImportExpression(node): void {
       processNode(node);
     },
   });

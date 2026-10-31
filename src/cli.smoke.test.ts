@@ -115,7 +115,9 @@ async function runCli(args: string[]): Promise<CliResult> {
       stderr += chunk;
     });
     child.on("error", reject);
-    child.on("close", (status) => resolvePromise({ status, stdout, stderr }));
+    child.on("close", (status) => {
+      resolvePromise({ status, stdout, stderr });
+    });
   });
 }
 

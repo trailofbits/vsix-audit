@@ -1,6 +1,10 @@
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "import", "vitest", "unicorn"],
+  "plugins": ["typescript", "unicorn", "oxc", "import", "vitest", "node"],
+  "options": {
+    "typeAware": true,
+    "maxWarnings": 0
+  },
   "rules": {
     "typescript/await-thenable": "error",
     "typescript/no-floating-promises": "error",
@@ -24,17 +28,19 @@
     "typescript/prefer-nullish-coalescing": "warn",
     "typescript/no-array-delete": "warn",
     "typescript/no-for-in-array": "warn",
-    "typescript/switch-exhaustiveness-check": "warn",
+    "typescript/switch-exhaustiveness-check": [
+      "error",
+      {
+        "considerDefaultExhaustiveForUnions": false
+      }
+    ],
     "typescript/use-unknown-in-catch-callback-variable": "warn",
     "typescript/explicit-function-return-type": "warn",
     "typescript/no-non-null-assertion": "warn",
     "typescript/no-unnecessary-type-arguments": "warn",
-
     "import/no-cycle": "error",
     "import/no-self-import": "error",
-
     "vitest/no-conditional-tests": "error",
-
     "unicorn/prefer-node-protocol": "warn"
   }
 }

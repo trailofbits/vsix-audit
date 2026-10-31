@@ -1,7 +1,12 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import pc from "picocolors";
-import type { BatchScanResult, ModuleTimings, ScanResult, Severity } from "./scanner/types.js";
+import type {
+  BatchScanResult,
+  ModuleTimings,
+  ScanResult,
+  Severity,
+} from "#internal/scanner/types.js";
 
 type SarifLevel = "none" | "note" | "warning" | "error";
 
@@ -43,6 +48,10 @@ interface SarifReport {
   $schema: string;
   version: string;
   runs: SarifRun[];
+}
+
+function locationLineSuffix(line: number | undefined): string {
+  return line !== undefined && line !== 0 && !Number.isNaN(line) ? `:${line}` : "";
 }
 
 function severityToSarifLevel(severity: Severity): SarifLevel {
@@ -100,7 +109,12 @@ export function toSarif(result: ScanResult, toolVersion: string): SarifReport {
                     ? f.location.file
                     : pathToFileURL(resolve(sourcePath, f.location.file)).href,
               },
-              region: f.location.line ? { startLine: f.location.line } : undefined,
+              region:
+                f.location.line !== undefined &&
+                f.location.line !== 0 &&
+                !Number.isNaN(f.location.line)
+                  ? { startLine: f.location.line }
+                  : undefined,
             },
           },
         ]
@@ -210,14 +224,15 @@ export function printTextReport(result: ScanResult): void {
   console.log(`${pc.cyan("Scanned:")} ${result.metadata.scannedAt}`);
   console.log();
 
-  if (result.inventory && result.inventory.length > 0) {
+  if (result.inventory.length > 0) {
     console.log(pc.cyan("Checks performed:"));
     for (const check of result.inventory) {
       if (check.enabled) {
         console.log(`  ${pc.green("✓")} ${pc.bold(check.name.padEnd(14))}${check.description}`);
       } else {
         console.log(
-          `  ${pc.yellow("⚠")} ${pc.bold(check.name.padEnd(14))}${pc.dim(`Skipped (${check.skipReason})`)}`,
+          `  ${pc.yellow("⚠")} ${pc.bold(check.name.padEnd(14))}` +
+            pc.dim(`Skipped (${check.skipReason})`),
         );
       }
     }
@@ -228,7 +243,7 @@ export function printTextReport(result: ScanResult): void {
     printTimings(result.metadata.timings);
   }
 
-  if (result.metadata.coverage?.degraded) {
+  if (result.metadata.coverage?.degraded === true) {
     console.log(pc.yellow("Coverage degraded:"));
     for (const warning of result.metadata.coverage.warnings.slice(0, 10)) {
       console.log(`  ${pc.yellow("⚠")} ${warning}`);
@@ -253,7 +268,7 @@ export function printTextReport(result: ScanResult): void {
     console.log(`  ${pc.dim(finding.description)}`);
     if (finding.location) {
       console.log(
-        `  ${pc.dim(`at ${finding.location.file}${finding.location.line ? `:${finding.location.line}` : ""}`)}`,
+        `  ${pc.dim(`at ${finding.location.file}${locationLineSuffix(finding.location.line)}`)}`,
       );
     }
     console.log();
@@ -274,9 +289,8 @@ function printBatchFindings(results: ScanResult[]): void {
         console.log(`  ${color(`[${finding.severity.toUpperCase()}]`)} ${finding.title}`);
         console.log(`  ${pc.dim(finding.description)}`);
         if (finding.location) {
-          console.log(
-            `  ${pc.dim(`at ${finding.location.file}${finding.location.line ? `:${finding.location.line}` : ""}`)}`,
-          );
+          const { file, line } = finding.location;
+          console.log(`  ${pc.dim(`at ${file}${locationLineSuffix(line)}`)}`);
         }
         console.log();
       }
@@ -308,7 +322,7 @@ function printBatchTimings(results: ScanResult[]): void {
 function printBatchCoverage(results: ScanResult[]): void {
   for (const result of results) {
     const coverage = result.metadata.coverage;
-    if (!coverage?.degraded) continue;
+    if (coverage?.degraded !== true) continue;
     const source = result.metadata.sourcePath ?? result.extension.id;
     console.log(pc.yellow(`Coverage degraded: ${source}`));
     for (const warning of coverage.warnings) console.log(`  ${warning}`);
