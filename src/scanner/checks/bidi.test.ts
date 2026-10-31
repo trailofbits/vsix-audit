@@ -91,6 +91,21 @@ describe("BIDI controls outside range data", () => {
     },
   );
 
+  it.each([
+    `const pattern = ${JSON.stringify(`[${LRE}\\-a]`)};`,
+    `const pattern = /[${LRE}\\-a]/u;`,
+  ])("retains an LRE followed by an escaped hyphen: %j", (source) => {
+    expect(directionalFindings(source)).toHaveLength(1);
+  });
+
+  it("retains escaped hyphens near execution", () => {
+    const patterns = JSON.stringify(Array.from({ length: 6 }, () => `[${LRE}\\-a]`));
+    const source = `const patterns = ${patterns}; new Function(patterns.join(''));`;
+    expect(directionalFindings(source).map((finding) => finding.id)).toEqual(
+      expect.arrayContaining(["BIDI_OVERRIDE", "INVISIBLE_CODE_EXECUTION"]),
+    );
+  });
+
   it("retains Trojan Source controls alongside safe range data", () => {
     const source = `const pattern = "[${LRE}-\uffff]";\n/* \u202e hidden \u202c */`;
     expect(directionalFindings(source)[0]).toMatchObject({
