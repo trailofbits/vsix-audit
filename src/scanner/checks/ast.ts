@@ -389,7 +389,7 @@ function recordParseRecovery(
  * Parse and analyze a JavaScript/TypeScript file for suspicious patterns.
  */
 function analyzeFile(filename: string, content: string, findings: Finding[]): boolean {
-  const result = parseSync(filename, content, {
+  const result = parseSync(filename.toLowerCase(), content, {
     sourceType: "unambiguous",
   });
 

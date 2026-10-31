@@ -40,6 +40,20 @@ function makeContents(files: Record<string, string>): VsixContents {
 }
 
 describe("checkAST", () => {
+  it.each([
+    ["main.ts", "const code: string = payload; eval(code);"],
+    ["MAIN.TS", "const code: string = payload; eval(code);"],
+    ["main.tsx", "const code: string = payload; eval(code);"],
+    ["MAIN.TSX", "const code: string = payload; eval(code);"],
+    ["main.jsx", "const node = <div>{eval(payload)}</div>;"],
+    ["MAIN.JSX", "const node = <div>{eval(payload)}</div>;"],
+  ])("recognizes language modes regardless of extension case in %s", (filename, source) => {
+    const result = checkAST(makeContents({ [filename]: source }));
+    expect(result.warnings).toEqual([]);
+    const finding = result.findings.find((entry) => entry.id === "AST_EVAL_DYNAMIC");
+    expect(finding?.location).toMatchObject({ file: filename, line: 1 });
+  });
+
   it("parses bundled TypeScript declarations in declaration mode", () => {
     const result = checkAST(
       makeContents({
