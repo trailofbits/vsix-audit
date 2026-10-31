@@ -561,6 +561,32 @@ describe("built CLI smoke tests", () => {
     expect(ids).not.toContain("MALICIOUS_NPM_PACKAGE");
   });
 
+  it.each(["low", "critical"])(
+    "returns strict exit code 2 for recovered parsing at %s severity",
+    async (severity) => {
+      const directory = join(tempRoot, `recoverable-${severity}`);
+      await mkdir(directory);
+      await writeFile(
+        join(directory, "package.json"),
+        JSON.stringify({ name: "recovery", publisher: "test", version: "1.0.0", main: "main.js" }),
+      );
+      await writeFile(join(directory, "main.js"), "const missing;");
+      const result = await runCli([
+        "scan",
+        directory,
+        "--output=json",
+        "--module=ast",
+        `--severity=${severity}`,
+        "--strict",
+        "--no-network",
+      ]);
+      const parsed = JSON.parse(result.stdout) as ScanResult;
+      expect(result.status).toBe(2);
+      expect(parsed.metadata.coverage?.degraded).toBe(true);
+      expect(parsed.metadata.coverage?.warnings).toEqual([expect.stringContaining('"main.js"')]);
+    },
+  );
+
   it("returns exit code 2 for strict coverage degradation", async () => {
     const result = await runCli([
       "scan",
