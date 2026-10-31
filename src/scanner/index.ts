@@ -88,7 +88,17 @@ function findingEvidenceFingerprint(finding: Finding): string {
   for (const key of FINGERPRINT_METADATA_KEYS) {
     const value = metadata[key];
     if (value !== undefined && value !== null) {
-      values.push(`${key}=${inspect(value, { sorted: true, customInspect: false, depth: null })}`);
+      const evidence =
+        typeof value === "string"
+          ? value
+          : inspect(value, {
+              sorted: true,
+              customInspect: false,
+              depth: null,
+              maxStringLength: null,
+              maxArrayLength: null,
+            });
+      values.push(`${key}=${evidence}`);
     }
   }
 
