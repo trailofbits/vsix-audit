@@ -26,6 +26,29 @@ const safePatterns = [
 
 describe("BIDI controls in resolved regex constructions", () => {
   it.each([
+    "(globalThis as typeof globalThis).RegExp = consume;",
+    "(globalThis satisfies typeof globalThis).RegExp = consume;",
+    "globalThis!.RegExp = consume;",
+    "(<typeof globalThis>globalThis).RegExp = consume;",
+    "(globalThis as typeof globalThis)!.RegExp = consume;",
+    'const root = (globalThis as typeof globalThis)!; root["RegExp"] = consume;',
+    "globalThis<typeof globalThis>.RegExp = consume;",
+  ])("retains controls after a typed global mutation: %j", (mutation) => {
+    const source = `${mutation} RegExp("[a-${LRE}]");`;
+    expect(directionalFindings(source, "extension.ts")).toHaveLength(1);
+  });
+
+  it.each([
+    `const local = {}; (local as Record<string, unknown>).RegExp = consume;` +
+      `new RegExp("[a-${LRE}]");`,
+    `globalThis["harmless" as string] = value; new RegExp("[a-${LRE}]" as string);`,
+    `const range = "[a-${LRE}]" satisfies string; new RegExp(range);`,
+    `(RegExp as typeof RegExp)("[a-${LRE}]" as string, "u" as string);`,
+  ])("accepts typed patterns and harmless typed writes: %j", (source) => {
+    expect(directionalFindings(source, "extension.ts")).toEqual([]);
+  });
+
+  it.each([
     'globalThis["harmless"] = value;',
     "globalThis[42] = value;",
     'const key = "harm" + "less"; globalThis[key] = value;',

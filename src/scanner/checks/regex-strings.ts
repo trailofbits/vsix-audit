@@ -48,6 +48,20 @@ const MAX_PATTERN_LENGTH = 65_536;
 const MAX_RESOLUTION_DEPTH = 64;
 const GLOBAL_OBJECTS = new Set(["globalThis", "global", "window", "self"]);
 
+function unwrapTypeExpression(node: Node): Node {
+  while (
+    node.type === "TSAsExpression" ||
+    node.type === "TSSatisfiesExpression" ||
+    node.type === "TSNonNullExpression" ||
+    node.type === "TSTypeAssertion" ||
+    node.type === "TSInstantiationExpression" ||
+    node.type === "ParenthesizedExpression"
+  ) {
+    node = node.expression;
+  }
+  return node;
+}
+
 function regExpProperty(node: MemberExpression, scope: Scope, resolver: StringResolver): boolean {
   if (!node.computed) return node.property.type === "Identifier" && node.property.name === "RegExp";
   if (node.property.type === "Literal") return node.property.value === "RegExp";
@@ -56,9 +70,10 @@ function regExpProperty(node: MemberExpression, scope: Scope, resolver: StringRe
 }
 
 function globalReceiver(node: Expression, scope: Scope, active = new Set<Binding>()): boolean {
-  if (node.type !== "Identifier") return false;
-  const binding = lookup(scope, node.name);
-  if (binding === undefined) return GLOBAL_OBJECTS.has(node.name);
+  const expression = unwrapTypeExpression(node);
+  if (expression.type !== "Identifier") return false;
+  const binding = lookup(scope, expression.name);
+  if (binding === undefined) return GLOBAL_OBJECTS.has(expression.name);
   if (binding === null || active.has(binding)) return false;
   active.add(binding);
   return globalReceiver(binding.expression, binding.scope, active);
@@ -67,18 +82,11 @@ function globalReceiver(node: Expression, scope: Scope, active = new Set<Binding
 function writesWrappedTarget(node: Node, scope: Scope, resolver: StringResolver): boolean {
   if (node.type === "AssignmentPattern") return writesRegExp(node.left, scope, resolver);
   if (node.type === "RestElement") return writesRegExp(node.argument, scope, resolver);
-  if (
-    node.type === "TSAsExpression" ||
-    node.type === "TSSatisfiesExpression" ||
-    node.type === "TSNonNullExpression" ||
-    node.type === "TSTypeAssertion"
-  ) {
-    return writesRegExp(node.expression, scope, resolver);
-  }
   return false;
 }
 
 function writesRegExp(node: Node, scope: Scope, resolver: StringResolver): boolean {
+  node = unwrapTypeExpression(node);
   if (node.type === "Identifier") {
     return node.name === "RegExp" && lookup(scope, node.name) === undefined;
   }
@@ -319,7 +327,8 @@ class StringResolver {
 
   constructor(private readonly content: string) {}
 
-  resolve(node: Expression, scope: Scope, depth = 0): ResolvedString | undefined {
+  resolve(expression: Expression, scope: Scope, depth = 0): ResolvedString | undefined {
+    const node = unwrapTypeExpression(expression);
     if (depth > MAX_RESOLUTION_DEPTH) return undefined;
     if (node.type === "Literal" && typeof node.value === "string") {
       return stringLiteral(node, this.content);
@@ -358,8 +367,9 @@ function constructionPattern(
   { node, scope }: Construction,
   resolver: StringResolver,
 ): RegexString | undefined {
-  if (node.callee.type !== "Identifier") return undefined;
-  if (node.callee.name !== "RegExp" || lookup(scope, "RegExp") !== undefined) return undefined;
+  const callee = unwrapTypeExpression(node.callee);
+  if (callee.type !== "Identifier") return undefined;
+  if (callee.name !== "RegExp" || lookup(scope, "RegExp") !== undefined) return undefined;
   const [pattern, flags] = node.arguments;
   if (pattern === undefined || pattern.type === "SpreadElement") return undefined;
   const resolved = resolver.resolve(pattern, scope);
