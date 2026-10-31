@@ -18,6 +18,7 @@ assert.ok(
     typeof packageInfo.version === "string",
 );
 const { version } = packageInfo;
+const nodeVersion = (await readFile(new URL("../.node-version", import.meta.url), "utf8")).trim();
 const cache = fileURLToPath(new URL("../.cache/", import.meta.url));
 await mkdir(cache, { recursive: true });
 const fixtures = await mkdtemp(join(cache, "docker-"));
@@ -101,6 +102,10 @@ try {
   });
 
   assert.equal(cli(["--version"]).trim(), version);
+  assert.equal(
+    docker(["run", ...runtimeOptions, "--entrypoint=node", image, "--version"]).trim(),
+    `v${nodeVersion}`,
+  );
   assert.match(cli([]), /Usage: vsix-audit/);
   assert.match(
     docker(["run", ...runtimeOptions, "--entrypoint=yr", image, "--version"]),

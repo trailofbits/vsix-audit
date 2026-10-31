@@ -137,7 +137,7 @@ brew install yara-x
 npm install -g @trailofbits/vsix-audit
 ```
 
-Requires Node.js 22 or later and [YARA-X](https://github.com/VirusTotal/yara-x) for YARA rule scanning.
+Requires Node.js 24 or later and [YARA-X](https://github.com/VirusTotal/yara-x) for YARA rule scanning.
 
 ### Docker
 

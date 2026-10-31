@@ -1,8 +1,8 @@
-ARG NODE=node:22.23.4-bookworm-slim
+ARG NODE=node:24.22.2-bookworm-slim
 ARG TARGETARCH
 ARG YARA_RELEASE=https://github.com/VirusTotal/yara-x/releases/download/v1.22.1
 
-FROM ${NODE}@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da AS base
+FROM ${NODE}@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS base
 
 FROM scratch AS yara-amd64
 ARG YARA_RELEASE
