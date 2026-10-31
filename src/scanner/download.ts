@@ -3,8 +3,13 @@ import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
-import { ensureCacheDir, evictStaleEntries, getCachedPath, isCached } from "./cache.js";
-import type { Registry } from "./types.js";
+import {
+  ensureCacheDir,
+  evictStaleEntries,
+  getCachedPath,
+  isCached,
+} from "#internal/scanner/cache.js";
+import type { Registry } from "#internal/scanner/types.js";
 
 export interface ExtensionMetadata {
   extensionId: string;
@@ -30,16 +35,18 @@ export interface DownloadResult {
   fromCache?: boolean;
 }
 
+interface GalleryVersion {
+  version: string;
+  lastUpdated: string;
+  files: Array<{ assetType: string; source: string }>;
+}
+
 interface GalleryExtension {
   publisher: { publisherName: string };
   extensionName: string;
   displayName?: string;
   shortDescription?: string;
-  versions: Array<{
-    version: string;
-    lastUpdated: string;
-    files: Array<{ assetType: string; source: string }>;
-  }>;
+  versions?: GalleryVersion[];
   statistics?: Array<{ statisticName: string; value: number }>;
 }
 
@@ -56,6 +63,18 @@ const GALLERY_API_VERSION = "7.1-preview.1";
 const OPENVSX_API_URL = "https://open-vsx.org/api";
 
 const CURSOR_API_URL = "https://marketplace.cursorapi.com/_apis/public/gallery/extensionquery";
+
+const GALLERY_APIS = {
+  marketplace: { url: GALLERY_API_URL, label: "VS Code Marketplace" },
+  cursor: { url: CURSOR_API_URL, label: "Cursor Marketplace" },
+} as const;
+
+type GalleryRegistry = keyof typeof GALLERY_APIS;
+
+const INCLUDE_VERSIONS = 0x1;
+const INCLUDE_ASSET_URI = 0x80;
+const INCLUDE_STATISTICS = 0x100;
+const INCLUDE_LATEST_VERSION_ONLY = 0x200;
 
 interface OpenVSXExtension {
   namespace: string;
@@ -212,20 +231,37 @@ export function parseExtensionId(input: string): ParsedExtensionId {
   return result;
 }
 
+function selectGalleryVersion(
+  versions: GalleryVersion[],
+  version: string | undefined,
+  extensionId: string,
+): GalleryVersion {
+  const pinned = version !== undefined && version !== "";
+  const selected = pinned ? versions.find((item) => item.version === version) : versions[0];
+  if (selected !== undefined) return selected;
+  if (pinned) {
+    throw new Error(
+      `Version ${version} not found for ${extensionId}. Latest: ${versions[0]?.version}`,
+    );
+  }
+  throw new Error(`No versions available for ${extensionId}`);
+}
+
 /**
  * Shared Gallery API query for VS Code Marketplace and Cursor.
  * Both registries use the same protocol; only the URL and
  * registry label differ.
  */
 async function queryGalleryApi(
-  apiUrl: string,
-  registry: Registry,
-  registryLabel: string,
+  registry: GalleryRegistry,
   publisher: string,
   name: string,
   version?: string,
 ): Promise<ExtensionMetadata> {
   const extensionId = `${publisher}.${name}`;
+  const { url: apiUrl, label: registryLabel } = GALLERY_APIS[registry];
+  const pinned = version !== undefined && version !== "";
+  const selection = pinned ? INCLUDE_VERSIONS : INCLUDE_LATEST_VERSION_ONLY;
 
   const requestBody = {
     filters: [
@@ -235,7 +271,7 @@ async function queryGalleryApi(
         pageNumber: 1,
       },
     ],
-    flags: 0x200 | 0x80 | 0x1, // Include versions, files, and statistics
+    flags: INCLUDE_ASSET_URI | INCLUDE_STATISTICS | selection,
   };
 
   const response = await fetch(apiUrl, {
@@ -258,22 +294,7 @@ async function queryGalleryApi(
     throw new Error(`Extension not found on ${registryLabel}: ${extensionId}`);
   }
 
-  const versions = ext.versions ?? [];
-
-  let targetVersion = versions[0];
-  if (version) {
-    const found = versions.find((v) => v.version === version);
-    if (!found) {
-      throw new Error(
-        `Version ${version} not found for ${extensionId}. Latest: ${versions[0]?.version}`,
-      );
-    }
-    targetVersion = found;
-  }
-
-  if (!targetVersion) {
-    throw new Error(`No versions available for ${extensionId}`);
-  }
+  const targetVersion = selectGalleryVersion(ext.versions ?? [], version, extensionId);
 
   const installStat = ext.statistics?.find((s) => s.statisticName === "install");
 
@@ -307,14 +328,7 @@ export async function queryExtension(
   name: string,
   version?: string,
 ): Promise<ExtensionMetadata> {
-  return queryGalleryApi(
-    GALLERY_API_URL,
-    "marketplace",
-    "VS Code Marketplace",
-    publisher,
-    name,
-    version,
-  );
+  return queryGalleryApi("marketplace", publisher, name, version);
 }
 
 /**
@@ -372,7 +386,7 @@ export async function queryCursor(
   name: string,
   version?: string,
 ): Promise<ExtensionMetadata> {
-  return queryGalleryApi(CURSOR_API_URL, "cursor", "Cursor Marketplace", publisher, name, version);
+  return queryGalleryApi("cursor", publisher, name, version);
 }
 
 /**
