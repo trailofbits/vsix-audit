@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env node
 /**
  * Collect findings from scanning known extensions
  *
@@ -6,9 +6,10 @@
  * 1. Validate that baseline (clean) extensions produce minimal findings
  * 2. Test that edge case extensions have well-contextualized findings
  *
+ * The npm command builds the scanner before collecting findings.
  * Usage:
- *   npx tsx scripts/collect-findings.ts > findings-report.json
- *   npx tsx scripts/collect-findings.ts --text   # Human-readable output
+ *   npm run --silent findings:collect > findings-report.json
+ *   npm run --silent findings:collect -- --text
  */
 
 import { mkdir, rm } from "node:fs/promises";
