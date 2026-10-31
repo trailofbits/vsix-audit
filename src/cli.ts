@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { basename } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
 import { registerInstalledCommand } from "#internal/scan-installed.js";
@@ -18,14 +19,18 @@ import {
   outputBatchResult,
   outputResult,
   outputResults,
-} from "./formatters.js";
-import { clearCache, getCacheDir, getCachedVersions, listCached } from "./scanner/cache.js";
-import { extractCapabilities, type Capabilities } from "./scanner/capabilities.js";
-import { downloadExtension, parseExtensionId, type ParsedExtensionId } from "./scanner/download.js";
+} from "#internal/formatters.js";
+import { clearCache, getCacheDir, getCachedVersions, listCached } from "#internal/scanner/cache.js";
+import { extractCapabilities, type Capabilities } from "#internal/scanner/capabilities.js";
+import {
+  downloadExtension,
+  parseExtensionId,
+  type ParsedExtensionId,
+} from "#internal/scanner/download.js";
 import { scanDirectory, scanExtension } from "#internal/scanner/index.js";
 import type { BatchScanCallbacks } from "#internal/scanner/batch.js";
 import type { Registry, ScanOptions, ScanResult } from "#internal/scanner/types.js";
-import { loadExtension } from "./scanner/vsix.js";
+import { loadExtension } from "#internal/scanner/vsix.js";
 
 const require = createRequire(import.meta.url);
 const { version: VERSION } = require("../package.json") as {
@@ -36,7 +41,7 @@ const REGISTRIES: Registry[] = ["marketplace", "openvsx", "cursor"];
 
 interface CliScanOptions extends CommonScanOptions {
   allRegistries?: boolean;
-  noCache?: boolean;
+  cache?: boolean;
   force?: boolean;
   recursive?: boolean;
   jobs?: string;
@@ -44,7 +49,7 @@ interface CliScanOptions extends CommonScanOptions {
 
 interface CliDownloadOptions {
   output?: string;
-  noCache?: boolean;
+  cache?: boolean;
   force?: boolean;
 }
 
@@ -121,7 +126,7 @@ function createScanContext(options: CliScanOptions): ScanContext {
   const machineOutput = scanOptions.output !== "text";
   return {
     options: scanOptions,
-    useCache: options.noCache !== true,
+    useCache: options.cache !== false,
     forceDownload: options.force === true,
     statusStream: machineOutput ? process.stderr : process.stdout,
     statusLog: (...args) => {
@@ -131,14 +136,23 @@ function createScanContext(options: CliScanOptions): ScanContext {
   };
 }
 
-async function downloadScanTarget(extensionId: string, context: ScanContext): Promise<string> {
-  const downloaded = await downloadExtension(extensionId, {
-    useCache: context.useCache,
-    forceDownload: context.forceDownload,
-  });
-  const message = downloaded.fromCache ? "✓ Using cached" : "✓ Downloaded";
-  context.statusLog(pc.green(message), pc.dim(downloaded.path));
-  return downloaded.path;
+async function scanDownloadedExtension(
+  extensionId: string,
+  context: ScanContext,
+): Promise<ScanResult> {
+  const tempDir = context.useCache ? undefined : await mkdtemp(join(tmpdir(), "vsix-audit-scan-"));
+  try {
+    const downloaded = await downloadExtension(extensionId, {
+      useCache: context.useCache,
+      forceDownload: context.forceDownload,
+      ...(tempDir === undefined ? {} : { destDir: tempDir }),
+    });
+    const message = downloaded.fromCache === true ? "✓ Using cached" : "✓ Downloaded";
+    context.statusLog(pc.green(message), pc.dim(downloaded.path));
+    return await scanExtension(downloaded.path, context.options);
+  } finally {
+    if (tempDir !== undefined) await rm(tempDir, { recursive: true, force: true });
+  }
 }
 
 async function scanAllRegistries(
@@ -150,8 +164,7 @@ async function scanAllRegistries(
   for (const registry of REGISTRIES) {
     try {
       context.statusLog(pc.cyan(`Downloading from ${registry}:`), baseId);
-      const path = await downloadScanTarget(`${registry}:${baseId}`, context);
-      const result = await scanExtension(path, context.options);
+      const result = await scanDownloadedExtension(`${registry}:${baseId}`, context);
       result.metadata = { ...result.metadata, registry };
       results.push(result);
     } catch (error) {
@@ -221,13 +234,12 @@ async function scanRecursive(
 }
 
 async function scanSingle(target: CliTarget, context: ScanContext): Promise<number> {
-  let path: string;
+  let result: ScanResult;
   if (target.kind === "extension-id") {
     context.statusLog(pc.cyan("Downloading:"), target.extensionId);
-    path = await downloadScanTarget(target.extensionId, context);
+    result = await scanDownloadedExtension(target.extensionId, context);
     context.statusLog();
-  } else path = target.path;
-  const result = await scanExtension(path, context.options);
+  } else result = await scanExtension(target.path, context.options);
   outputResult(result, context.options.output, VERSION);
   if (hasCoverageExitFailure(result, context.options)) return 2;
   return result.findings.length > 0 ? 1 : 0;
@@ -236,13 +248,18 @@ async function scanSingle(target: CliTarget, context: ScanContext): Promise<numb
 async function runScan(target: string, options: CliScanOptions): Promise<number> {
   const context = createScanContext(options);
   const targetInfo = classifyTarget(target);
-  if (options.allRegistries && targetInfo.kind === "extension-id") {
+  if (options.allRegistries === true && targetInfo.kind === "extension-id") {
     return scanAllRegistries(targetInfo, context);
   }
-  if (options.jobs && options.jobs !== "4" && !options.recursive) {
+  if (
+    options.jobs !== undefined &&
+    options.jobs !== "" &&
+    options.jobs !== "4" &&
+    !(options.recursive === true)
+  ) {
     context.statusLog(pc.yellow("Warning:"), "--jobs is only used with --recursive, ignoring");
   }
-  if (options.recursive) return scanRecursive(target, options, context);
+  if (options.recursive === true) return scanRecursive(target, options, context);
   return scanSingle(targetInfo, context);
 }
 
@@ -261,7 +278,7 @@ configureScanOptions(
     ),
 )
   .option("--all-registries", "Scan from all registries (Marketplace + OpenVSX + Cursor)")
-  .option("--no-cache", "Bypass cache, download fresh")
+  .option("--no-cache", "Download fresh without reading or writing the cache")
   .option("--force", "Re-download even if cached")
   .option("-r, --recursive", "Recursively scan all .vsix files in a directory")
   .option("-j, --jobs <n>", "Number of parallel scans (default: 4)", "4")
@@ -283,12 +300,12 @@ cli
     "<extension-id>",
     "Extension ID (e.g., ms-python.python, ms-python/python, or ms-python.python@2024.1.0)",
   )
-  .option("-o, --output <dir>", "Also copy to this directory (in addition to cache)")
-  .option("--no-cache", "Bypass cache, download fresh")
+  .option("-o, --output <dir>", "Directory to save the downloaded extension")
+  .option("--no-cache", "Download fresh without reading or writing the cache")
   .option("--force", "Re-download even if cached")
   .action(async (extensionId: string, options: CliDownloadOptions) => {
     try {
-      const useCache = options.noCache !== true;
+      const useCache = options.cache !== false;
       const forceDownload = options.force === true;
 
       console.log(pc.cyan("Downloading:"), extensionId);
@@ -296,12 +313,14 @@ cli
       const downloadOptions = {
         useCache,
         forceDownload,
-        ...(options.output ? { destDir: options.output } : {}),
+        ...(options.output !== undefined && options.output !== ""
+          ? { destDir: options.output }
+          : {}),
       };
       const result = await downloadExtension(extensionId, downloadOptions);
 
       console.log();
-      if (result.fromCache) {
+      if (result.fromCache === true) {
         console.log(pc.green("✓ Using cached version"));
       } else {
         console.log(pc.green("✓ Downloaded successfully"));
@@ -310,7 +329,11 @@ cli
       console.log(`${pc.cyan("Name:")} ${result.metadata.displayName ?? result.metadata.name}`);
       console.log(`${pc.cyan("Publisher:")} ${result.metadata.publisher}`);
       console.log(`${pc.cyan("Version:")} ${result.metadata.version}`);
-      if (result.metadata.installCount) {
+      if (
+        result.metadata.installCount !== undefined &&
+        result.metadata.installCount !== 0 &&
+        !Number.isNaN(result.metadata.installCount)
+      ) {
         console.log(`${pc.cyan("Installs:")} ${result.metadata.installCount.toLocaleString()}`);
       }
       console.log(`${pc.cyan("Path:")} ${result.path}`);
@@ -341,7 +364,7 @@ cli
         const result = await downloadExtension(targetInfo.extensionId);
         infoTarget = result.path;
 
-        if (result.fromCache) {
+        if (result.fromCache === true) {
           console.log(pc.green("✓ Using cached"), pc.dim(result.path));
         } else {
           console.log(pc.green("✓ Downloaded"), pc.dim(result.path));
@@ -366,7 +389,7 @@ cli
         pc.bold(`Extension: ${manifest.displayName ?? manifest.name} v${manifest.version}`),
       );
       console.log(`${pc.cyan("Publisher:")} ${manifest.publisher}`);
-      if (manifest.description) {
+      if (manifest.description !== undefined && manifest.description !== "") {
         console.log(`${pc.dim(manifest.description)}`);
       }
 
@@ -387,8 +410,10 @@ cli
 
       // Entry points
       const entryPoints: string[] = [];
-      if (manifest.main) entryPoints.push(`main: ${manifest.main}`);
-      if (manifest.browser) entryPoints.push(`browser: ${manifest.browser}`);
+      if (manifest.main !== undefined && manifest.main !== "")
+        entryPoints.push(`main: ${manifest.main}`);
+      if (manifest.browser !== undefined && manifest.browser !== "")
+        entryPoints.push(`browser: ${manifest.browser}`);
       if (entryPoints.length > 0) {
         console.log(`${pc.cyan("Entry Points:".padEnd(16))}${entryPoints.join(", ")}`);
       }
@@ -447,8 +472,14 @@ function printCapabilities(capabilities: Capabilities, verbose: boolean): void {
 
     if (verbose && cap.detected && cap.evidence.length > 0) {
       for (const ev of cap.evidence.slice(0, 5)) {
-        const loc = ev.line ? `${ev.file}:${ev.line}` : ev.file;
-        const matched = ev.matched ? pc.dim(` (${ev.matched.slice(0, 40)})`) : "";
+        const loc =
+          ev.line !== undefined && ev.line !== 0 && !Number.isNaN(ev.line)
+            ? `${ev.file}:${ev.line}`
+            : ev.file;
+        const matched =
+          ev.matched !== undefined && ev.matched !== ""
+            ? pc.dim(` (${ev.matched.slice(0, 40)})`)
+            : "";
         console.log(`                  ${pc.dim("└")} ${pc.dim(loc)}${matched}`);
       }
       if (cap.evidence.length > 5) {
@@ -477,7 +508,7 @@ cacheCommand
       const extensions = await listCached();
 
       if (extensions.length === 0) {
-        if (options.json) {
+        if (options.json === true) {
           console.log("[]");
         } else {
           console.log(pc.dim("Cache is empty"));
@@ -485,7 +516,7 @@ cacheCommand
         return;
       }
 
-      if (options.json) {
+      if (options.json === true) {
         console.log(JSON.stringify(extensions, null, 2));
         return;
       }
@@ -526,7 +557,7 @@ cacheCommand
       const deleted = await clearCache(pattern);
 
       if (deleted === 0) {
-        if (pattern) {
+        if (pattern !== undefined && pattern !== "") {
           console.log(pc.dim(`No extensions matching "${pattern}" found in cache`));
         } else {
           console.log(pc.dim("Cache is already empty"));

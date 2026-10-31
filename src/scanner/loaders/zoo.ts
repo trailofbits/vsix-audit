@@ -7,7 +7,7 @@ import type {
   TelemetryCategory,
   TelemetryServiceInfo,
   ZooData,
-} from "../types.js";
+} from "#internal/scanner/types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -21,7 +21,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 async function findZooRoot(): Promise<string> {
   // Check environment variable first
   const envPath = process.env["VSIX_AUDIT_ZOO_PATH"];
-  if (envPath) {
+  if (envPath !== undefined && envPath !== "") {
     return envPath;
   }
 
@@ -78,7 +78,7 @@ function expectStringArrayField(
   if (
     !Array.isArray(value) ||
     value.length === 0 ||
-    !value.every((item) => typeof item === "string" && item.length > 0)
+    !value.every((item): item is string => typeof item === "string" && item.length > 0)
   ) {
     throw new Error(`${context}: field "${field}" must be a non-empty string array`);
   }
@@ -104,9 +104,9 @@ function parseIOCFile(content: string, extractor: (field: string) => string | nu
       continue;
     }
     const field = trimmed.split(/\s+/)[0];
-    if (field) {
+    if (field !== undefined && field !== "") {
       const value = extractor(field);
-      if (value) {
+      if (value !== null && value !== "") {
         result.add(value);
       }
     }
@@ -130,7 +130,7 @@ function parseWalletFile(content: string): Set<string> {
     const parts = trimmed.split(/\s+/);
     if (parts.length >= 2) {
       const address = parts[1];
-      if (address && !address.startsWith("#")) {
+      if (address !== undefined && address !== "" && !address.startsWith("#")) {
         result.add(address);
       }
     }
@@ -160,7 +160,14 @@ function parseTelemetryServices(content: string): Map<string, TelemetryServiceIn
     const category = parts[1] as TelemetryCategory;
     const domainsStr = parts[2];
 
-    if (!name || !validCategories.has(category) || !domainsStr) continue;
+    if (
+      name === undefined ||
+      name === "" ||
+      !validCategories.has(category) ||
+      domainsStr === undefined ||
+      domainsStr === ""
+    )
+      continue;
 
     const domains = domainsStr.split(",").map((d) => d.trim().toLowerCase());
     const serviceInfo: TelemetryServiceInfo = { name, category, domains };
@@ -216,7 +223,7 @@ function parseMaliciousNpmVersions(content: string): Map<string, MaliciousNpmVer
     if (references !== undefined) {
       if (
         !Array.isArray(references) ||
-        !references.every((item) => typeof item === "string" && item.length > 0)
+        !references.every((item): item is string => typeof item === "string" && item.length > 0)
       ) {
         throw new Error(`${context}: field "references" must be a string array when present`);
       }

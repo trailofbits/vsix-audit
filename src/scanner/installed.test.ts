@@ -9,9 +9,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
-    lstat: vi.fn(actual.lstat),
-    readdir: vi.fn(actual.readdir),
-    realpath: vi.fn(actual.realpath),
+    lstat: vi.fn<typeof actual.lstat>(actual.lstat),
+    readdir: vi.fn<typeof actual.readdir>(actual.readdir),
+    realpath: vi.fn<typeof actual.realpath>(actual.realpath),
   };
 });
 
@@ -127,7 +127,9 @@ describe("custom extension stores", () => {
     const root = join(home, "custom extensions");
     const extension = join(root, "test.custom-1.0.0");
     await mkdir(extension, { recursive: true });
-    await mkdir(join(home, ".vscode", "extensions", "test.other-1.0.0"), { recursive: true });
+    await mkdir(join(home, ".vscode", "extensions", "test.other-1.0.0"), {
+      recursive: true,
+    });
 
     expect(await findInstalledExtensions({ editor: "all", extensionsDir: root })).toEqual([
       await realpath(extension),

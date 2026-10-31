@@ -1,14 +1,16 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { checkHashes } from "./checks/ioc.js";
-import { scanExtension } from "./index.js";
-import { loadZooData } from "./loaders/zoo.js";
-import type { ScanOptions } from "./types.js";
-import { loadExtension } from "./vsix.js";
+import { checkHashes } from "#internal/scanner/checks/ioc.js";
+import { scanExtension } from "#internal/scanner/index.js";
+import { loadZooData } from "#internal/scanner/loaders/zoo.js";
+import type { ScanOptions } from "#internal/scanner/types.js";
+import { loadExtension } from "#internal/scanner/vsix.js";
 
 const ZOO_ROOT = join(import.meta.dirname, "..", "..", "zoo");
-const SAMPLES_DIR = process.env["VSIX_ZOO_PATH"] || join(ZOO_ROOT, "samples");
+const samplesPath = process.env["VSIX_ZOO_PATH"];
+const SAMPLES_DIR =
+  samplesPath !== undefined && samplesPath !== "" ? samplesPath : join(ZOO_ROOT, "samples");
 const TEST_CORPUS_DIR = join(import.meta.dirname, "..", "..", "test-corpus");
 const CLEAN_DIR = join(TEST_CORPUS_DIR, "clean");
 const TEAMPCP_NX_CONSOLE = "teampcp/nrwl.angular-console-18.95.0.vsix";
@@ -163,7 +165,7 @@ const defaultOptions: ScanOptions = {
 
 describe.skipIf(!hasMalwareSamples)("Malware Sample Detection Coverage", () => {
   for (const sample of MALWARE_SAMPLES) {
-    describe.skipIf(!hasSamplePath(sample.path))(sample.description, () => {
+    describe.skipIf(!hasSamplePath(sample.path))(`${sample.description}`, () => {
       it(`detects expected findings in ${sample.path}`, async () => {
         const samplePath = join(SAMPLES_DIR, sample.path);
         const result = await scanExtension(samplePath, {
@@ -182,15 +184,11 @@ describe.skipIf(!hasMalwareSamples)("Malware Sample Detection Coverage", () => {
             `Expected finding ${expected.id} not found. Found: ${[...findingIds].join(", ")}`,
           ).toBeDefined();
 
-          if (expected.severity) {
-            expect(finding?.severity).toBe(expected.severity);
-          }
-
-          if (expected.metadata) {
-            for (const [key, value] of Object.entries(expected.metadata)) {
-              expect(finding?.metadata?.[key]).toBe(value);
-            }
-          }
+          expect(finding).toMatchObject({
+            id: expected.id,
+            ...(expected.severity === undefined ? {} : { severity: expected.severity }),
+            ...(expected.metadata === undefined ? {} : { metadata: expected.metadata }),
+          });
         }
       }, 30000); // 30s timeout for large samples
 
@@ -245,7 +243,7 @@ describe.skipIf(!hasCleanCorpus)("Clean Extension False Positive Testing", () =>
       totalScanned++;
 
       for (const finding of result.findings) {
-        findingCounts[finding.id] = (findingCounts[finding.id] || 0) + 1;
+        findingCounts[finding.id] = (findingCounts[finding.id] ?? 0) + 1;
       }
     }
 
@@ -275,17 +273,13 @@ describe.skipIf(!hasMalwareSamples)("Detection Quality Assertions", () => {
       yaraFindings[sample.path] = yaraIds;
     }
 
-    // Verify at least one YARA rule fires on each malware sample
-    for (const [path, rules] of Object.entries(yaraFindings)) {
-      // apollyon should trigger Discord webhook rule
-      if (path === "apollyon") {
-        expect(rules).toContain("YARA_C2_JS_Discord_Webhook_Jan25");
-      }
-
-      // ecm3401 should trigger multiple YARA rules
-      if (path.includes("ecm3401")) {
-        expect(rules.length).toBeGreaterThan(0);
-      }
+    for (const rules of Object.values(yaraFindings)) {
+      expect(rules.length).toBeGreaterThan(0);
+    }
+    for (const sample of MALWARE_SAMPLES.filter(
+      (candidate) => candidate.path === "apollyon" && hasSamplePath(candidate.path),
+    )) {
+      expect(yaraFindings[sample.path]).toContain("YARA_C2_JS_Discord_Webhook_Jan25");
     }
   }, 60000);
 
@@ -316,7 +310,7 @@ describe.skipIf(!hasMalwareSamples)("Detection Quality Assertions", () => {
 
       // Should detect the darwin.node, os.node, and extension.js hashes
       const files = hashFindings.map((f) => f.location?.file);
-      expect(files.some((f) => f?.includes("darwin.node"))).toBe(true);
+      expect(files.some((f) => f?.includes("darwin.node") === true)).toBe(true);
     },
     30000,
   );

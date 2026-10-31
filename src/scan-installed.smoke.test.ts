@@ -49,7 +49,9 @@ function runCli(args: string[], overrides: NodeJS.ProcessEnv = {}): Promise<CliR
       stderr += chunk;
     });
     child.on("error", reject);
-    child.on("close", (status) => resolvePromise({ status, stdout, stderr }));
+    child.on("close", (status) => {
+      resolvePromise({ status, stdout, stderr });
+    });
   });
 }
 
@@ -93,9 +95,11 @@ describe("installed scan command", () => {
 
     expect(result.status).toBe(0);
     expect(batch.summary.scannedFiles).toBe(3);
-    expect(batch.results.map((scan) => scan.metadata.sourcePath).toSorted()).toEqual(
-      paths.toSorted(),
-    );
+    expect(
+      batch.results
+        .map((scan) => scan.metadata.sourcePath)
+        .toSorted((a, b) => (a ?? "").localeCompare(b ?? "")),
+    ).toEqual(paths.toSorted((a, b) => a.localeCompare(b)));
     expect(result.stderr).toContain("Scanning 3 installed extension(s).");
     expect(result.stdout.trimStart().startsWith("{")).toBe(true);
   });
@@ -160,8 +164,10 @@ describe("installed finding reports", () => {
     );
 
     expect(result.status).toBe(1);
-    expect(uris.toSorted()).toEqual(
-      paths.map((path) => pathToFileURL(join(path, "main.js")).href).toSorted(),
+    expect(uris.toSorted((a, b) => (a ?? "").localeCompare(b ?? ""))).toEqual(
+      paths
+        .map((path) => pathToFileURL(join(path, "main.js")).href)
+        .toSorted((a, b) => a.localeCompare(b)),
     );
   });
 

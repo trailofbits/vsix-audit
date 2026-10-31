@@ -10,7 +10,7 @@ import {
   extractVsix,
   loadDirectory,
   loadExtension,
-} from "./vsix.js";
+} from "#internal/scanner/vsix.js";
 
 /**
  * Create a minimal ZIP file buffer for testing.
@@ -35,8 +35,8 @@ function createTestZip(
   for (const file of files) {
     const localHeaderOffset = chunks.reduce((sum, buf) => sum + buf.length, 0);
     const content = Buffer.from(file.content, "utf8");
-    const compressionMethod = file.stored ? 0 : 8;
-    const compressed = file.stored ? content : deflateRawSync(content);
+    const compressionMethod = file.stored === true ? 0 : 8;
+    const compressed = file.stored === true ? content : deflateRawSync(content);
     const fileName = file.rawName ?? Buffer.from(file.name, "utf8");
     const extraFields = file.extraFields ?? Buffer.alloc(0);
 

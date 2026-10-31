@@ -1,4 +1,4 @@
-import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "../constants.js";
+import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "#internal/scanner/constants.js";
 import type {
   Finding,
   TelemetryCategory,
@@ -6,8 +6,12 @@ import type {
   VsixContents,
   VsixManifest,
   ZooData,
-} from "../types.js";
-import { computeLineStarts, findLineNumberByString, getStringContent } from "../utils.js";
+} from "#internal/scanner/types.js";
+import {
+  computeLineStarts,
+  findLineNumberByString,
+  getStringContent,
+} from "#internal/scanner/utils.js";
 
 /**
  * Known telemetry SDK packages and their service info.
@@ -129,9 +133,7 @@ function extractUrls(content: string): Array<{ url: string; index: number }> {
   const results: Array<{ url: string; index: number }> = [];
 
   for (const match of content.matchAll(urlPattern)) {
-    if (match.index !== undefined) {
-      results.push({ url: match[0], index: match.index });
-    }
+    results.push({ url: match[0], index: match.index });
   }
 
   return results;
@@ -233,11 +235,9 @@ function detectSdkImports(
   const esmPattern = /import\s+(?:[\w{},\s*]+\s+from\s+)?["']([^"']+)["']/g;
   for (const match of content.matchAll(esmPattern)) {
     const pkg = match[1];
-    if (pkg && TELEMETRY_SDKS[pkg]) {
+    if (pkg !== undefined && pkg !== "" && TELEMETRY_SDKS[pkg]) {
       const info = TELEMETRY_SDKS[pkg];
-      if (info) {
-        results.push({ pkg, info, index: match.index ?? 0 });
-      }
+      results.push({ pkg, info, index: match.index });
     }
   }
 
@@ -245,11 +245,9 @@ function detectSdkImports(
   const cjsPattern = /require\s*\(\s*["']([^"']+)["']\s*\)/g;
   for (const match of content.matchAll(cjsPattern)) {
     const pkg = match[1];
-    if (pkg && TELEMETRY_SDKS[pkg]) {
+    if (pkg !== undefined && pkg !== "" && TELEMETRY_SDKS[pkg]) {
       const info = TELEMETRY_SDKS[pkg];
-      if (info) {
-        results.push({ pkg, info, index: match.index ?? 0 });
-      }
+      results.push({ pkg, info, index: match.index });
     }
   }
 
@@ -304,15 +302,15 @@ function collectVsCodeModuleAliases(content: string): Set<string> {
   const aliases = new Set<string>(["vscode"]);
 
   for (const match of content.matchAll(VSCODE_NAMESPACE_IMPORT_REGEX)) {
-    if (match[1]) aliases.add(match[1]);
+    if (match[1] !== undefined && match[1] !== "") aliases.add(match[1]);
   }
 
   for (const match of content.matchAll(VSCODE_DEFAULT_IMPORT_REGEX)) {
-    if (match[1]) aliases.add(match[1]);
+    if (match[1] !== undefined && match[1] !== "") aliases.add(match[1]);
   }
 
   for (const match of content.matchAll(VSCODE_REQUIRE_ALIAS_REGEX)) {
-    if (match[1]) aliases.add(match[1]);
+    if (match[1] !== undefined && match[1] !== "") aliases.add(match[1]);
   }
 
   return aliases;
@@ -333,7 +331,7 @@ function collectVsCodeEnvAliases(content: string): Set<string> {
 }
 
 function addEnvAliasesFromDestructure(specifiers: string | undefined, aliases: Set<string>): void {
-  if (!specifiers) return;
+  if (specifiers === undefined || specifiers === "") return;
 
   for (const specifier of specifiers.split(",")) {
     const trimmed = specifier.trim();
@@ -396,13 +394,13 @@ function detectManifestOptOut(manifest: VsixManifest): {
   if (!contributes) return { found: false, settingName: null };
 
   const configuration = contributes["configuration"];
-  if (!configuration) return { found: false, settingName: null };
+  if (configuration === undefined) return { found: false, settingName: null };
 
   // configuration can be an object or array
   const configs = Array.isArray(configuration) ? configuration : [configuration];
 
   for (const config of configs) {
-    if (typeof config !== "object" || !config) continue;
+    if (typeof config !== "object" || config === null) continue;
 
     const properties = (config as { properties?: Record<string, unknown> }).properties;
     if (!properties) continue;
@@ -523,7 +521,7 @@ function analyzeFile(
   const urls = extractUrls(content);
   for (const { url, index } of urls) {
     const domain = extractDomain(url);
-    if (!domain) continue;
+    if (domain === null || domain === "") continue;
 
     // Skip documentation URLs for known services
     // (e.g., https://posthog.com/docs/... is not a telemetry endpoint)
@@ -583,13 +581,16 @@ function analyzeFile(
  * Convert a detection to a finding.
  */
 function detectionToFinding(detection: TelemetryDetection): Finding {
+  const settingName = detection.optOut.settingName;
+  const setting = settingName !== null && settingName !== "" ? ` (${settingName})` : "";
   const optOutStatus = detection.optOut.available
-    ? `Opt-out available via ${detection.optOut.method}${detection.optOut.settingName ? ` (${detection.optOut.settingName})` : ""}.`
+    ? `Opt-out available via ${detection.optOut.method}${setting}.`
     : "No opt-out mechanism detected.";
 
-  const detectionMethod = detection.sdkPackage
-    ? `via SDK import (${detection.sdkPackage})`
-    : `via endpoint URL`;
+  const detectionMethod =
+    detection.sdkPackage !== null && detection.sdkPackage !== ""
+      ? `via SDK import (${detection.sdkPackage})`
+      : `via endpoint URL`;
 
   const description = `Extension sends telemetry to ${detection.serviceName} ${detectionMethod}. ${optOutStatus}`;
 

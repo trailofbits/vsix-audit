@@ -24,26 +24,33 @@ repos:
         name: TypeScript type check
         entry: npm run typecheck
         language: system
-        types: [ts]
+        types_or: [ts, javascript, json]
         pass_filenames: false
 
       - id: lint
-        name: Oxlint
+        name: Oxlint with type information
         entry: npm run lint
         language: system
-        types: [ts]
+        types_or: [ts, javascript, json]
         pass_filenames: false
 
       - id: format-check
         name: Oxfmt format check
         entry: npm run format:check
         language: system
-        types: [ts]
+        types_or: [ts, javascript, json, yaml]
         pass_filenames: false
 
       - id: test
         name: Vitest
         entry: npm run test
         language: system
-        types: [ts]
+        types_or: [ts, javascript, json]
+        pass_filenames: false
+
+      - id: test-cli
+        name: CLI smoke tests
+        entry: npm run test:cli
+        language: system
+        types_or: [ts, javascript, json]
         pass_filenames: false

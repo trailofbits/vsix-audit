@@ -23,13 +23,11 @@ async function runWithConcurrency<T>(
   concurrency: number,
   fn: (item: T, index: number) => Promise<void>,
 ): Promise<void> {
-  let nextIndex = 0;
+  const pending = items.entries();
   const running: Promise<void>[] = [];
 
   async function runNext(): Promise<void> {
-    while (nextIndex < items.length) {
-      const index = nextIndex++;
-      const item = items[index]!;
+    for (const [index, item] of pending) {
       await fn(item, index);
     }
   }
@@ -82,7 +80,7 @@ export async function scanDirectory(
 ): Promise<BatchScanResult> {
   const startTime = Date.now();
   const dirStat = await stat(dir).catch(() => null);
-  if (!dirStat?.isDirectory()) {
+  if (!(dirStat?.isDirectory() === true)) {
     throw new Error(`Not a directory: ${dir}`);
   }
 

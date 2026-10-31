@@ -106,7 +106,7 @@ VSIX_ZOO_PATH=../vsix-zoo/samples npm test
 npm test              # Run tests
 npm run build         # Build
 npm run lint          # Lint
-npm run check         # typecheck + lint + test
+npm run check         # typecheck + type-aware lint + formatting + tests
 prek run --all-files  # Run all pre-commit hooks
 ```
 

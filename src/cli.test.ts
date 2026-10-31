@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { classifyTarget } from "./cli.js";
+import { classifyTarget } from "#internal/cli.js";
 
 describe("classifyTarget", () => {
-  const missing = () => false;
-  const existing = () => true;
+  const missing = (): boolean => false;
+  const existing = (): boolean => true;
 
   it("classifies dot-form extension IDs", () => {
     expect(classifyTarget("ms-python.python", { exists: missing })).toMatchObject({
