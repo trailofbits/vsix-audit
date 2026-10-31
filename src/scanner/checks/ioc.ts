@@ -1,6 +1,12 @@
+import { createHash } from "node:crypto";
 import { isScannable, SCANNABLE_EXTENSIONS_IOC } from "../constants.js";
 import type { Finding, VsixContents, ZooData } from "../types.js";
-import { computeLineStarts, findLineNumberByString, getStringContent } from "../utils.js";
+import {
+  computeLineStarts,
+  findLineNumberByIndex,
+  findLineNumberByString,
+  getStringContent,
+} from "../utils.js";
 import { computeSha256 } from "../vsix.js";
 
 const MAX_DOMAIN_LENGTH = 253;
@@ -229,6 +235,79 @@ export function checkIps(contents: VsixContents, knownIps: Set<string>): Finding
   return findings;
 }
 
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const BASE58_INDEX = new Map<string, number>(
+  [...BASE58_ALPHABET].map((c, i): [string, number] => [c, i]),
+);
+
+function base58Decode(s: string): Uint8Array | null {
+  let leadingOnes = 0;
+  for (const c of s) {
+    if (c === "1") leadingOnes++;
+    else break;
+  }
+
+  let num = 0n;
+  for (const c of s) {
+    const idx = BASE58_INDEX.get(c);
+    if (idx === undefined) return null;
+    num = num * 58n + BigInt(idx);
+  }
+
+  // Accumulate bytes LSB-first to keep the loop linear; reverse on write.
+  const lsbBytes: number[] = [];
+  while (num > 0n) {
+    lsbBytes.push(Number(num & 0xffn));
+    num >>= 8n;
+  }
+
+  const result = new Uint8Array(leadingOnes + lsbBytes.length);
+  let offset = result.length - 1;
+  for (const byte of lsbBytes) {
+    result[offset--] = byte;
+  }
+  return result;
+}
+
+/**
+ * Validates a Bitcoin P2PKH/P2SH address by checking its Base58Check checksum
+ * and mainnet version byte. Real addresses encode a 21-byte payload
+ * (version + 20-byte hash) followed by the first 4 bytes of
+ * SHA256(SHA256(payload)). Random Base58 substrings that happen to match the
+ * regex will fail this check.
+ */
+export function isValidBitcoinAddress(address: string): boolean {
+  // Legacy P2PKH/P2SH addresses encode to exactly 25 bytes, which in Base58
+  // is 26–35 chars. Skip BigInt math for anything outside that range.
+  if (address.length < 26 || address.length > 35) return false;
+
+  const decoded = base58Decode(address);
+  if (decoded === null || decoded.length !== 25) return false;
+
+  // Mainnet version byte: 0x00 = P2PKH ("1…"), 0x05 = P2SH ("3…").
+  const version = decoded[0];
+  if (version !== 0x00 && version !== 0x05) return false;
+
+  const payload = decoded.subarray(0, 21);
+  const checksum = decoded.subarray(21, 25);
+  const hash1 = createHash("sha256").update(payload).digest();
+  const hash2 = createHash("sha256").update(hash1).digest();
+
+  return hash2.subarray(0, 4).equals(checksum);
+}
+
+function shannonEntropy(s: string): number {
+  if (s.length === 0) return 0;
+  const counts = new Map<string, number>();
+  for (const c of s) counts.set(c, (counts.get(c) ?? 0) + 1);
+  let h = 0;
+  for (const count of counts.values()) {
+    const p = count / s.length;
+    h -= p * Math.log2(p);
+  }
+  return h;
+}
+
 // Wallet patterns ordered from most specific to least specific.
 // More specific patterns (BTC, ETH, XMR) are checked first to avoid
 // the broad Solana Base58 pattern from matching them.
@@ -284,79 +363,135 @@ export function isLikelySolanaAddress(candidate: string): boolean {
     return false;
   }
 
+  // Real Ed25519 keys in Base58 span a wide character set; repeating
+  // base64 garbage (e.g., "Li4uLi4u…", "4oCU4oCU…") uses 4–8 unique chars.
+  const uniqueChars = new Set(candidate).size;
+  if (uniqueChars < 16) return false;
+
+  // This heuristic rejects identifier-like strings; it does not validate keys.
+  if (shannonEntropy(candidate) < 4.5) return false;
+
   return true;
 }
 
+// A wallet-shaped match inside a long unbroken base64 run (an inlined WASM
+// module, font or image) is a fragment of encoded data, not an address. A
+// real address in a string literal, comment or URL ends the run at a quote,
+// space, ":" or ".". Only up to MIN_BASE64_RUN characters are scanned, so a
+// match inside a multi-megabyte blob stays cheap.
+const MIN_BASE64_RUN = 1000;
+
+function isBase64Char(charCode: number): boolean {
+  const lowerCaseCode = charCode | 32;
+  return (
+    (charCode >= 48 && charCode <= 57) || // 0-9
+    (lowerCaseCode >= 97 && lowerCaseCode <= 122) || // A-Z, a-z
+    charCode === 43 || // +
+    charCode === 47 || // /
+    charCode === 61 // =
+  );
+}
+
+/** Checks whether the match at [start, end) is part of a long Base64 run. */
+export function isInsideLongBase64Run(content: string, start: number, end: number): boolean {
+  let length = end - start;
+  for (let i = start - 1; i >= 0 && length < MIN_BASE64_RUN; i--) {
+    if (!isBase64Char(content.charCodeAt(i))) break;
+    length++;
+  }
+  for (let i = end; i < content.length && length < MIN_BASE64_RUN; i++) {
+    if (!isBase64Char(content.charCodeAt(i))) break;
+    length++;
+  }
+  return length >= MIN_BASE64_RUN;
+}
+
+function isGenericWalletAddress(currency: string, wallet: string): boolean {
+  if (currency === "SOL") return isLikelySolanaAddress(wallet);
+  if (currency === "BTC" && wallet.slice(0, 3).toLowerCase() !== "bc1") {
+    return isValidBitcoinAddress(wallet);
+  }
+  return true;
+}
+
+function checkWalletsInFile(
+  filename: string,
+  content: string,
+  knownWallets: Set<string>,
+): Finding[] {
+  const findings: Finding[] = [];
+  const lineStarts = computeLineStarts(content);
+  const seenWallets = new Set<string>();
+
+  for (const { name, pattern } of WALLET_PATTERNS) {
+    pattern.lastIndex = 0;
+
+    for (const match of content.matchAll(pattern)) {
+      const wallet = match[0];
+      if (seenWallets.has(wallet)) continue;
+      // Invalid BTC matches must not be reclassified by the broad Solana pattern.
+      seenWallets.add(wallet);
+
+      const isKnownMalicious = knownWallets.has(wallet);
+      const start = match.index;
+      if (!isKnownMalicious) {
+        if (!isGenericWalletAddress(name, wallet)) continue;
+
+        if (isInsideLongBase64Run(content, start, start + wallet.length)) {
+          // A later occurrence outside the blob must remain eligible.
+          seenWallets.delete(wallet);
+          continue;
+        }
+      }
+
+      const line = findLineNumberByIndex(content, start, lineStarts);
+
+      if (isKnownMalicious) {
+        findings.push({
+          id: "KNOWN_MALWARE_WALLET",
+          title: "Known malware wallet address detected",
+          description:
+            `File "${filename}" contains known malicious ${name} wallet: ${wallet}. ` +
+            "This wallet is associated with malware campaigns.",
+          severity: "critical",
+          category: "ioc",
+          location: { file: filename, line },
+          metadata: { wallet, currency: name, knownMalicious: true },
+        });
+      } else {
+        findings.push({
+          id: "CRYPTO_WALLET_DETECTED",
+          title: "Cryptocurrency wallet address detected",
+          description:
+            `File "${filename}" contains ${name} wallet address: ${wallet}. ` +
+            "VS Code extensions should not contain wallet addresses.",
+          severity: "high",
+          category: "ioc",
+          location: { file: filename, line },
+          metadata: { wallet, currency: name, knownMalicious: false },
+        });
+      }
+    }
+  }
+
+  return findings;
+}
+
+/** Reports wallet candidates in scannable files, except in allowlisted extensions. */
 export function checkWallets(
   contents: VsixContents,
   knownWallets: Set<string>,
   blockchainAllowlist?: Set<string>,
 ): Finding[] {
-  // Skip wallet detection for allowlisted blockchain development extensions
   const extensionId = `${contents.manifest.publisher}.${contents.manifest.name}`;
-  if (blockchainAllowlist?.has(extensionId)) {
-    return [];
-  }
+  if (blockchainAllowlist?.has(extensionId)) return [];
 
   const findings: Finding[] = [];
-
   for (const [filename, buffer] of contents.files) {
     if (!isScannable(filename, SCANNABLE_EXTENSIONS_IOC)) continue;
-
     const content = getStringContent(contents, filename, buffer);
-    const lineStarts = computeLineStarts(content);
-    // Track wallets already found in this file to avoid duplicate findings
-    // (e.g., BTC addresses matching both BTC and SOL patterns)
-    const seenWallets = new Set<string>();
-
-    for (const { name, pattern } of WALLET_PATTERNS) {
-      // Reset regex state
-      pattern.lastIndex = 0;
-
-      for (const match of content.matchAll(pattern)) {
-        const wallet = match[0];
-
-        // Skip if we've already reported this wallet address
-        if (seenWallets.has(wallet)) continue;
-        seenWallets.add(wallet);
-
-        // For SOL pattern, apply additional validation to filter out JS identifiers
-        if (name === "SOL" && !isLikelySolanaAddress(wallet)) {
-          continue;
-        }
-
-        const line = findLineNumberByString(content, wallet, lineStarts);
-        const isKnownMalicious = knownWallets.has(wallet);
-
-        if (isKnownMalicious) {
-          findings.push({
-            id: "KNOWN_MALWARE_WALLET",
-            title: "Known malware wallet address detected",
-            description:
-              `File "${filename}" contains known malicious ${name} wallet: ${wallet}. ` +
-              "This wallet is associated with malware campaigns.",
-            severity: "critical",
-            category: "ioc",
-            location: line !== undefined ? { file: filename, line } : { file: filename },
-            metadata: { wallet, currency: name, knownMalicious: true },
-          });
-        } else {
-          findings.push({
-            id: "CRYPTO_WALLET_DETECTED",
-            title: "Cryptocurrency wallet address detected",
-            description:
-              `File "${filename}" contains ${name} wallet address: ${wallet}. ` +
-              "VS Code extensions should not contain wallet addresses.",
-            severity: "high",
-            category: "ioc",
-            location: line !== undefined ? { file: filename, line } : { file: filename },
-            metadata: { wallet, currency: name, knownMalicious: false },
-          });
-        }
-      }
-    }
+    findings.push(...checkWalletsInFile(filename, content, knownWallets));
   }
-
   return findings;
 }
 

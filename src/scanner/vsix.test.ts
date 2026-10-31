@@ -14,7 +14,8 @@ import {
 
 /**
  * Create a minimal ZIP file buffer for testing.
- * Supports data descriptors (bit 3) which cause local header sizes to be 0.
+ * Supports data descriptors (bit 3) which cause local header sizes to be 0,
+ * and STORED (method 0) entries alongside the default deflate.
  */
 function createTestZip(
   files: Array<{
@@ -23,6 +24,7 @@ function createTestZip(
     rawName?: Buffer;
     extraFields?: Buffer;
     utf8Name?: boolean;
+    stored?: boolean;
   }>,
   options: { useDataDescriptor?: boolean } = {},
 ): Buffer {
@@ -33,7 +35,8 @@ function createTestZip(
   for (const file of files) {
     const localHeaderOffset = chunks.reduce((sum, buf) => sum + buf.length, 0);
     const content = Buffer.from(file.content, "utf8");
-    const compressed = deflateRawSync(content);
+    const compressionMethod = file.stored ? 0 : 8;
+    const compressed = file.stored ? content : deflateRawSync(content);
     const fileName = file.rawName ?? Buffer.from(file.name, "utf8");
     const extraFields = file.extraFields ?? Buffer.alloc(0);
 
@@ -46,7 +49,7 @@ function createTestZip(
     localHeader.writeUInt32LE(0x04034b50, 0); // signature
     localHeader.writeUInt16LE(20, 4); // version needed
     localHeader.writeUInt16LE(gpBitFlag, 6); // general purpose bit flag
-    localHeader.writeUInt16LE(8, 8); // compression method (deflate)
+    localHeader.writeUInt16LE(compressionMethod, 8); // compression method
     localHeader.writeUInt16LE(0, 10); // mod time
     localHeader.writeUInt16LE(0, 12); // mod date
     // CRC and sizes: 0 if data descriptor, actual values otherwise
@@ -84,7 +87,7 @@ function createTestZip(
     cdEntry.writeUInt16LE(20, 4); // version made by
     cdEntry.writeUInt16LE(20, 6); // version needed
     cdEntry.writeUInt16LE(gpBitFlag, 8); // general purpose bit flag
-    cdEntry.writeUInt16LE(8, 10); // compression method
+    cdEntry.writeUInt16LE(compressionMethod, 10); // compression method
     cdEntry.writeUInt16LE(0, 12); // mod time
     cdEntry.writeUInt16LE(0, 14); // mod date
     cdEntry.writeUInt32LE(crc32(content), 16); // crc32 (always correct in CD)
@@ -412,6 +415,37 @@ describe("extractVsix", () => {
       expect(contents.files.has("package.json")).toBe(true);
       expect(contents.files.has("src/index.js")).toBe(true);
       expect(contents.files.get("src/index.js")?.toString()).toBe("export default function() {}");
+    } finally {
+      await rm(vsixPath, { force: true });
+    }
+  });
+
+  it("extracts STORED (uncompressed) entries", async () => {
+    // Info-ZIP stores entries that deflate cannot shrink (fonts, images). With
+    // yauzl 3.3.0, async iteration over these entry streams never started, so
+    // extraction hung and the CLI exited 0 without output.
+    const manifest = JSON.stringify({
+      name: "stored-ext",
+      publisher: "test",
+      version: "1.0.0",
+      main: "./extension.js",
+    });
+    const storedContent = "x".repeat(1200);
+    const zipBuffer = createTestZip([
+      { name: "extension/package.json", content: manifest },
+      { name: "extension/extension.js", content: "module.exports = {};" },
+      { name: "extension/data.bin", content: storedContent, stored: true },
+    ]);
+
+    const vsixPath = join(tmpdir(), `test-stored-${Date.now()}.vsix`);
+    await writeFile(vsixPath, zipBuffer);
+
+    try {
+      const contents = await extractVsix(vsixPath);
+
+      expect(contents.manifest.name).toBe("stored-ext");
+      expect(contents.files.get("data.bin")?.toString()).toBe(storedContent);
+      expect(contents.archiveWarnings ?? []).toEqual([]);
     } finally {
       await rm(vsixPath, { force: true });
     }
