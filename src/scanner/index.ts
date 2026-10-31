@@ -244,7 +244,17 @@ function archiveWarningsToFindings(contents: VsixContents): Finding[] {
 function makeCoverageMetadata(
   warnings: string[],
   unavailableModules: ModuleName[],
+  findings: Finding[],
 ): CoverageMetadata {
+  for (const finding of findings) {
+    if (finding.id !== "PARSE_FAILURE_AST" || finding.metadata?.["analysisIncomplete"] !== true) {
+      continue;
+    }
+    warnings.push(
+      `AST analysis failed for ${JSON.stringify(finding.location?.file ?? "unknown file")}; ` +
+        "inspect it manually.",
+    );
+  }
   const metadata: CoverageMetadata = {
     degraded: warnings.length > 0 || unavailableModules.length > 0,
     warnings,
@@ -448,12 +458,12 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
     inventory.push(mod.inventory);
   }
 
+  const coverage = makeCoverageMetadata(coverageWarnings, unavailableModules, findings);
   findings = deduplicateFindings(findings);
   findings = filterBySeverity(findings, options.severity);
   findings = sortFindings(findings);
 
   timings.total = performance.now() - startTime;
-  const coverage = makeCoverageMetadata(coverageWarnings, unavailableModules);
 
   return {
     extension: {

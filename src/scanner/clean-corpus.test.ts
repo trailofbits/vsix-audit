@@ -5,7 +5,7 @@ import {
   cleanCorpusKey,
   isNeverCleanFindingId,
   validateCleanCorpusManifest,
-} from "./clean-corpus.js";
+} from "#internal/scanner/clean-corpus.js";
 
 const CLEAN_CORPUS_MANIFEST = join(
   import.meta.dirname,
@@ -42,6 +42,7 @@ describe("clean corpus manifest", () => {
   it("keeps generic heuristic noise out of the never-in-clean gate", () => {
     expect(isNeverCleanFindingId("KNOWN_MALWARE_HASH")).toBe(true);
     expect(isNeverCleanFindingId("KNOWN_GITHUB_C2")).toBe(true);
+    expect(isNeverCleanFindingId("BIDI_OVERRIDE")).toBe(true);
     expect(isNeverCleanFindingId("ARCHIVE_PORTABLE_PATH_COLLISION")).toBe(true);
     expect(isNeverCleanFindingId("ARCHIVE_DUPLICATE_PATH")).toBe(true);
     expect(isNeverCleanFindingId("ARCHIVE_REFERENCED_FILE_MISSING")).toBe(true);
@@ -52,7 +53,6 @@ describe("clean corpus manifest", () => {
     expect(isNeverCleanFindingId("STARTUP_EXECUTION_CHAIN")).toBe(false);
     expect(isNeverCleanFindingId("ACTIVATION_STARTUP")).toBe(false);
     expect(isNeverCleanFindingId("AST_DYNAMIC_IMPORT")).toBe(false);
-    expect(isNeverCleanFindingId("BIDI_OVERRIDE")).toBe(false);
     expect(isNeverCleanFindingId("YARA_SUSP_JS_Child_Process_Variable_Jan25")).toBe(false);
   });
 });

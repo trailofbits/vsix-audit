@@ -1,3 +1,4 @@
+import { findLtrRangeOffsets } from "#internal/scanner/checks/bidi-ranges.js";
 import type { BundlerInfo } from "#internal/scanner/bundler.js";
 import { detectBundler } from "#internal/scanner/bundler.js";
 import {
@@ -40,7 +41,7 @@ interface UnicodeRule {
   title: string;
   description: string;
   severity: Severity;
-  detect: (content: string, filename: string) => UnicodeMatch[];
+  detect: (content: string, filename: string, rangeOffsets: ReadonlySet<number>) => UnicodeMatch[];
 }
 
 // ============================================================================
@@ -215,14 +216,15 @@ function detectUnicodePattern(
   content: string,
   regex: RegExp,
   minMatches = 1,
-  lineStarts?: number[],
+  excludedOffsets?: ReadonlySet<number>,
 ): UnicodeMatch[] {
   const matches: UnicodeMatch[] = [];
   const r = new RegExp(regex.source, regex.flags);
-  const starts = lineStarts ?? computeLineStarts(content);
+  const starts = computeLineStarts(content);
   let match: RegExpExecArray | null;
 
   while ((match = r.exec(content)) !== null) {
+    if (excludedOffsets?.has(match.index) === true) continue;
     const { line, column } = findLineAndColumn(match.index, starts);
     matches.push({
       line,
@@ -397,10 +399,10 @@ const UNICODE_RULES: UnicodeRule[] = [
     description:
       "File contains Unicode bidirectional override characters (U+202A-202E). This is the Trojan Source attack technique.",
     severity: "critical",
-    detect: (content, filename) => {
+    detect: (content, filename, rangeOffsets) => {
       // Skip files with legitimate RTL text support (math, diagrams, language files)
       if (isRtlFile(filename)) return [];
-      return detectUnicodePattern(content, BIDI_OVERRIDE_REGEX, 1);
+      return detectUnicodePattern(content, BIDI_OVERRIDE_REGEX, 1, rangeOffsets);
     },
   },
   {
@@ -441,7 +443,7 @@ const UNICODE_RULES: UnicodeRule[] = [
     description:
       "File contains many invisible Unicode characters in proximity to code execution functions. Strong indicator of hidden malicious code.",
     severity: "critical",
-    detect: (content, filename) => {
+    detect: (content, filename, rangeOffsets) => {
       if (isI18nFile(filename, content)) {
         return [];
       }
@@ -450,7 +452,7 @@ const UNICODE_RULES: UnicodeRule[] = [
         `${VARIATION_SELECTOR_REGEX.source}|${BIDI_OVERRIDE_REGEX.source}`,
         "g",
       );
-      const matches = detectUnicodePattern(content, suspiciousInvisible, 5);
+      const matches = detectUnicodePattern(content, suspiciousInvisible, 5, rangeOffsets);
 
       return matches.filter((m) => {
         const matchIndex =
@@ -474,6 +476,7 @@ function checkUnicodeHiding(contents: VsixContents): Finding[] {
     if (!isScannable(filename, SCANNABLE_EXTENSIONS_UNICODE)) continue;
 
     const content = getStringContent(contents, filename, buffer);
+    const rangeOffsets = findLtrRangeOffsets(content, filename);
     const bundlerInfo = detectBundler(
       content,
       filename,
@@ -491,7 +494,7 @@ function checkUnicodeHiding(contents: VsixContents): Finding[] {
         continue;
       }
 
-      const matches = rule.detect(content, filename);
+      const matches = rule.detect(content, filename, rangeOffsets);
       if (matches.length === 0) continue;
 
       const key = `${rule.id}:${filename}`;
