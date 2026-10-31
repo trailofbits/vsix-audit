@@ -39,6 +39,7 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:cli": "npm run build && vitest run --config vitest.cli.config.ts",
+    "test:docker": "node scripts/test-docker.mjs",
     "test:watch": "vitest",
     "lint": "oxlint .",
     "format": "oxfmt --write .",

@@ -139,6 +139,48 @@ npm install -g @trailofbits/vsix-audit
 
 Requires Node.js 22 or later and [YARA-X](https://github.com/VirusTotal/yara-x) for YARA rule scanning.
 
+### Docker
+
+The Docker image includes Node.js, YARA-X, and the bundled detection data. Images support
+Linux amd64 and arm64 and run as the unprivileged `node` user (UID 1000).
+
+Scan a local extension by mounting its directory read-only:
+
+```sh
+docker run --rm \
+  --mount type=bind,src="$(pwd)",dst=/work,readonly \
+  ghcr.io/trailofbits/vsix-audit:main scan ./extension.vsix
+```
+
+Scan a marketplace extension without a local mount:
+
+```sh
+docker run --rm ghcr.io/trailofbits/vsix-audit:main scan ms-python.python
+```
+
+To scan installed extensions, mount the host's extension store and pass its container path:
+
+```sh
+docker run --rm \
+  --mount type=bind,src="$HOME/.vscode/extensions",dst=/extensions,readonly \
+  ghcr.io/trailofbits/vsix-audit:main scan-installed --extensions-dir /extensions
+```
+
+All CLI options are available after the image name. Exit codes are preserved: `0` for no
+findings, `1` for findings, and `2` for an error or required coverage failure. For example,
+append `--output json --strict --require-yara` to produce JSON and require complete coverage.
+For offline local scans, add Docker's `--network none` before the image name.
+
+The `main` tag follows the default branch. Stable releases also publish `latest` and a
+version tag, such as `0.4.0`; prereleases publish only their version tag.
+
+Build and test the image locally:
+
+```sh
+docker build -t vsix-audit:test .
+npm run test:docker
+```
+
 ## Usage
 
 ### Commands
