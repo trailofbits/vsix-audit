@@ -14,8 +14,9 @@ function patternRangeOffsets(pattern: string, flags = "u"): Set<number> {
     visitRegExpAST(parsed, {
       onCharacterClassRangeEnter(range): void {
         for (const endpoint of [range.min, range.max]) {
-          if (endpoint.value === 0x202a && pattern[endpoint.start] === "\u202a") {
-            offsets.add(endpoint.start);
+          const literalOffset = endpoint.raw.indexOf("\u202a");
+          if (endpoint.value === 0x202a && literalOffset !== -1) {
+            offsets.add(endpoint.start + literalOffset);
           }
         }
       },
@@ -29,7 +30,9 @@ function patternRangeOffsets(pattern: string, flags = "u"): Set<number> {
 
 function collectRangeOffsets(pattern: string, start: number, offsets: Set<number>): void {
   if (!pattern.includes("\u202a")) return;
-  for (const offset of patternRangeOffsets(pattern)) offsets.add(start + offset);
+  for (const flags of ["u", ""]) {
+    for (const offset of patternRangeOffsets(pattern, flags)) offsets.add(start + offset);
+  }
 }
 
 function rangeOffsets(pattern: string): Set<number> {

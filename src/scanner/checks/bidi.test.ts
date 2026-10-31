@@ -59,8 +59,24 @@ describe("BIDI controls in regex data", () => {
 });
 
 describe("BIDI controls in declared regex modes", () => {
+  it.each([`[\\_-${LRE}]`, `[\\a-${LRE}]`, `[\\${LRE}-\uffff]`])(
+    "accepts a legacy range stored in a string: %j",
+    (pattern) => {
+      expect(() => new RegExp(pattern)).not.toThrow();
+      const source = `const pattern = ${JSON.stringify(pattern)}; new RegExp(pattern);`;
+      expect(directionalFindings(source)).toEqual([]);
+    },
+  );
+
+  it("keeps a legacy class escape followed by a literal hyphen reportable", () => {
+    const pattern = `[\\s-${LRE}]`;
+    expect(() => new RegExp(pattern)).not.toThrow();
+    expect(directionalFindings(`const pattern = ${JSON.stringify(pattern)};`)).toHaveLength(1);
+  });
+
   it.each([
     ["", `[\\_-${LRE}]`],
+    ["", `[\\${LRE}-\uffff]`],
     ["u", `[a-${LRE}]`],
     ["v", `[[a-${LRE}]]`],
     ["v", `[[a-${LRE}]&&[\\s\\S]]`],
