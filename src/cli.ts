@@ -4,6 +4,14 @@ import { createRequire } from "node:module";
 import { basename } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
+import { registerInstalledCommand } from "#internal/scan-installed.js";
+import {
+  configureScanOptions,
+  hasCoverageExitFailure,
+  parseJobs,
+  parseScanOptions,
+  type CliScanOptions as CommonScanOptions,
+} from "#internal/scan-options.js";
 import {
   formatBytes,
   formatFindingSummary,
@@ -14,13 +22,9 @@ import {
 import { clearCache, getCacheDir, getCachedVersions, listCached } from "./scanner/cache.js";
 import { extractCapabilities, type Capabilities } from "./scanner/capabilities.js";
 import { downloadExtension, parseExtensionId, type ParsedExtensionId } from "./scanner/download.js";
-import {
-  MODULE_NAMES,
-  scanDirectory,
-  scanExtension,
-  validateScanOptions,
-} from "./scanner/index.js";
-import type { IntelMode, Registry, ScanOptions, ScanResult } from "./scanner/types.js";
+import { scanDirectory, scanExtension } from "#internal/scanner/index.js";
+import type { BatchScanCallbacks } from "#internal/scanner/batch.js";
+import type { Registry, ScanOptions, ScanResult } from "#internal/scanner/types.js";
 import { loadExtension } from "./scanner/vsix.js";
 
 const require = createRequire(import.meta.url);
@@ -30,17 +34,12 @@ const { version: VERSION } = require("../package.json") as {
 
 const REGISTRIES: Registry[] = ["marketplace", "openvsx", "cursor"];
 
-interface CliScanOptions extends Omit<ScanOptions, "intel"> {
+interface CliScanOptions extends CommonScanOptions {
   allRegistries?: boolean;
   noCache?: boolean;
   force?: boolean;
   recursive?: boolean;
   jobs?: string;
-  module?: string;
-  threatIntel?: string | false;
-  profile?: boolean;
-  strict?: boolean;
-  requireYara?: boolean;
 }
 
 interface CliDownloadOptions {
@@ -109,12 +108,142 @@ export function classifyTarget(target: string, options: TargetClassifierOptions 
   }
 }
 
-function hasCoverageExitFailure(result: ScanResult, options: ScanOptions): boolean {
-  const coverage = result.metadata.coverage;
-  if (!coverage) return false;
-  if (options.strict && coverage.degraded) return true;
-  if (options.requireYara && coverage.unavailableModules?.includes("yara")) return true;
-  return false;
+interface ScanContext {
+  options: ScanOptions;
+  useCache: boolean;
+  forceDownload: boolean;
+  statusStream: NodeJS.WriteStream;
+  statusLog: (...args: unknown[]) => void;
+}
+
+function createScanContext(options: CliScanOptions): ScanContext {
+  const scanOptions = parseScanOptions(options);
+  const machineOutput = scanOptions.output !== "text";
+  return {
+    options: scanOptions,
+    useCache: options.noCache !== true,
+    forceDownload: options.force === true,
+    statusStream: machineOutput ? process.stderr : process.stdout,
+    statusLog: (...args) => {
+      if (machineOutput) console.error(...args);
+      else console.log(...args);
+    },
+  };
+}
+
+async function downloadScanTarget(extensionId: string, context: ScanContext): Promise<string> {
+  const downloaded = await downloadExtension(extensionId, {
+    useCache: context.useCache,
+    forceDownload: context.forceDownload,
+  });
+  const message = downloaded.fromCache ? "✓ Using cached" : "✓ Downloaded";
+  context.statusLog(pc.green(message), pc.dim(downloaded.path));
+  return downloaded.path;
+}
+
+async function scanAllRegistries(
+  target: Extract<CliTarget, { kind: "extension-id" }>,
+  context: ScanContext,
+): Promise<number> {
+  const results: ScanResult[] = [];
+  const baseId = target.unprefixedExtensionId;
+  for (const registry of REGISTRIES) {
+    try {
+      context.statusLog(pc.cyan(`Downloading from ${registry}:`), baseId);
+      const path = await downloadScanTarget(`${registry}:${baseId}`, context);
+      const result = await scanExtension(path, context.options);
+      result.metadata = { ...result.metadata, registry };
+      results.push(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      context.statusLog(pc.dim(`  Not found in ${registry}: ${message}`));
+    }
+  }
+  context.statusLog();
+  if (results.length === 0) throw new Error(`Extension not found in any registry: ${baseId}`);
+  outputResults(results, context.options.output, VERSION);
+  if (results.some((result) => hasCoverageExitFailure(result, context.options))) return 2;
+  return results.some((result) => result.findings.length > 0) ? 1 : 0;
+}
+
+function recursiveCallbacks(concurrency: number, context: ScanContext): BatchScanCallbacks {
+  const isParallel = concurrency > 1;
+  const stream = isParallel ? process.stderr : context.statusStream;
+  return {
+    onProgress: (completed, total) => {
+      if (isParallel) process.stderr.write(`\r[${completed}/${total}] Scanning...`);
+    },
+    onResult: (_path, result) => {
+      stream.write("\r\x1b[K");
+      const label = `${result.extension.name} v${result.extension.version}`;
+      if (result.findings.length === 0) {
+        context.statusLog(`[${pc.green("OK")}] ${label}`);
+        return;
+      }
+      const summary = formatFindingSummary(result.findings);
+      context.statusLog(
+        `[${pc.yellow("WARN")}] ${label} - ${result.findings.length} issue(s) (${summary})`,
+      );
+    },
+    onError: (path, error) => {
+      stream.write("\r\x1b[K");
+      context.statusLog(`[${pc.red("ERROR")}] ${basename(path)} - Error: ${error}`);
+    },
+  };
+}
+
+async function scanRecursive(
+  target: string,
+  options: CliScanOptions,
+  context: ScanContext,
+): Promise<number> {
+  const targetStat = await stat(target);
+  if (!targetStat.isDirectory()) {
+    throw new Error(`--recursive requires a directory path: ${target}`);
+  }
+  const concurrency = parseJobs(options.jobs ?? "4");
+  context.statusLog(pc.cyan("Scanning directory:"), target);
+  if (concurrency > 1) {
+    context.statusLog(pc.dim(`Parallel mode: ${concurrency} concurrent scans`));
+  }
+  context.statusLog();
+  const batch = await scanDirectory(
+    target,
+    context.options,
+    recursiveCallbacks(concurrency, context),
+    { concurrency },
+  );
+  outputBatchResult(batch, context.options.output, VERSION);
+  if (batch.summary.failedFiles > 0) return 2;
+  if (batch.results.some((result) => hasCoverageExitFailure(result, context.options))) return 2;
+  if (batch.summary.totalFindings > 0) return 1;
+  return 0;
+}
+
+async function scanSingle(target: CliTarget, context: ScanContext): Promise<number> {
+  let path: string;
+  if (target.kind === "extension-id") {
+    context.statusLog(pc.cyan("Downloading:"), target.extensionId);
+    path = await downloadScanTarget(target.extensionId, context);
+    context.statusLog();
+  } else path = target.path;
+  const result = await scanExtension(path, context.options);
+  outputResult(result, context.options.output, VERSION);
+  if (hasCoverageExitFailure(result, context.options)) return 2;
+  return result.findings.length > 0 ? 1 : 0;
+}
+
+async function runScan(target: string, options: CliScanOptions): Promise<number> {
+  const context = createScanContext(options);
+  const targetInfo = classifyTarget(target);
+  if (options.allRegistries && targetInfo.kind === "extension-id") {
+    return scanAllRegistries(targetInfo, context);
+  }
+  if (options.jobs && options.jobs !== "4" && !options.recursive) {
+    context.statusLog(pc.yellow("Warning:"), "--jobs is only used with --recursive, ignoring");
+  }
+  if (options.recursive) return scanRecursive(target, options, context);
+  return scanSingle(targetInfo, context);
 }
 
 export const cli = new Command()
@@ -122,249 +251,30 @@ export const cli = new Command()
   .description("Security scanner for VS Code extensions")
   .version(VERSION);
 
-cli
-  .command("scan")
-  .description("Scan a VS Code extension for security issues")
-  .argument(
-    "<target>",
-    "Path to .vsix file or extension ID (e.g., publisher.extension or publisher/extension)",
-  )
-  .option("-o, --output <format>", "Output format (text, json, sarif)", "text")
-  .option(
-    "-s, --severity <level>",
-    "Minimum severity to report (low, medium, high, critical)",
-    "low",
-  )
-  .option("--no-network", "Disable network-based checks")
+configureScanOptions(
+  cli
+    .command("scan")
+    .description("Scan a VS Code extension for security issues")
+    .argument(
+      "<target>",
+      "Path to .vsix file or extension ID (e.g., publisher.extension or publisher/extension)",
+    ),
+)
   .option("--all-registries", "Scan from all registries (Marketplace + OpenVSX + Cursor)")
   .option("--no-cache", "Bypass cache, download fresh")
   .option("--force", "Re-download even if cached")
   .option("-r, --recursive", "Recursively scan all .vsix files in a directory")
   .option("-j, --jobs <n>", "Number of parallel scans (default: 4)", "4")
-  .option(
-    "-m, --module <names>",
-    "Run only specific modules (comma-separated: package,manifest,execution,deps,intel,obfuscation,ast,ioc,yara,telemetry)",
-  )
-  .option(
-    "--threat-intel <mode>",
-    "Threat intelligence mode (local, none). Use none to evaluate generic detections only.",
-    "local",
-  )
-  .option(
-    "--no-threat-intel",
-    "Disable threat-intelligence datasets while keeping generic detections",
-  )
-  .option("--profile", "Show detailed timing breakdown for each module")
-  .option("--strict", "Exit with an error if scanner coverage is degraded")
-  .option("--require-yara", "Exit with an error if YARA scanning cannot run")
   .action(async (target: string, options: CliScanOptions) => {
     try {
-      const useCache = options.noCache !== true;
-      const forceDownload = options.force === true;
-
-      // Parse and validate module filter
-      const modules = options.module?.split(",").map((m: string) => m.trim());
-      if (modules) {
-        const invalid = modules.filter(
-          (m) => !MODULE_NAMES.includes(m as (typeof MODULE_NAMES)[number]),
-        );
-        if (invalid.length > 0) {
-          console.error(
-            pc.red("Error:"),
-            `Unknown module(s): ${invalid.join(", ")}. Valid modules: ${MODULE_NAMES.join(", ")}`,
-          );
-          process.exit(2);
-        }
-      }
-
-      const intel = options.threatIntel === false ? "none" : (options.threatIntel ?? "local");
-
-      const scanOptions: ScanOptions = {
-        output: options.output,
-        severity: options.severity,
-        network: options.network,
-        intel: intel as IntelMode,
-        ...(options.profile ? { profile: true } : {}),
-        ...(options.strict ? { strict: true } : {}),
-        ...(options.requireYara ? { requireYara: true } : {}),
-        ...(modules ? { modules: modules as import("./scanner/types.js").ModuleName[] } : {}),
-      };
-      validateScanOptions(scanOptions);
-
-      const outputFormat = options.output ?? "text";
-      const machineOutput = outputFormat === "json" || outputFormat === "sarif";
-      const statusStream = machineOutput ? process.stderr : process.stdout;
-      const statusLog = (...args: unknown[]) => {
-        if (machineOutput) {
-          console.error(...args);
-        } else {
-          console.log(...args);
-        }
-      };
-      const targetInfo = classifyTarget(target);
-
-      // Handle --all-registries mode for extension IDs
-      if (options.allRegistries && targetInfo.kind === "extension-id") {
-        const results: ScanResult[] = [];
-        const baseId = targetInfo.unprefixedExtensionId;
-
-        for (const registry of REGISTRIES) {
-          const prefixedId = `${registry}:${baseId}`;
-          try {
-            statusLog(pc.cyan(`Downloading from ${registry}:`), baseId);
-            const downloaded = await downloadExtension(prefixedId, {
-              useCache,
-              forceDownload,
-            });
-
-            if (downloaded.fromCache) {
-              statusLog(pc.green("✓ Using cached"), pc.dim(downloaded.path));
-            } else {
-              statusLog(pc.green("✓ Downloaded"), pc.dim(downloaded.path));
-            }
-
-            const result = await scanExtension(downloaded.path, scanOptions);
-            result.metadata = { ...result.metadata, registry };
-            results.push(result);
-          } catch (error) {
-            // Extension may not exist in this registry - continue
-            const msg = error instanceof Error ? error.message : String(error);
-            statusLog(pc.dim(`  Not found in ${registry}: ${msg}`));
-          }
-        }
-        statusLog();
-
-        if (results.length === 0) {
-          console.error(pc.red("Error:"), `Extension not found in any registry: ${baseId}`);
-          process.exit(2);
-        }
-
-        outputResults(results, outputFormat, VERSION);
-
-        const hasFindings = results.some((r) => r.findings.length > 0);
-        const hasCoverageFailure = results.some((r) => hasCoverageExitFailure(r, scanOptions));
-        if (hasCoverageFailure) {
-          process.exit(2);
-        }
-        process.exit(hasFindings ? 1 : 0);
-        return;
-      }
-
-      // Warn if -j used without -r
-      if (options.jobs && options.jobs !== "4" && !options.recursive) {
-        statusLog(pc.yellow("Warning:"), "--jobs is only used with --recursive, ignoring");
-      }
-
-      // Handle --recursive mode for directories
-      if (options.recursive) {
-        const targetStat = await stat(target).catch(() => null);
-        if (!targetStat?.isDirectory()) {
-          console.error(pc.red("Error:"), "--recursive requires a directory path");
-          process.exit(2);
-        }
-
-        // Validate --jobs
-        const concurrency = parseInt(options.jobs ?? "4", 10);
-        if (isNaN(concurrency) || concurrency < 1) {
-          console.error(pc.red("Error:"), "--jobs must be a positive integer");
-          process.exit(2);
-        }
-
-        const isParallel = concurrency > 1;
-
-        statusLog(pc.cyan("Scanning directory:"), target);
-        if (isParallel) {
-          statusLog(pc.dim(`Parallel mode: ${concurrency} concurrent scans`));
-        }
-        statusLog();
-
-        const batchResult = await scanDirectory(
-          target,
-          scanOptions,
-          {
-            onProgress: (completed, total, _path) => {
-              if (isParallel) {
-                // No line clearing in parallel mode - just update progress
-                process.stderr.write(`\r[${completed}/${total}] Scanning...`);
-              }
-              // Sequential mode: progress shown via onResult
-            },
-            onResult: (_path, result) => {
-              if (isParallel) {
-                // Clear progress line before printing result
-                process.stderr.write("\r\x1b[K");
-              } else {
-                statusStream.write("\r\x1b[K");
-              }
-              const count = result.findings.length;
-              if (count === 0) {
-                statusLog(
-                  `[${pc.green("OK")}] ${result.extension.name} v${result.extension.version}`,
-                );
-              } else {
-                const summary = formatFindingSummary(result.findings);
-                statusLog(
-                  `[${pc.yellow("WARN")}] ${result.extension.name} v${result.extension.version} - ${count} issue(s) (${summary})`,
-                );
-              }
-            },
-            onError: (path, error) => {
-              if (isParallel) {
-                process.stderr.write("\r\x1b[K");
-              } else {
-                statusStream.write("\r\x1b[K");
-              }
-              statusLog(`[${pc.red("ERROR")}] ${basename(path)} - Error: ${error}`);
-            },
-          },
-          { concurrency },
-        );
-
-        outputBatchResult(batchResult, outputFormat, VERSION);
-
-        // Exit codes: 0=clean, 1=findings, 2=errors only
-        if (batchResult.results.some((result) => hasCoverageExitFailure(result, scanOptions))) {
-          process.exit(2);
-        } else if (batchResult.summary.totalFindings > 0) {
-          process.exit(1);
-        } else if (batchResult.summary.failedFiles > 0 && batchResult.summary.scannedFiles === 0) {
-          process.exit(2);
-        }
-        process.exit(0);
-        return;
-      }
-
-      // Standard single-registry scan
-      let scanTarget: string;
-      if (targetInfo.kind === "extension-id") {
-        statusLog(pc.cyan("Downloading:"), targetInfo.extensionId);
-        const result = await downloadExtension(targetInfo.extensionId, {
-          useCache,
-          forceDownload,
-        });
-        scanTarget = result.path;
-
-        if (result.fromCache) {
-          statusLog(pc.green("✓ Using cached"), pc.dim(result.path));
-        } else {
-          statusLog(pc.green("✓ Downloaded"), pc.dim(result.path));
-        }
-        statusLog();
-      } else {
-        scanTarget = targetInfo.path;
-      }
-
-      const result = await scanExtension(scanTarget, scanOptions);
-      outputResult(result, outputFormat, VERSION);
-      if (hasCoverageExitFailure(result, scanOptions)) {
-        process.exit(2);
-      }
-      process.exit(result.findings.length > 0 ? 1 : 0);
+      process.exitCode = await runScan(target, options);
     } catch (error) {
       console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
-      process.exit(2);
+      process.exitCode = 2;
     }
   });
+
+registerInstalledCommand(cli, VERSION);
 
 cli
   .command("download")

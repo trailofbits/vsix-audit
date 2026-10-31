@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import pc from "picocolors";
 import type { BatchScanResult, ModuleTimings, ScanResult, Severity } from "./scanner/types.js";
 
@@ -30,6 +32,11 @@ interface SarifRun {
     };
   };
   results: SarifResult[];
+  properties?: { sourcePath: string };
+  invocations?: Array<{
+    executionSuccessful: boolean;
+    toolExecutionNotifications: Array<{ level: "error"; message: { text: string } }>;
+  }>;
 }
 
 interface SarifReport {
@@ -48,6 +55,21 @@ function severityToSarifLevel(severity: Severity): SarifLevel {
   return mapping[severity];
 }
 
+function createSarifRun(toolVersion: string, rules: SarifRule[]): SarifRun {
+  return {
+    tool: {
+      driver: {
+        name: "vsix-audit",
+        version: toolVersion,
+        informationUri: "https://github.com/trailofbits/vsix-audit",
+        rules,
+      },
+    },
+    results: [],
+  };
+}
+
+/** Encode findings as SARIF, retaining the source directory for installed scans. */
 export function toSarif(result: ScanResult, toolVersion: string): SarifReport {
   const seenRuleIds = new Set<string>();
   const rules: SarifRule[] = [];
@@ -61,50 +83,58 @@ export function toSarif(result: ScanResult, toolVersion: string): SarifReport {
     }
   }
 
-  return {
-    $schema:
-      "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
-    version: "2.1.0",
-    runs: [
-      {
-        tool: {
-          driver: {
-            name: "vsix-audit",
-            version: toolVersion,
-            informationUri: "https://github.com/trailofbits/vsix-audit",
-            rules,
+  const run = createSarifRun(toolVersion, rules);
+  const sourcePath = result.metadata.sourcePath;
+  if (sourcePath !== undefined) run.properties = { sourcePath };
+  run.results = result.findings.map((f) => ({
+    ruleId: f.id,
+    level: severityToSarifLevel(f.severity),
+    message: { text: f.description },
+    locations: f.location
+      ? [
+          {
+            physicalLocation: {
+              artifactLocation: {
+                uri:
+                  sourcePath === undefined
+                    ? f.location.file
+                    : pathToFileURL(resolve(sourcePath, f.location.file)).href,
+              },
+              region: f.location.line ? { startLine: f.location.line } : undefined,
+            },
           },
-        },
-        results: result.findings.map((f) => ({
-          ruleId: f.id,
-          level: severityToSarifLevel(f.severity),
-          message: { text: f.description },
-          locations: f.location
-            ? [
-                {
-                  physicalLocation: {
-                    artifactLocation: {
-                      uri: f.location.file,
-                    },
-                    region: f.location.line ? { startLine: f.location.line } : undefined,
-                  },
-                },
-              ]
-            : [],
-        })),
-      },
-    ],
-  };
+        ]
+      : [],
+  }));
+  return { $schema: SARIF_SCHEMA, version: "2.1.0", runs: [run] };
 }
 
-const SARIF_SCHEMA =
-  "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json";
+const SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json";
 
-export function toSarifCombined(results: ScanResult[], toolVersion: string): object {
+/** Combine scans into SARIF and retain batch failures as tool execution notifications. */
+export function toSarifCombined(
+  results: ScanResult[],
+  toolVersion: string,
+  errors: BatchScanResult["errors"] = [],
+): SarifReport {
+  const runs = results.flatMap((result) => toSarif(result, toolVersion).runs);
+  if (errors.length > 0) {
+    const run = createSarifRun(toolVersion, []);
+    run.invocations = [
+      {
+        executionSuccessful: false,
+        toolExecutionNotifications: errors.map(({ path, error }) => ({
+          level: "error",
+          message: { text: `Could not scan ${path}: ${error}` },
+        })),
+      },
+    ];
+    runs.push(run);
+  }
   return {
     $schema: SARIF_SCHEMA,
     version: "2.1.0",
-    runs: results.map((r) => toSarif(r, toolVersion).runs[0]),
+    runs,
   };
 }
 
@@ -230,39 +260,14 @@ export function printTextReport(result: ScanResult): void {
   }
 }
 
-export function printBatchSummary(batch: BatchScanResult): void {
-  const { summary, results, errors } = batch;
-
-  console.log();
-  console.log(pc.bold("Batch Scan Summary"));
-  console.log(pc.dim("─".repeat(50)));
-  console.log();
-  console.log(`Files scanned: ${summary.scannedFiles}/${summary.totalFiles}`);
-  if (summary.failedFiles > 0) {
-    console.log(`Failed: ${pc.red(String(summary.failedFiles))}`);
-  }
-  console.log(`Duration: ${(summary.scanDuration / 1000).toFixed(1)}s`);
-  console.log();
-
-  if (summary.totalFindings === 0) {
-    console.log(pc.green("No issues found across all extensions"));
-    return;
-  }
-
-  console.log(pc.yellow(`Found ${summary.totalFindings} issue(s) across all extensions:`));
-  const sev = summary.findingsBySeverity;
-  if (sev.critical > 0) console.log(`  ${pc.red("Critical:")} ${sev.critical}`);
-  if (sev.high > 0) console.log(`  ${pc.red("High:")} ${sev.high}`);
-  if (sev.medium > 0) console.log(`  ${pc.yellow("Medium:")} ${sev.medium}`);
-  if (sev.low > 0) console.log(`  ${pc.blue("Low:")} ${sev.low}`);
-  console.log();
-
+function printBatchFindings(results: ScanResult[]): void {
   const withFindings = results.filter((r) => r.findings.length > 0);
   if (withFindings.length > 0) {
     console.log(pc.cyan("Extensions with findings:"));
     console.log();
     for (const r of withFindings) {
       console.log(pc.bold(`${r.extension.name} v${r.extension.version}`));
+      if (r.metadata.sourcePath !== undefined) console.log(`Path: ${r.metadata.sourcePath}`);
       console.log(pc.dim("─".repeat(40)));
       for (const finding of r.findings) {
         const color = severityColor(finding.severity);
@@ -277,15 +282,71 @@ export function printBatchSummary(batch: BatchScanResult): void {
       }
     }
   }
+}
 
+function printBatchErrors(errors: BatchScanResult["errors"]): void {
   if (errors.length > 0) {
     console.log();
-    console.log(pc.cyan("Failed files:"));
+    console.log(pc.cyan("Failed targets:"));
     for (const e of errors) {
       console.log(`  - ${e.path}`);
       console.log(`    ${pc.dim(e.error)}`);
     }
   }
+}
+
+function printBatchTimings(results: ScanResult[]): void {
+  for (const result of results) {
+    if (!result.metadata.timings) continue;
+    console.log(pc.bold(`${result.extension.name} v${result.extension.version}`));
+    if (result.metadata.sourcePath !== undefined)
+      console.log(`Path: ${result.metadata.sourcePath}`);
+    printTimings(result.metadata.timings);
+  }
+}
+
+function printBatchCoverage(results: ScanResult[]): void {
+  for (const result of results) {
+    const coverage = result.metadata.coverage;
+    if (!coverage?.degraded) continue;
+    const source = result.metadata.sourcePath ?? result.extension.id;
+    console.log(pc.yellow(`Coverage degraded: ${source}`));
+    for (const warning of coverage.warnings) console.log(`  ${warning}`);
+    console.log();
+  }
+}
+
+/** Print batch findings and failures without hiding incomplete scanner coverage. */
+export function printBatchSummary(batch: BatchScanResult): void {
+  const { summary, results, errors } = batch;
+  console.log();
+  console.log(pc.bold("Batch Scan Summary"));
+  console.log(pc.dim("─".repeat(50)));
+  console.log();
+  console.log(`Extensions scanned: ${summary.scannedFiles}/${summary.totalFiles}`);
+  if (summary.failedFiles > 0) console.log(`Failed: ${pc.red(String(summary.failedFiles))}`);
+  console.log(`Duration: ${(summary.scanDuration / 1000).toFixed(1)}s`);
+  console.log();
+  printBatchErrors(errors);
+  printBatchTimings(results);
+  printBatchCoverage(results);
+  const incomplete =
+    summary.failedFiles > 0 ||
+    results.some((result) => result.metadata.coverage?.degraded === true);
+  if (summary.totalFindings === 0) {
+    const message = incomplete
+      ? "No findings in completed checks. The scan is incomplete."
+      : "No issues found across all extensions";
+    console.log(incomplete ? pc.yellow(message) : pc.green(message));
+    return;
+  }
+  console.log(pc.yellow(`Found ${summary.totalFindings} issue(s) across all extensions:`));
+  for (const severity of ["critical", "high", "medium", "low"] as const) {
+    const count = summary.findingsBySeverity[severity];
+    if (count > 0) console.log(`  ${severityColor(severity)(displayName(severity))}: ${count}`);
+  }
+  console.log();
+  printBatchFindings(results);
 }
 
 /**
@@ -330,7 +391,13 @@ export function outputBatchResult(
   if (format === "json") {
     console.log(JSON.stringify(batchResult, null, 2));
   } else if (format === "sarif") {
-    console.log(JSON.stringify(toSarifCombined(batchResult.results, toolVersion), null, 2));
+    console.log(
+      JSON.stringify(
+        toSarifCombined(batchResult.results, toolVersion, batchResult.errors),
+        null,
+        2,
+      ),
+    );
   } else {
     printBatchSummary(batchResult);
   }

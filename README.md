@@ -151,6 +151,37 @@ vsix-audit scan publisher.extension-name
 vsix-audit scan openvsx:publisher/extension-name
 ```
 
+**Scan installed extensions:**
+
+```sh
+vsix-audit scan-installed
+vsix-audit scan-installed --editor cursor
+vsix-audit scan-installed --editor vscode --output json
+vsix-audit scan-installed --extensions-dir ./portable/data/extensions --strict
+```
+
+`scan-installed` scans the default user extension stores for VS Code, VS Code Insiders,
+and Cursor. It reads extension files directly without launching an editor or activating extensions.
+Every version on disk is scanned, including disabled extensions and leftover versions.
+
+| Editor          | Default store                   |
+| --------------- | ------------------------------- |
+| `vscode`        | `~/.vscode/extensions`          |
+| `insiders`      | `~/.vscode-insiders/extensions` |
+| `cursor`        | `~/.cursor/extensions`          |
+| `all` (default) | All three stores that exist     |
+
+On Windows, `~` means the current user's home directory, normally `%USERPROFILE%`.
+Use `--extensions-dir <path>` for custom, portable, or remote extension stores mounted locally,
+including locations set with `VSCODE_EXTENSIONS`. This option cannot be combined with `--editor`.
+Directories reached through multiple symbolic links are scanned once.
+
+The command accepts the output, severity, module, threat-intelligence, profiling, and coverage
+options below, plus `--jobs <n>` (default: 4). JSON results include each directory in
+`metadata.sourcePath`; SARIF findings use absolute file URIs to distinguish editor stores.
+Missing default stores are skipped. An empty inventory, an unreadable store, or any failed
+extension scan returns exit code `2`, including when other extensions scan successfully.
+
 **Download an extension for offline analysis:**
 
 ```sh
@@ -261,6 +292,9 @@ vsix-audit cache clear ms-python.*
 | 2    | Error during scan |
 
 In `--strict` mode, exit code `2` is also used for degraded scanner coverage. With `--require-yara`, exit code `2` is used when YARA scanning cannot run.
+
+Batch scans return `2` if any target fails, even when other extensions scan successfully or
+have findings.
 
 ## Threat Intelligence
 
