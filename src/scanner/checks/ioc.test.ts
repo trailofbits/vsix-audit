@@ -36,6 +36,21 @@ function makeWalletBlob(wallet: string, pad = 600): string {
   return `"${"A".repeat(pad)}+${wallet}/${"A".repeat(pad)}"`;
 }
 
+// A valid PEM certificate from the clean Claude Code 2.1.312 bundle.
+const CLAUDE_CODE_CERTIFICATE = `-----BEGIN CERTIFICATE-----
+MIIB3TCCAYKgAwIBAgIUANUYY/tuc08yPd9Nsh7rY/zDEiwwCgYIKoZIzj0EAwIw
+OjESMBAGA1UEChMJQW50aHJvcGljMSQwIgYDVQQDExtBbnRocm9waWMgQXBwcyBT
+aWduaW5nIFJvb3QwHhcNMjYwOTAyMjMzNDMwWhcNNDEwODI5MjMzNDI5WjA6MRIw
+EAYDVQQKEwlBbnRocm9waWMxJDAiBgNVBAMTG0FudGhyb3BpYyBBcHBzIFNpZ25p
+bmcgUm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABAsUtD9z65VTC61W8M40
+B+bGEhcvb+8mLm/9aTh39H4lwLH0agHzBBqkt4dvqqGzo1J2pJN7L7UoX9nEEVbO
+7rmjZjBkMA4GA1UdDwEB/wQEAwIBBjASBgNVHRMBAf8ECDAGAQH/AgEBMB0GA1Ud
+DgQWBBQW+2L0kdDEOi+A6fBK5jpwNdtoCzAfBgNVHSMEGDAWgBQW+2L0kdDEOi+A
+6fBK5jpwNdtoCzAKBggqhkjOPQQDAgNJADBGAiEA+vhhLCvaUT2ccO0ND0YZaUy0
+e+zhUoJOBhE9hXPs+SkCIQCHdbMcFo/ZQEq/rVnaS8qv/BZvRfYoEm318TY0WBU4
+XA==
+-----END CERTIFICATE-----`;
+
 function makeZooData(overrides: Partial<ZooData> = {}): ZooData {
   return {
     blocklist: [],
@@ -337,6 +352,49 @@ describe("checkWallets", () => {
     expect(findings).toHaveLength(1);
     expect(findings[0]?.id).toBe("CRYPTO_WALLET_DETECTED");
     expect(findings[0]?.metadata?.["currency"]).toBe("SOL");
+  });
+
+  it("ignores wallet-shaped Base64 fragments inside PEM certificates", () => {
+    const contents = makeContents({
+      "extension.js": `const pem = \`${CLAUDE_CODE_CERTIFICATE}\`;`,
+    });
+
+    expect(checkWallets(contents, new Set())).toEqual([]);
+  });
+
+  it("detects a wallet used outside a PEM certificate after the same fragment inside it", () => {
+    const wallet = "A6fBK5jpwNdtoCzAfBgNVHSMEGDAWgBQW";
+    const contents = makeContents({
+      "extension.js":
+        `const pem = \`${CLAUDE_CODE_CERTIFICATE}\`;\n` + `const payout = "${wallet}";`,
+    });
+
+    const findings = checkWallets(contents, new Set());
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.metadata?.["wallet"]).toBe(wallet);
+    expect(findings[0]?.location?.line).toBe(CLAUDE_CODE_CERTIFICATE.split("\n").length + 1);
+  });
+
+  it("still reports a known malicious wallet inside a PEM certificate", () => {
+    const wallet = "A6fBK5jpwNdtoCzAfBgNVHSMEGDAWgBQW";
+    const contents = makeContents({
+      "extension.js": `const pem = \`${CLAUDE_CODE_CERTIFICATE}\`;`,
+    });
+
+    const findings = checkWallets(contents, new Set([wallet]));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.id).toBe("KNOWN_MALWARE_WALLET");
+  });
+
+  it("does not suppress a wallet inside a fake PEM certificate", () => {
+    const wallet = "BjVeAjPrSKFiingBn4vZvghsGj9KCE8AJVtbc9S8o8SC";
+    const contents = makeContents({
+      "extension.js": `const pem = \`-----BEGIN CERTIFICATE-----\n${wallet}\n-----END CERTIFICATE-----\`;`,
+    });
+
+    const findings = checkWallets(contents, new Set());
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.metadata?.["wallet"]).toBe(wallet);
   });
 
   it("escalates known malicious wallet to critical", () => {

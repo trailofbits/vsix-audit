@@ -195,6 +195,11 @@ const AST_PATTERNS: ASTPattern[] = [
     detect: (node, context) => {
       if (!isNewExpression(node, "Function")) return null;
 
+      // An empty literal body is commonly used as a code-generation feature probe.
+      if (node.arguments.length === 1 && node.arguments[0]?.type === "Literal") {
+        if (node.arguments[0].value === "") return null;
+      }
+
       // Skip in bundled code - webpack/rollup use Function() for module loading
       if (context.isBundled && !context.hasObfuscationIndicators) return null;
 
