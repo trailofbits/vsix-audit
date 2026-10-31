@@ -1,4 +1,4 @@
-import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "../constants.js";
+import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "#internal/scanner/constants.js";
 import type {
   BlocklistEntry,
   Finding,
@@ -6,8 +6,12 @@ import type {
   VsixContents,
   VsixManifest,
   ZooData,
-} from "../types.js";
-import { computeLineStarts, findLineNumberByIndex, getStringContent } from "../utils.js";
+} from "#internal/scanner/types.js";
+import {
+  computeLineStarts,
+  findLineNumberByIndex,
+  getStringContent,
+} from "#internal/scanner/utils.js";
 
 interface PackageJson {
   name?: string;
@@ -251,7 +255,7 @@ export function checkBlocklist(manifest: VsixManifest, blocklist: BlocklistEntry
 export function checkActivationEvents(manifest: VsixManifest): Finding[] {
   const findings: Finding[] = [];
 
-  if (manifest.activationEvents?.includes("*")) {
+  if (manifest.activationEvents?.includes("*") === true) {
     findings.push({
       id: "ACTIVATION_WILDCARD",
       title: "Extension activates on all events",
@@ -272,7 +276,7 @@ export function checkActivationEvents(manifest: VsixManifest): Finding[] {
     });
   }
 
-  if (manifest.activationEvents?.includes("onStartupFinished")) {
+  if (manifest.activationEvents?.includes("onStartupFinished") === true) {
     findings.push({
       id: "ACTIVATION_STARTUP",
       title: "Extension activates on startup",
@@ -303,7 +307,7 @@ export function checkActivationEvents(manifest: VsixManifest): Finding[] {
 
 export function checkThemeAbuse(manifest: VsixManifest): Finding[] {
   const findings: Finding[] = [];
-  const hasMain = Boolean(manifest.main || manifest.browser);
+  const hasMain = Boolean(manifest.main) || Boolean(manifest.browser);
   const hasThemes =
     (manifest.contributes?.themes?.length ?? 0) > 0 ||
     (manifest.contributes?.iconThemes?.length ?? 0) > 0;
@@ -429,11 +433,11 @@ function packageNameFromNodeModulesPath(path: string): string | null {
 
   const parts = path.slice(markerIndex + marker.length).split("/");
   const first = parts[0];
-  if (!first) return null;
+  if (first === undefined || first === "") return null;
 
   if (first.startsWith("@")) {
     const second = parts[1];
-    return second ? `${first}/${second}` : null;
+    return second !== undefined && second !== "" ? `${first}/${second}` : null;
   }
 
   return first;
@@ -461,7 +465,7 @@ function collectPackageLockV1Dependencies(
 
     const devOnly = isDevOnlyLockEntry(entry, inheritedDev);
     const version = getStringField(entry, "version");
-    if (!devOnly && version) {
+    if (!devOnly && version !== null && version !== "") {
       evidence.push({
         name: name.toLowerCase(),
         version,
@@ -515,7 +519,7 @@ function collectPackageLockEvidence(
 
       const name = packageNameFromNodeModulesPath(path);
       const version = getStringField(entry, "version");
-      if (!name || !version) continue;
+      if (name === null || name === "" || version === null || version === "") continue;
 
       evidence.push({
         name: name.toLowerCase(),
@@ -557,7 +561,7 @@ function collectBundledPackageEvidence(contents: VsixContents): InstalledPackage
     const fallbackName = packageNameFromNodeModulesPath(filename);
     const name = getStringField(parsed, "name") ?? fallbackName;
     const version = getStringField(parsed, "version");
-    if (!name || !version) continue;
+    if (name === null || name === "" || version === null || version === "") continue;
 
     evidence.push({
       name: name.toLowerCase(),
@@ -675,7 +679,7 @@ export function checkLifecycleScripts(packageJson: PackageJson): Finding[] {
 
   for (const scriptName of DANGEROUS_SCRIPTS) {
     const scriptContent = scripts[scriptName];
-    if (!scriptContent) continue;
+    if (scriptContent === undefined || scriptContent === "") continue;
 
     // Check for malicious patterns in the script
     for (const { pattern, desc } of MALICIOUS_SCRIPT_PATTERNS) {
@@ -748,11 +752,7 @@ export function checkExecutionPatterns(contents: VsixContents): Finding[] {
     const launchesProcess = launchesTask || PROCESS_LAUNCH_PATTERN.test(content);
 
     if (launchesTask && HIDDEN_TASK_PATTERN.test(content)) {
-      const taskAnchor = taskExecutionMatch ?? taskConstructionMatch ?? shellExecutionMatch;
-      const line =
-        taskAnchor?.index !== undefined
-          ? findLineNumberByIndex(content, taskAnchor.index, lineStarts)
-          : undefined;
+      const line = findLineNumberByIndex(content, taskExecutionMatch.index, lineStarts);
       findings.push({
         id: "BACKGROUND_TASK_EXECUTION",
         title: "Hidden VS Code task execution",
@@ -761,7 +761,7 @@ export function checkExecutionPatterns(contents: VsixContents): Finding[] {
           "This is a strong indicator of background command execution.",
         severity: "high",
         category: "pattern",
-        location: line !== undefined ? { file: filename, line } : { file: filename },
+        location: { file: filename, line },
         metadata: {
           hiddenTask: true,
         },
@@ -774,7 +774,7 @@ export function checkExecutionPatterns(contents: VsixContents): Finding[] {
       const isInterpolatedRef = ref?.startsWith("${") ?? false;
       const hasCommitSha = !isInterpolatedRef || COMMIT_SHA_PATTERN.test(content);
 
-      if (repo && ref && hasCommitSha) {
+      if (repo !== undefined && repo !== "" && ref !== undefined && ref !== "" && hasCommitSha) {
         const line = findLineNumberByIndex(content, githubRefMatch.index, lineStarts);
         findings.push({
           id: "GITHUB_SHA_EXECUTION",

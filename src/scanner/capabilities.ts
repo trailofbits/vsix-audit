@@ -1,4 +1,4 @@
-import type { Finding } from "./types.js";
+import type { Finding } from "#internal/scanner/types.js";
 
 /**
  * Capability extraction from scanner findings.
@@ -208,7 +208,7 @@ function buildCapabilityInfo(findings: Finding[], cap: keyof Capabilities): Capa
     const ev: Evidence = { file: f.location.file };
     if (f.location.line !== undefined) ev.line = f.location.line;
     const matched = extractMatched(f);
-    if (matched) ev.matched = matched;
+    if (matched !== undefined && matched !== "") ev.matched = matched;
     evidence.push(ev);
     if (evidence.length >= 10) break;
   }
@@ -224,13 +224,20 @@ function extractMatched(finding: Finding): string | undefined {
   if (typeof meta["matched"] === "string") return meta["matched"];
   const stages = meta["stages"];
   if (Array.isArray(stages) && stages.length > 0) {
-    const stage = stages[0] as { matched?: string };
-    if (stage?.matched) return stage.matched;
+    const stage: unknown = stages[0];
+    if (
+      typeof stage === "object" &&
+      stage !== null &&
+      "matched" in stage &&
+      typeof stage.matched === "string" &&
+      stage.matched !== ""
+    )
+      return stage.matched;
   }
   const source = meta["source"];
   if (typeof source === "object" && source !== null) {
-    const src = source as { matched?: string };
-    if (src?.matched) return src.matched;
+    if ("matched" in source && typeof source.matched === "string" && source.matched !== "")
+      return source.matched;
   }
 
   return undefined;

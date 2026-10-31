@@ -9,8 +9,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
+    name: test
     runs-on: ubuntu-latest
 
     steps:
@@ -27,7 +32,7 @@ jobs:
         run: npm audit --package-lock-only --audit-level=low
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Verify package signatures
         run: npm audit signatures
@@ -37,6 +42,9 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
 
       - name: Test
         run: npm test

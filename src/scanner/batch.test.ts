@@ -22,7 +22,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
-    stat: async (...args: Parameters<typeof actual.stat>) => {
+    stat: async (...args: Parameters<typeof actual.stat>): ReturnType<typeof actual.stat> => {
       await timing.beforeStat(args[0]);
       try {
         return await actual.stat(...args);
@@ -40,8 +40,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  timing.beforeStat = async () => {};
-  timing.afterStat = () => {};
+  timing.beforeStat = async (): Promise<void> => {};
+  timing.afterStat = (): void => {};
   await rm(root, { recursive: true, force: true });
 });
 
@@ -126,13 +126,13 @@ describe("scan worker bounds", () => {
     for (let index = 0; index < 5; index++) paths.push(await extension(`extension-${index}`));
     let active = 0;
     let peak = 0;
-    timing.beforeStat = async (path) => {
+    timing.beforeStat = async (path): Promise<void> => {
       if (!paths.includes(String(path))) return;
       active++;
       peak = Math.max(peak, active);
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
     };
-    timing.afterStat = (path) => {
+    timing.afterStat = (path): void => {
       if (paths.includes(String(path))) active--;
     };
     const batch = await scanPaths(paths, options, undefined, { concurrency });

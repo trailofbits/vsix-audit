@@ -3,10 +3,12 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { scanExtension } from "./index.js";
+import { scanExtension } from "#internal/scanner/index.js";
 
 const ZOO_ROOT = join(import.meta.dirname, "..", "..", "zoo");
-const SAMPLES_DIR = process.env["VSIX_ZOO_PATH"] || join(ZOO_ROOT, "samples");
+const samplesPath = process.env["VSIX_ZOO_PATH"];
+const SAMPLES_DIR =
+  samplesPath !== undefined && samplesPath !== "" ? samplesPath : join(ZOO_ROOT, "samples");
 const hasSamples = existsSync(join(SAMPLES_DIR, "apollyon"));
 
 describe("scanExtension", () => {

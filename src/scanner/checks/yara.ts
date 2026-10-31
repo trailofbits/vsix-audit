@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import type { Finding, VsixContents } from "../types.js";
+import type { Finding, VsixContents } from "#internal/scanner/types.js";
 
 /**
  * Binary file extensions that should be skipped for YARA scanning.
@@ -88,7 +88,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 async function findYaraRulesDir(): Promise<string> {
   // Check environment variable first
   const envPath = process.env["VSIX_AUDIT_ZOO_PATH"];
-  if (envPath) {
+  if (envPath !== undefined && envPath !== "") {
     return join(envPath, "signatures", "yara");
   }
 
@@ -125,7 +125,7 @@ export function resetYaraCaches(): void {
  * Get the default YARA rules directory (cached)
  */
 export async function getDefaultYaraRulesDir(): Promise<string> {
-  if (!cachedYaraRulesDir) {
+  if (cachedYaraRulesDir === undefined || cachedYaraRulesDir === "") {
     cachedYaraRulesDir = await findYaraRulesDir();
   }
   return cachedYaraRulesDir;
@@ -175,7 +175,7 @@ function parseYaraOutput(output: string): YaraMatch[] {
     const match = line.match(/^(\S+)\s+(.+)$/);
     if (match) {
       const [, rule, file] = match;
-      if (rule && file) {
+      if (rule !== undefined && rule !== "" && file !== undefined && file !== "") {
         matches.push({ rule, file });
       }
     }
@@ -200,9 +200,8 @@ const ruleFileErrors: { ruleFile: string; error: string }[] = [];
 async function parseRuleFile(
   ruleFile: string,
 ): Promise<Map<string, { severity?: string; description?: string }>> {
-  if (ruleMetaCache.has(ruleFile)) {
-    return ruleMetaCache.get(ruleFile)!;
-  }
+  const cached = ruleMetaCache.get(ruleFile);
+  if (cached !== undefined) return cached;
 
   const { readFile } = await import("node:fs/promises");
   const ruleMap = new Map<string, { severity?: string; description?: string }>();
@@ -217,19 +216,20 @@ async function parseRuleFile(
       const ruleName = match[1];
       const metaBlock = match[2];
 
-      if (!ruleName || !metaBlock) continue;
+      if (ruleName === undefined || ruleName === "" || metaBlock === undefined || metaBlock === "")
+        continue;
 
       const meta: { severity?: string; description?: string } = {};
 
       // Extract severity from meta block
       const severityMatch = metaBlock.match(/severity\s*=\s*["'](\w+)["']/);
-      if (severityMatch?.[1]) {
+      if (severityMatch?.[1] !== undefined && severityMatch[1] !== "") {
         meta.severity = severityMatch[1];
       }
 
       // Extract description from meta block
       const descMatch = metaBlock.match(/description\s*=\s*["']([^"']+)["']/);
-      if (descMatch?.[1]) {
+      if (descMatch?.[1] !== undefined && descMatch[1] !== "") {
         meta.description = descMatch[1];
       }
 
@@ -256,13 +256,13 @@ async function getRuleMeta(
   const ruleMap = await parseRuleFile(ruleFile);
   const meta = ruleMap.get(ruleName);
 
-  if (meta?.severity) {
+  if (meta?.severity !== undefined && meta.severity !== "") {
     return meta;
   }
 
   // Fallback: derive severity from rule name patterns
   const result: { severity?: string; description?: string } = {};
-  if (meta?.description) {
+  if (meta?.description !== undefined && meta.description !== "") {
     result.description = meta.description;
   }
 
@@ -475,7 +475,7 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
       // an actual error (bad rules, missing files, etc.).
       // Recover any partial matches from stdout before reporting the error.
       const execError = error as { stdout?: string; stderr?: string; code?: number };
-      if (execError.stdout) {
+      if (execError.stdout !== undefined && execError.stdout !== "") {
         const partialMatches = parseYaraOutput(execError.stdout);
         for (const match of partialMatches) {
           const relativePath = match.file.replace(tempDir + "/", "");
@@ -525,8 +525,7 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
   }
 
   // Drain any rule-file parse errors into findings
-  while (ruleFileErrors.length > 0) {
-    const err = ruleFileErrors.pop()!;
+  for (const err of ruleFileErrors.splice(0).reverse()) {
     findings.push({
       id: "YARA_RULE_PARSE_ERROR",
       title: "Failed to parse YARA rule file metadata",

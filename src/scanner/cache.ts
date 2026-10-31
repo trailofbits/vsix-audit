@@ -1,7 +1,7 @@
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
-import type { Registry } from "./types.js";
+import type { Registry } from "#internal/scanner/types.js";
 
 const APP_NAME = "vsix-audit";
 const CACHE_DIR_ENV_VAR = "VSIX_AUDIT_CACHE_DIR";
@@ -25,7 +25,7 @@ export interface CachedExtension {
  */
 export function getCacheDir(): string {
   const override = process.env[CACHE_DIR_ENV_VAR];
-  if (override) {
+  if (override !== undefined && override !== "") {
     return override;
   }
 
@@ -37,7 +37,7 @@ export function getCacheDir(): string {
 
   // Linux and other Unix-like systems: respect XDG_CACHE_HOME
   const xdgCacheHome = process.env["XDG_CACHE_HOME"];
-  if (xdgCacheHome) {
+  if (xdgCacheHome !== undefined && xdgCacheHome !== "") {
     return join(xdgCacheHome, APP_NAME);
   }
 
@@ -71,7 +71,14 @@ function parseVsixFilename(
   }
 
   const [, publisher, name, version] = match;
-  if (!publisher || !name || !version) {
+  if (
+    publisher === undefined ||
+    publisher === "" ||
+    name === undefined ||
+    name === "" ||
+    version === undefined ||
+    version === ""
+  ) {
     return null;
   }
 
@@ -165,7 +172,7 @@ export async function clearCache(pattern?: string): Promise<number> {
     const extensionId = `${ext.publisher}.${ext.name}`;
 
     // Check if extension matches pattern
-    if (pattern) {
+    if (pattern !== undefined && pattern !== "") {
       // Escape all regex metacharacters except * (which becomes .*)
       const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
       const regexStr = escaped.replace(/\*/g, ".*");

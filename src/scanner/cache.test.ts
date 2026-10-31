@@ -11,7 +11,7 @@ import {
   getCachedVersions,
   isCached,
   listCached,
-} from "./cache.js";
+} from "#internal/scanner/cache.js";
 
 const CACHE_DIR_ENV_VAR = "VSIX_AUDIT_CACHE_DIR";
 
@@ -27,33 +27,22 @@ describe("getCacheDir", () => {
     process.env = originalEnv;
   });
 
-  it("returns macOS cache path on darwin", () => {
-    const os = platform();
-    if (os === "darwin") {
-      const dir = getCacheDir();
-      expect(dir).toBe(join(homedir(), "Library", "Caches", "vsix-audit"));
-    }
+  it.skipIf(platform() !== "darwin")("returns macOS cache path on darwin", () => {
+    expect(getCacheDir()).toBe(join(homedir(), "Library", "Caches", "vsix-audit"));
   });
 
-  it("respects XDG_CACHE_HOME on Linux", () => {
-    const os = platform();
-    if (os === "linux") {
-      process.env["XDG_CACHE_HOME"] = "/custom/cache";
-      // Need to re-import module to pick up env change
-      const dir = getCacheDir();
-      // On actual Linux with XDG set, should use it
-      expect(dir).toContain("vsix-audit");
-    }
+  it.skipIf(platform() !== "linux")("respects XDG_CACHE_HOME on Linux", () => {
+    process.env["XDG_CACHE_HOME"] = "/custom/cache";
+    expect(getCacheDir()).toBe("/custom/cache/vsix-audit");
   });
 
-  it("falls back to ~/.cache on Linux without XDG_CACHE_HOME", () => {
-    const os = platform();
-    if (os === "linux") {
+  it.skipIf(platform() !== "linux")(
+    "falls back to ~/.cache on Linux without XDG_CACHE_HOME",
+    () => {
       delete process.env["XDG_CACHE_HOME"];
-      const dir = getCacheDir();
-      expect(dir).toBe(join(homedir(), ".cache", "vsix-audit"));
-    }
-  });
+      expect(getCacheDir()).toBe(join(homedir(), ".cache", "vsix-audit"));
+    },
+  );
 
   it("returns a path containing vsix-audit", () => {
     const dir = getCacheDir();
