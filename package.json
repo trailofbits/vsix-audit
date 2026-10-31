@@ -30,6 +30,9 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "imports": {
+    "#internal/*": "./dist/*"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
