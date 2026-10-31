@@ -6,9 +6,12 @@ import type {
   Function as FunctionNode,
   ArrowFunctionExpression,
   NewExpression,
+  Node,
+  MemberExpression,
   ParamPattern,
   Program,
   StringLiteral,
+  SpreadElement,
   VisitorObject,
 } from "oxc-parser";
 
@@ -36,12 +39,51 @@ interface Construction {
 /** A statically resolved RegExp construction with source positions for literal embeddings. */
 export interface RegexString {
   pattern: string;
-  flags: string;
+  flags: string | undefined;
   origins: Map<number, number>;
+  flagOrigins: Set<number>;
 }
 
 const MAX_PATTERN_LENGTH = 65_536;
 const MAX_RESOLUTION_DEPTH = 64;
+const GLOBAL_OBJECTS = new Set(["globalThis", "global", "window", "self"]);
+
+function regExpProperty(node: MemberExpression): boolean {
+  if (node.computed) {
+    return node.property.type === "Literal" && node.property.value === "RegExp";
+  }
+  return node.property.type === "Identifier" && node.property.name === "RegExp";
+}
+
+function writesWrappedTarget(node: Node): boolean {
+  if (node.type === "AssignmentPattern") return writesRegExp(node.left);
+  if (node.type === "RestElement") return writesRegExp(node.argument);
+  if (
+    node.type === "TSAsExpression" ||
+    node.type === "TSSatisfiesExpression" ||
+    node.type === "TSNonNullExpression" ||
+    node.type === "TSTypeAssertion"
+  ) {
+    return writesRegExp(node.expression);
+  }
+  return false;
+}
+
+function writesRegExp(node: Node): boolean {
+  if (node.type === "Identifier") return node.name === "RegExp";
+  if (node.type === "ArrayPattern") {
+    return node.elements.some((element) => element !== null && writesRegExp(element));
+  }
+  if (node.type === "ObjectPattern") {
+    return node.properties.some((property) =>
+      writesRegExp(property.type === "RestElement" ? property.argument : property.value),
+    );
+  }
+  if (node.type !== "MemberExpression") return writesWrappedTarget(node);
+  const globalWrite =
+    node.computed && node.object.type === "Identifier" && GLOBAL_OBJECTS.has(node.object.name);
+  return globalWrite || regExpProperty(node);
+}
 
 function lookup(scope: Scope, name: string): Binding | null | undefined {
   let current: Scope | undefined = scope;
@@ -130,17 +172,13 @@ class Constructions {
         this.calls.push({ node, scope: this.scope });
       },
       AssignmentExpression: (node): void => {
-        if (node.left.type === "Identifier" && node.left.name === "RegExp") {
-          this.modifiedBuiltin = true;
-        }
-        if (
-          node.left.type === "MemberExpression" &&
-          !node.left.computed &&
-          node.left.property.type === "Identifier" &&
-          node.left.property.name === "RegExp"
-        ) {
-          this.modifiedBuiltin = true;
-        }
+        if (writesRegExp(node.left)) this.modifiedBuiltin = true;
+      },
+      UpdateExpression: (node): void => {
+        if (writesRegExp(node.argument)) this.modifiedBuiltin = true;
+      },
+      WithStatement: (): void => {
+        this.modifiedBuiltin = true;
       },
     };
   }
@@ -279,6 +317,35 @@ class StringResolver {
   }
 }
 
+function constructionFlags(
+  flags: Expression | SpreadElement | undefined,
+  resolver: StringResolver,
+  scope: Scope,
+): ResolvedString | undefined {
+  if (flags === undefined) return { value: "", origins: new Map<number, number>() };
+  if (flags.type === "SpreadElement") return undefined;
+  return resolver.resolve(flags, scope);
+}
+
+function constructionPattern(
+  { node, scope }: Construction,
+  resolver: StringResolver,
+): RegexString | undefined {
+  if (node.callee.type !== "Identifier") return undefined;
+  if (node.callee.name !== "RegExp" || lookup(scope, "RegExp") !== undefined) return undefined;
+  const [pattern, flags] = node.arguments;
+  if (pattern === undefined || pattern.type === "SpreadElement") return undefined;
+  const resolved = resolver.resolve(pattern, scope);
+  const mode = constructionFlags(flags, resolver, scope);
+  if (resolved === undefined && mode === undefined) return undefined;
+  return {
+    pattern: resolved?.value ?? "",
+    flags: mode?.value,
+    origins: resolved?.origins ?? new Map<number, number>(),
+    flagOrigins: new Set(mode?.origins.values()),
+  };
+}
+
 /** Resolve string literals and const concatenations passed to an unshadowed RegExp. */
 export function regexStrings(program: Program, content: string): RegexString[] {
   const constructions = new Constructions();
@@ -286,21 +353,9 @@ export function regexStrings(program: Program, content: string): RegexString[] {
   if (constructions.modifiedBuiltin) return [];
   const resolver = new StringResolver(content);
   const patterns: RegexString[] = [];
-  for (const { node, scope } of constructions.calls) {
-    if (node.callee.type !== "Identifier" || node.callee.name !== "RegExp") continue;
-    if (lookup(scope, "RegExp") !== undefined) continue;
-    const [pattern, flags] = node.arguments;
-    if (pattern === undefined || pattern.type === "SpreadElement") continue;
-    const resolved = resolver.resolve(pattern, scope);
-    const mode =
-      flags === undefined
-        ? ""
-        : flags.type === "SpreadElement"
-          ? undefined
-          : resolver.resolve(flags, scope)?.value;
-    if (resolved !== undefined && mode !== undefined) {
-      patterns.push({ pattern: resolved.value, flags: mode, origins: resolved.origins });
-    }
+  for (const construction of constructions.calls) {
+    const pattern = constructionPattern(construction, resolver);
+    if (pattern !== undefined) patterns.push(pattern);
   }
   return patterns;
 }

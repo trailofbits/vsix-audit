@@ -26,6 +26,50 @@ const safePatterns = [
 
 describe("BIDI controls in resolved regex constructions", () => {
   it.each([
+    'globalThis["RegExp"] = consume;',
+    'globalThis["Reg" + "Exp"] = consume;',
+    'const key = "RegExp"; globalThis[key] = consume;',
+    'window["RegExp"] = consume;',
+    'global["RegExp"] = consume;',
+    'self["RegExp"] = consume;',
+    'globalThis["RegExp"]++;',
+    "({ RegExp } = replacement);",
+    "[RegExp] = replacement;",
+  ])("retains alerts after builtin mutation: %j", (mutation) => {
+    const pattern = JSON.stringify(Array.from({ length: 6 }, () => `[a-${LRE}]`).join(""));
+    const source = `${mutation} RegExp(${pattern}); eval(payload);`;
+    expect(directionalFindings(source).map((finding) => finding.id)).toEqual(
+      expect.arrayContaining(["BIDI_OVERRIDE", "INVISIBLE_CODE_EXECUTION"]),
+    );
+  });
+
+  it("retains alerts when with changes constructor resolution", () => {
+    const pattern = JSON.stringify(Array.from({ length: 6 }, () => `[a-${LRE}]`).join(""));
+    const source = `with ({ RegExp: consume }) { RegExp(${pattern}); } eval(payload);`;
+    expect(directionalFindings(source).map((finding) => finding.id)).toEqual(
+      expect.arrayContaining(["BIDI_OVERRIDE", "INVISIBLE_CODE_EXECUTION"]),
+    );
+  });
+
+  it.each([
+    'new RegExp("[a-" + endpoint + "]" + endpoint);',
+    'new RegExp(endpoint + "[a-" + endpoint + "]");',
+    'new RegExp("[a-" + endpoint + "]"); new RegExp(endpoint);',
+    'new RegExp(endpoint); new RegExp("[a-" + endpoint + "]");',
+    'new RegExp("[a-" + endpoint + "]"); new RegExp("a", endpoint);',
+    'new RegExp("[a-" + endpoint + "]"); new RegExp("[a-" + endpoint + "]", flags);',
+  ])("retains a reused control with an unsafe expansion: %j", (uses) => {
+    const source = `const endpoint = "${LRE}"; ${uses}`;
+    expect(directionalFindings(source)).toHaveLength(1);
+  });
+
+  it("accepts repeated expansions when every occurrence is a range endpoint", () => {
+    const source = `const endpoint = "${LRE}"; new RegExp("[a-" + endpoint + "]" +
+      "[" + endpoint + "-\\uffff]"); new RegExp("[a-" + endpoint + "]");`;
+    expect(directionalFindings(source)).toEqual([]);
+  });
+
+  it.each([
     `new RegExp("[a-${LRE}]");`,
     `RegExp("[a-${LRE}]", "u");`,
     `const endpoint = "${LRE}"; const pattern = "[a-" + endpoint + "]"; new RegExp(pattern);`,

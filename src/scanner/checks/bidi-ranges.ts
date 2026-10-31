@@ -1,5 +1,6 @@
 import { RegExpParser, visitRegExpAST } from "@eslint-community/regexpp";
 import { parseSync, Visitor } from "oxc-parser";
+import type { Program } from "oxc-parser";
 import { regexStrings } from "#internal/scanner/checks/regex-strings.js";
 
 function patternRangeOffsets(pattern: string, flags: string): Set<number> {
@@ -26,6 +27,34 @@ function patternRangeOffsets(pattern: string, flags: string): Set<number> {
     if (error instanceof SyntaxError) return new Set<number>();
     throw error;
   }
+}
+
+function constructorRangeOffsets(program: Program, content: string): Set<number> {
+  const offsets = new Set<number>();
+  const blocked = new Set<number>();
+  for (const { pattern, flags, origins, flagOrigins } of regexStrings(program, content)) {
+    const ranges = flags === undefined ? new Set<number>() : patternRangeOffsets(pattern, flags);
+    for (const [index, source] of origins) {
+      if (ranges.has(index)) offsets.add(source);
+      else blocked.add(source);
+    }
+    for (const source of flagOrigins) blocked.add(source);
+  }
+  for (const source of blocked) offsets.delete(source);
+  return offsets;
+}
+
+function parsedRangeOffsets(program: Program, content: string): Set<number> {
+  const offsets = constructorRangeOffsets(program, content);
+  new Visitor({
+    Literal(node): void {
+      if (!("regex" in node)) return;
+      for (const index of patternRangeOffsets(node.regex.pattern, node.regex.flags)) {
+        offsets.add(node.start + 1 + index);
+      }
+    },
+  }).visit(program);
+  return offsets;
 }
 
 function warnRangeFailure(filename: string, error: unknown): void {
@@ -56,21 +85,7 @@ export function findLtrRangeOffsets(content: string, filename: string): Set<numb
       showSemanticErrors: true,
     });
     if (parsed.errors.length !== 0) return offsets;
-    new Visitor({
-      Literal(node): void {
-        if (!("regex" in node)) return;
-        for (const index of patternRangeOffsets(node.regex.pattern, node.regex.flags)) {
-          offsets.add(node.start + 1 + index);
-        }
-      },
-    }).visit(parsed.program);
-    for (const { pattern, flags, origins } of regexStrings(parsed.program, content)) {
-      for (const index of patternRangeOffsets(pattern, flags)) {
-        const source = origins.get(index);
-        if (source !== undefined) offsets.add(source);
-      }
-    }
-    return offsets;
+    return parsedRangeOffsets(parsed.program, content);
   } catch (error) {
     warnRangeFailure(filename, error);
     return new Set<number>();

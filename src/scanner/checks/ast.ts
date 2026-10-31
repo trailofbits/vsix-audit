@@ -1,5 +1,5 @@
 import { parseSync, Visitor } from "oxc-parser";
-import type { Argument, CallExpression, NewExpression, Node, Span } from "oxc-parser";
+import type { Argument, CallExpression, NewExpression, Node, OxcError, Span } from "oxc-parser";
 import type { BundlerInfo } from "#internal/scanner/bundler.js";
 import { detectBundler, hasGenuineObfuscation } from "#internal/scanner/bundler.js";
 import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "#internal/scanner/constants.js";
@@ -380,6 +380,30 @@ const AST_PATTERNS: ASTPattern[] = [
   },
 ];
 
+function recordParseRecovery(
+  filename: string,
+  errors: readonly OxcError[],
+  findings: Finding[],
+): void {
+  if (errors.length === 0) return;
+  findings.push({
+    id: "PARSE_FAILURE_AST",
+    title: "AST parse recovery encountered errors",
+    description:
+      "File parsed with recoverable AST errors. " +
+      "AST-based checks may be incomplete for this file, " +
+      "which can hide suspicious control flow.",
+    severity: "low",
+    category: "pattern",
+    location: { file: filename },
+    metadata: {
+      analysisIncomplete: true,
+      errorCount: errors.length,
+      error: errors[0]?.message ?? "Unknown parser error",
+    },
+  });
+}
+
 /**
  * Parse and analyze a JavaScript/TypeScript file for suspicious patterns.
  */
@@ -406,23 +430,7 @@ function analyzeFile(
     sourceType: "unambiguous",
   });
 
-  if (result.errors.length > 0) {
-    findings.push({
-      id: "PARSE_FAILURE_AST",
-      title: "AST parse recovery encountered errors",
-      description:
-        "File parsed with recoverable AST errors. " +
-        "AST-based checks may be incomplete for this file, " +
-        "which can hide suspicious control flow.",
-      severity: "low",
-      category: "pattern",
-      location: { file: filename },
-      metadata: {
-        errorCount: result.errors.length,
-        error: result.errors[0]?.message ?? "Unknown parser error",
-      },
-    });
-  }
+  recordParseRecovery(filename, result.errors, findings);
 
   const bundlerInfo = detectBundler(content, filename, bundlerCache);
   const lineStarts = computeLineStarts(content);
