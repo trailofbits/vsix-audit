@@ -110,6 +110,23 @@ describe("BIDI controls in declared regex modes", () => {
   });
 });
 
+describe("BIDI controls in Unicode-set string fragments", () => {
+  it.each(["", ")|"])("accepts an outer v-mode range after prefix %j", (prefix) => {
+    const pattern = `[[abc]z-${LRE}]`;
+    expect(() => new RegExp(pattern, "v")).not.toThrow();
+    const source = `const fragment = ${JSON.stringify(prefix + pattern)};`;
+    expect(directionalFindings(source)).toEqual([]);
+  });
+
+  it.each([`[[abc]--[${LRE}]]`, `[\\q{a\\-${LRE}}]`])(
+    "retains a v-mode set operand or string member: %j",
+    (pattern) => {
+      expect(() => new RegExp(pattern, "v")).not.toThrow();
+      expect(directionalFindings(`const pattern = ${JSON.stringify(pattern)};`)).toHaveLength(1);
+    },
+  );
+});
+
 describe("BIDI controls outside range data", () => {
   it.each([
     `// [a-${LRE}]`,

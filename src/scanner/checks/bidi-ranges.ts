@@ -4,7 +4,7 @@ import type { RegExpLiteral, StringLiteral } from "oxc-parser";
 
 const LTR_EMBEDDING = /\u202a/g;
 
-function patternRangeOffsets(pattern: string, flags = "u"): Set<number> {
+function patternRangeOffsets(pattern: string, flags: string): Set<number> {
   const offsets = new Set<number>();
   try {
     const parsed = new RegExpParser().parsePattern(pattern, 0, pattern.length, {
@@ -28,33 +28,44 @@ function patternRangeOffsets(pattern: string, flags = "u"): Set<number> {
   }
 }
 
-function collectRangeOffsets(pattern: string, start: number, offsets: Set<number>): void {
+function collectRangeOffsets(
+  pattern: string,
+  start: number,
+  offsets: Set<number>,
+  flags: readonly string[],
+): void {
   if (!pattern.includes("\u202a")) return;
-  for (const flags of ["u", ""]) {
-    for (const offset of patternRangeOffsets(pattern, flags)) offsets.add(start + offset);
+  for (const mode of flags) {
+    for (const offset of patternRangeOffsets(pattern, mode)) offsets.add(start + offset);
   }
 }
 
-function rangeOffsets(pattern: string): Set<number> {
-  const offsets = new Set<number>();
-  let start = -1;
-  for (let i = 0; i < pattern.length; i++) {
-    switch (pattern.charAt(i)) {
-      case "\\":
-        i++;
-        break;
-      case "[":
-        if (start === -1) start = i;
-        break;
-      case "]":
-        if (start !== -1) {
-          collectRangeOffsets(pattern.slice(start, i + 1), start, offsets);
-          start = -1;
-        }
-        break;
-      default:
-        break;
+function findClassEnd(pattern: string, start: number, nested: boolean): number {
+  let depth = 1;
+  for (let i = start + 1; i < pattern.length; i++) {
+    const character = pattern.charAt(i);
+    if (character === "\\") {
+      i++;
+      continue;
     }
+    if (character === "[" && nested) depth++;
+    if (character === "]" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+function rangeOffsets(pattern: string, flags: readonly string[]): Set<number> {
+  const offsets = new Set<number>();
+  for (let i = 0; i < pattern.length; i++) {
+    if (pattern.charAt(i) === "\\") {
+      i++;
+      continue;
+    }
+    if (pattern.charAt(i) !== "[") continue;
+    const end = findClassEnd(pattern, i, flags.includes("v"));
+    if (end === -1) break;
+    collectRangeOffsets(pattern.slice(i, end + 1), i, offsets, flags);
+    i = end;
   }
   return offsets;
 }
@@ -64,7 +75,8 @@ function stringRangeOffsets(node: StringLiteral, content: string): number[] {
   const sourceMatches = Array.from(raw.matchAll(LTR_EMBEDDING));
   const valueMatches = Array.from(node.value.matchAll(LTR_EMBEDDING));
   if (sourceMatches.length !== valueMatches.length) return [];
-  const allowed = rangeOffsets(node.value);
+  const allowed = rangeOffsets(node.value, ["u", ""]);
+  for (const offset of rangeOffsets(node.value, ["v"])) allowed.add(offset);
   const offsets: number[] = [];
   for (const [index, match] of sourceMatches.entries()) {
     const valueMatch = valueMatches[index];
@@ -95,7 +107,7 @@ function warnRangeFailure(filename: string, error: unknown): void {
 }
 
 /**
- * Locate left-to-right embeddings used as regex range endpoints in JS/TS literals.
+ * Locate embeddings used as regex range endpoints in JS/TS string or regex literals.
  *
  * Only U+202A can be exempted. Invalid or ambiguous source retains all alerts.
  * Unexpected parser or traversal failures emit a diagnostic and retain all alerts.
