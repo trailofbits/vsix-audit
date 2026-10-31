@@ -8,11 +8,16 @@ import type {
   Node,
   Span,
 } from "oxc-parser";
-import type { BundlerInfo } from "../bundler.js";
-import { detectBundler, hasGenuineObfuscation } from "../bundler.js";
-import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "../constants.js";
-import type { Finding, Severity, VsixContents } from "../types.js";
-import { computeLineStarts, getStringContent, offsetToColumn, offsetToLine } from "../utils.js";
+import type { BundlerInfo } from "#internal/scanner/bundler.js";
+import { detectBundler, hasGenuineObfuscation } from "#internal/scanner/bundler.js";
+import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "#internal/scanner/constants.js";
+import type { Finding, Severity, VsixContents } from "#internal/scanner/types.js";
+import {
+  computeLineStarts,
+  getStringContent,
+  offsetToColumn,
+  offsetToLine,
+} from "#internal/scanner/utils.js";
 
 interface ASTPattern {
   id: string;
@@ -385,10 +390,9 @@ const AST_PATTERNS: ASTPattern[] = [
 function analyzeFile(
   filename: string,
   content: string,
+  findings: Finding[],
   bundlerCache?: Map<string, BundlerInfo>,
-): Finding[] {
-  const findings: Finding[] = [];
-
+): void {
   // Determine lang from extension
   const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
   const langMap: Record<string, "js" | "jsx" | "ts" | "tsx"> = {
@@ -401,31 +405,10 @@ function analyzeFile(
   };
   const lang = langMap[ext] || "tsx"; // Default to tsx for maximum compatibility
 
-  // Try to parse the file
-  let result;
-  try {
-    result = parseSync(filename, content, {
-      lang,
-      sourceType: "unambiguous",
-    });
-  } catch (error) {
-    findings.push({
-      id: "PARSE_FAILURE_AST",
-      title: "AST parse failure",
-      description:
-        "File could not be parsed for AST analysis. " +
-        "A file that crashes the parser evades all " +
-        "AST-based checks. This may indicate " +
-        "intentional obfuscation or corruption.",
-      severity: "low",
-      category: "pattern",
-      location: { file: filename },
-      metadata: {
-        error: error instanceof Error ? error.message : String(error),
-      },
-    });
-    return findings;
-  }
+  const result = parseSync(filename, content, {
+    lang,
+    sourceType: "unambiguous",
+  });
 
   if (result.errors.length > 0) {
     findings.push({
@@ -515,10 +498,9 @@ function analyzeFile(
   });
 
   visitor.visit(result.program);
-
-  return findings;
 }
 
+/** Analyze script files, reporting parser or traversal failures for each affected file. */
 export function checkAST(contents: VsixContents): Finding[] {
   const findings: Finding[] = [];
 
@@ -539,7 +521,24 @@ export function checkAST(contents: VsixContents): Finding[] {
     const content = getStringContent(contents, filename, buffer);
 
     const bundlerCache = contents.cache as Map<string, BundlerInfo> | undefined;
-    findings.push(...analyzeFile(filename, content, bundlerCache));
+    try {
+      analyzeFile(filename, content, findings, bundlerCache);
+    } catch (error) {
+      findings.push({
+        id: "PARSE_FAILURE_AST",
+        title: "AST analysis failure",
+        description:
+          "AST analysis could not complete for this file. Inspect it manually; " +
+          "structural checks may have missed executable code.",
+        severity: "low",
+        category: "pattern",
+        location: { file: filename },
+        metadata: {
+          analysisIncomplete: true,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
   }
 
   return findings;
