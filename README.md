@@ -139,6 +139,48 @@ npm install -g @trailofbits/vsix-audit
 
 Requires Node.js 22 or later and [YARA-X](https://github.com/VirusTotal/yara-x) for YARA rule scanning.
 
+### Docker
+
+The Docker image includes Node.js, YARA-X, and the bundled detection data. Images support
+Linux amd64 and arm64 and run as the unprivileged `node` user (UID 1000).
+
+Scan a local extension by mounting its directory read-only:
+
+```sh
+docker run --rm \
+  --mount type=bind,src="$(pwd)",dst=/work,readonly \
+  ghcr.io/trailofbits/vsix-audit:main scan ./extension.vsix
+```
+
+Scan a marketplace extension without a local mount:
+
+```sh
+docker run --rm ghcr.io/trailofbits/vsix-audit:main scan ms-python.python
+```
+
+To scan installed extensions, mount the host's extension store and pass its container path:
+
+```sh
+docker run --rm \
+  --mount type=bind,src="$HOME/.vscode/extensions",dst=/extensions,readonly \
+  ghcr.io/trailofbits/vsix-audit:main scan-installed --extensions-dir /extensions
+```
+
+All CLI options are available after the image name. Exit codes are preserved: `0` for no
+findings, `1` for findings, and `2` for an error or required coverage failure. For example,
+append `--output json --strict --require-yara` to produce JSON and require complete coverage.
+For offline local scans, add Docker's `--network none` before the image name.
+
+The `main` tag follows the default branch. Stable releases also publish `latest` and a
+version tag, such as `0.4.0`; prereleases publish only their version tag.
+
+Build and test the image locally:
+
+```sh
+docker build -t vsix-audit:test .
+npm run test:docker
+```
+
 ## Usage
 
 ### Commands
@@ -150,6 +192,37 @@ vsix-audit scan ./extension.vsix
 vsix-audit scan publisher.extension-name
 vsix-audit scan openvsx:publisher/extension-name
 ```
+
+**Scan installed extensions:**
+
+```sh
+vsix-audit scan-installed
+vsix-audit scan-installed --editor cursor
+vsix-audit scan-installed --editor vscode --output json
+vsix-audit scan-installed --extensions-dir ./portable/data/extensions --strict
+```
+
+`scan-installed` scans the default user extension stores for VS Code, VS Code Insiders,
+and Cursor. It reads extension files directly without launching an editor or activating extensions.
+Every version on disk is scanned, including disabled extensions and leftover versions.
+
+| Editor          | Default store                   |
+| --------------- | ------------------------------- |
+| `vscode`        | `~/.vscode/extensions`          |
+| `insiders`      | `~/.vscode-insiders/extensions` |
+| `cursor`        | `~/.cursor/extensions`          |
+| `all` (default) | All three stores that exist     |
+
+On Windows, `~` means the current user's home directory, normally `%USERPROFILE%`.
+Use `--extensions-dir <path>` for custom, portable, or remote extension stores mounted locally,
+including locations set with `VSCODE_EXTENSIONS`. This option cannot be combined with `--editor`.
+Directories reached through multiple symbolic links are scanned once.
+
+The command accepts the output, severity, module, threat-intelligence, profiling, and coverage
+options below, plus `--jobs <n>` (default: 4). JSON results include each directory in
+`metadata.sourcePath`; SARIF findings use absolute file URIs to distinguish editor stores.
+Missing default stores are skipped. An empty inventory, an unreadable store, or any failed
+extension scan returns exit code `2`, including when other extensions scan successfully.
 
 **Download an extension for offline analysis:**
 
@@ -266,6 +339,9 @@ persistent cache in this mode. Use `scan --force` to download fresh and update t
 | 2    | Error during scan |
 
 In `--strict` mode, exit code `2` is also used for degraded scanner coverage. With `--require-yara`, exit code `2` is used when YARA scanning cannot run.
+
+Batch scans return `2` if any target fails, even when other extensions scan successfully or
+have findings.
 
 ## Threat Intelligence
 

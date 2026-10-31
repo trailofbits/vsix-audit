@@ -147,7 +147,7 @@ function findLetterRuns(content: string): SourceLetterRun[] {
     current = [];
   };
 
-  for (let i = 0; i < content.length; ) {
+  for (let i = 0; i < content.length;) {
     const char = decodeSourceChar(content, i);
     if (isTokenLetter(char.decoded)) {
       current.push(char);

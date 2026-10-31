@@ -7,9 +7,20 @@ updates:
     # 7-day delay for supply chain protection
     cooldown:
       default-days: 7
-    # Only update root package.json, not zoo samples
     allow:
-      - dependency-type: "direct"
+      - dependency-type: "all"
+    groups:
+      security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+      dependencies:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: "deps"
     labels:
@@ -22,7 +33,29 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
+    groups:
+      actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: "ci"
     labels:
       - "ci"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      images:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "docker"
+    labels:
+      - "dependencies"

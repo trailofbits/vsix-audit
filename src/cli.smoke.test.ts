@@ -619,3 +619,50 @@ describe("built CLI smoke tests", () => {
     );
   });
 });
+
+describe("recursive scan failures", () => {
+  let root = "";
+
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), "vsix-recursive-errors-"));
+  });
+
+  afterAll(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("returns exit code 2 when a clean archive succeeds and another archive fails", async () => {
+    const directory = join(root, "mixed");
+    await mkdir(directory);
+    await writeFile(
+      join(directory, "clean.vsix"),
+      createDeflatedZip([
+        {
+          name: "extension/package.json",
+          content: JSON.stringify({ name: "clean", publisher: "test", version: "1.0.0" }),
+        },
+      ]),
+    );
+    await writeFile(join(directory, "broken.vsix"), "invalid ZIP");
+    const result = await runCli([
+      "scan",
+      directory,
+      "--recursive",
+      "--module",
+      "manifest",
+      "--output",
+      "json",
+    ]);
+    const batch = JSON.parse(result.stdout) as {
+      summary: { scannedFiles: number; failedFiles: number };
+    };
+    expect(result.status).toBe(2);
+    expect(batch.summary).toMatchObject({ scannedFiles: 1, failedFiles: 1 });
+  });
+
+  it.each(["1.5", "2junk", "0"])("rejects malformed recursive --jobs %s", async (jobs) => {
+    const result = await runCli(["scan", root, "--recursive", "--jobs", jobs]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("positive safe integer");
+  });
+});

@@ -30,12 +30,16 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "imports": {
+    "#internal/*": "./dist/*"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:cli": "npm run build && vitest run --config vitest.cli.config.ts",
+    "test:docker": "node scripts/test-docker.mjs",
     "test:watch": "vitest",
     "lint": "oxlint .",
     "format": "oxfmt --write .",
@@ -48,17 +52,17 @@
     "prepublishOnly": "npm run check && npm run build"
   },
   "dependencies": {
-    "@types/yauzl": "2.10.3",
+    "@types/yauzl": "3.4.0",
     "commander": "14.0.3",
-    "oxc-parser": "0.135.0",
+    "oxc-parser": "0.155.0",
     "picocolors": "1.1.1",
-    "yauzl": "3.3.1"
+    "yauzl": "3.4.0"
   },
   "devDependencies": {
-    "@types/node": "25.9.1",
-    "oxlint": "1.69.0",
+    "@types/node": "26.6.5",
+    "oxlint": "1.89.0",
     "typescript": "6.0.3",
-    "vitest": "4.1.8"
+    "vitest": "5.0.5"
   },
   "engines": {
     "node": ">=22"

@@ -85,6 +85,8 @@ export interface ScanResult {
   metadata: {
     scannedAt: string;
     scanDuration: number;
+    /** Absolute source directory for an installed-extension scan. */
+    sourcePath?: string;
     registry?: Registry;
     intel?: IntelMode;
     timings?: ModuleTimings;

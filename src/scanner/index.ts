@@ -50,7 +50,7 @@ export type {
   Severity,
 };
 export type { BatchScanCallbacks, BatchScanOptions } from "./batch.js";
-export { findVsixFiles, scanDirectory } from "./batch.js";
+export { findVsixFiles, scanDirectory, scanPaths } from "#internal/scanner/batch.js";
 
 const SEVERITY_ORDER: Record<Severity, number> = {
   low: 0,

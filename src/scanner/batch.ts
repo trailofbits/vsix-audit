@@ -1,7 +1,12 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { scanExtension } from "./index.js";
-import type { BatchScanResult, ScanOptions, ScanResult, Severity } from "./types.js";
+import { scanExtension, validateScanOptions } from "#internal/scanner/index.js";
+import type {
+  BatchScanResult,
+  ScanOptions,
+  ScanResult,
+  Severity,
+} from "#internal/scanner/types.js";
 
 export interface BatchScanCallbacks {
   onProgress?: (current: number, total: number, path: string) => void;
@@ -68,6 +73,7 @@ export async function findVsixFiles(dir: string): Promise<string[]> {
   return files.map((f) => f.path);
 }
 
+/** Find VSIX archives recursively and scan them with bounded concurrency. */
 export async function scanDirectory(
   dir: string,
   options: ScanOptions,
@@ -75,38 +81,69 @@ export async function scanDirectory(
   batchOptions?: BatchScanOptions,
 ): Promise<BatchScanResult> {
   const startTime = Date.now();
-  const concurrency = batchOptions?.concurrency ?? 4;
-
   const dirStat = await stat(dir).catch(() => null);
   if (!dirStat?.isDirectory()) {
     throw new Error(`Not a directory: ${dir}`);
   }
 
   const vsixFiles = await findVsixFiles(dir);
+  const batch = await scanPaths(vsixFiles, options, callbacks, batchOptions);
+  batch.summary.scanDuration = Date.now() - startTime;
+  return batch;
+}
+
+/**
+ * Scan explicit extension paths with bounded concurrency and deterministic result order.
+ *
+ * Records scan failures alongside successful results so callers can report partial batches.
+ */
+export async function scanPaths(
+  paths: string[],
+  options: ScanOptions,
+  callbacks?: BatchScanCallbacks,
+  batchOptions?: BatchScanOptions,
+): Promise<BatchScanResult> {
+  const startTime = Date.now();
+  const concurrency = batchOptions?.concurrency ?? 4;
+  const handlers = callbacks ?? {};
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
+    throw new Error(
+      `Scan concurrency must be a positive safe integer, received ${String(concurrency)}.`,
+    );
+  }
+  validateScanOptions(options);
 
   let completed = 0;
   const resultsByIndex = new Map<number, ScanResult>();
   const errorsByIndex = new Map<number, { path: string; error: string }>();
 
-  await runWithConcurrency(vsixFiles, concurrency, async (filePath, index) => {
+  await runWithConcurrency(paths, concurrency, async (filePath, index) => {
     try {
       const result = await scanExtension(filePath, options);
       resultsByIndex.set(index, result);
-      callbacks?.onResult?.(filePath, result);
+      handlers.onResult?.(filePath, result);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       errorsByIndex.set(index, { path: filePath, error: errorMsg });
-      callbacks?.onError?.(filePath, errorMsg);
+      handlers.onError?.(filePath, errorMsg);
     } finally {
       // Call progress AFTER completion with accurate count
-      callbacks?.onProgress?.(++completed, vsixFiles.length, filePath);
+      handlers.onProgress?.(++completed, paths.length, filePath);
     }
   });
+  return summarizeBatch(paths, resultsByIndex, errorsByIndex, startTime);
+}
 
+function summarizeBatch(
+  paths: string[],
+  resultsByIndex: Map<number, ScanResult>,
+  errorsByIndex: Map<number, { path: string; error: string }>,
+  startTime: number,
+): BatchScanResult {
   // Collect results in original file order for deterministic summary
   const results: ScanResult[] = [];
   const errors: Array<{ path: string; error: string }> = [];
-  for (let i = 0; i < vsixFiles.length; i++) {
+  for (let i = 0; i < paths.length; i++) {
     const result = resultsByIndex.get(i);
     if (result) results.push(result);
     const error = errorsByIndex.get(i);
@@ -132,7 +169,7 @@ export async function scanDirectory(
     results,
     errors,
     summary: {
-      totalFiles: vsixFiles.length,
+      totalFiles: paths.length,
       scannedFiles: results.length,
       failedFiles: errors.length,
       totalFindings,
