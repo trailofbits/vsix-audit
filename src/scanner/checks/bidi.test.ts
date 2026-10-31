@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { checkObfuscation } from "#internal/scanner/checks/obfuscation.js";
 import type { Finding, VsixContents } from "#internal/scanner/types.js";
 
@@ -55,6 +55,42 @@ describe("BIDI controls in regex data", () => {
       location: { line: 2, column: 4 },
       metadata: { matchCount: 1 },
     });
+  });
+});
+
+describe("BIDI controls in declared regex modes", () => {
+  it.each([
+    ["", `[\\_-${LRE}]`],
+    ["u", `[a-${LRE}]`],
+    ["v", `[[a-${LRE}]]`],
+    ["v", `[[a-${LRE}]&&[\\s\\S]]`],
+    ["v", `[\\q{ab}[a-${LRE}]]`],
+  ])("accepts an actual range endpoint in /%s mode: %j", (flags, pattern) => {
+    expect(() => new RegExp(pattern, flags)).not.toThrow();
+    expect(directionalFindings(`const pattern = /${pattern}/${flags};`)).toEqual([]);
+  });
+
+  it.each([`[a--${LRE}]`, `[${LRE}--a]`, `[\\q{a\\-${LRE}}]`])(
+    "retains alerts for Unicode set operands and string members: %j",
+    (pattern) => {
+      expect(() => new RegExp(pattern, "v")).not.toThrow();
+      expect(directionalFindings(`const pattern = /${pattern}/v;`)).toHaveLength(1);
+    },
+  );
+
+  it("retains alerts and reports a diagnostic when traversal exceeds its stack limit", () => {
+    const warning = vi.spyOn(process, "emitWarning").mockImplementation(() => {});
+    try {
+      const expression = Array.from({ length: 20_000 }, () => "1").join("+");
+      const source = `const value = ${expression}; // ${LRE}`;
+      expect(directionalFindings(source)).toHaveLength(1);
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining('BIDI range analysis failed for "extension.js"'),
+        { code: "BIDI_RANGE_ANALYSIS_FAILED" },
+      );
+    } finally {
+      warning.mockRestore();
+    }
   });
 });
 

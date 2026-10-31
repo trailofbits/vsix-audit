@@ -52,6 +52,7 @@
     "prepublishOnly": "npm run check && npm run build"
   },
   "dependencies": {
+    "@eslint-community/regexpp": "4.12.2",
     "@types/yauzl": "3.4.0",
     "commander": "14.0.3",
     "oxc-parser": "0.155.0",
