@@ -79,6 +79,13 @@ Detects obfuscation techniques used to hide malicious intent.
 
 JavaScript obfuscation patterns (hex variables, `fromCharCode` arrays, eval+decode, packers) are now detected via YARA rules for better accuracy.
 
+The Unicode check exempts U+202A only at validated range endpoints in regex literals and
+at one known KaTeX lexer position in the exact Markdown All in One 3.6.3 source bundle.
+The KaTeX exception requires the full source SHA-256 and character offset recorded in
+`bidi-ranges.ts`; any source edit invalidates it. Other regex constructor strings remain
+reportable. The [fixture provenance](src/scanner/checks/fixtures/README.md) documents the
+verified artifact and offline regression fixture.
+
 ### YARA Rules (`yara.ts`)
 
 External YARA-X engine for complex pattern matching. Rules loaded from `zoo/signatures/yara/`. Requires `yr` CLI (`brew install yara-x`).

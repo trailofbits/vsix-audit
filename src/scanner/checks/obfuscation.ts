@@ -476,7 +476,7 @@ function checkUnicodeHiding(contents: VsixContents): Finding[] {
     if (!isScannable(filename, SCANNABLE_EXTENSIONS_UNICODE)) continue;
 
     const content = getStringContent(contents, filename, buffer);
-    const rangeOffsets = findLtrRangeOffsets(content, filename);
+    const rangeOffsets = findLtrRangeOffsets(buffer, filename);
     const bundlerInfo = detectBundler(
       content,
       filename,
