@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { basename } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
 import { registerInstalledCommand } from "#internal/scan-installed.js";
@@ -40,7 +41,7 @@ const REGISTRIES: Registry[] = ["marketplace", "openvsx", "cursor"];
 
 interface CliScanOptions extends CommonScanOptions {
   allRegistries?: boolean;
-  noCache?: boolean;
+  cache?: boolean;
   force?: boolean;
   recursive?: boolean;
   jobs?: string;
@@ -48,7 +49,7 @@ interface CliScanOptions extends CommonScanOptions {
 
 interface CliDownloadOptions {
   output?: string;
-  noCache?: boolean;
+  cache?: boolean;
   force?: boolean;
 }
 
@@ -125,7 +126,7 @@ function createScanContext(options: CliScanOptions): ScanContext {
   const machineOutput = scanOptions.output !== "text";
   return {
     options: scanOptions,
-    useCache: options.noCache !== true,
+    useCache: options.cache !== false,
     forceDownload: options.force === true,
     statusStream: machineOutput ? process.stderr : process.stdout,
     statusLog: (...args) => {
@@ -135,14 +136,23 @@ function createScanContext(options: CliScanOptions): ScanContext {
   };
 }
 
-async function downloadScanTarget(extensionId: string, context: ScanContext): Promise<string> {
-  const downloaded = await downloadExtension(extensionId, {
-    useCache: context.useCache,
-    forceDownload: context.forceDownload,
-  });
-  const message = downloaded.fromCache === true ? "✓ Using cached" : "✓ Downloaded";
-  context.statusLog(pc.green(message), pc.dim(downloaded.path));
-  return downloaded.path;
+async function scanDownloadedExtension(
+  extensionId: string,
+  context: ScanContext,
+): Promise<ScanResult> {
+  const tempDir = context.useCache ? undefined : await mkdtemp(join(tmpdir(), "vsix-audit-scan-"));
+  try {
+    const downloaded = await downloadExtension(extensionId, {
+      useCache: context.useCache,
+      forceDownload: context.forceDownload,
+      ...(tempDir === undefined ? {} : { destDir: tempDir }),
+    });
+    const message = downloaded.fromCache === true ? "✓ Using cached" : "✓ Downloaded";
+    context.statusLog(pc.green(message), pc.dim(downloaded.path));
+    return await scanExtension(downloaded.path, context.options);
+  } finally {
+    if (tempDir !== undefined) await rm(tempDir, { recursive: true, force: true });
+  }
 }
 
 async function scanAllRegistries(
@@ -154,8 +164,7 @@ async function scanAllRegistries(
   for (const registry of REGISTRIES) {
     try {
       context.statusLog(pc.cyan(`Downloading from ${registry}:`), baseId);
-      const path = await downloadScanTarget(`${registry}:${baseId}`, context);
-      const result = await scanExtension(path, context.options);
+      const result = await scanDownloadedExtension(`${registry}:${baseId}`, context);
       result.metadata = { ...result.metadata, registry };
       results.push(result);
     } catch (error) {
@@ -225,13 +234,12 @@ async function scanRecursive(
 }
 
 async function scanSingle(target: CliTarget, context: ScanContext): Promise<number> {
-  let path: string;
+  let result: ScanResult;
   if (target.kind === "extension-id") {
     context.statusLog(pc.cyan("Downloading:"), target.extensionId);
-    path = await downloadScanTarget(target.extensionId, context);
+    result = await scanDownloadedExtension(target.extensionId, context);
     context.statusLog();
-  } else path = target.path;
-  const result = await scanExtension(path, context.options);
+  } else result = await scanExtension(target.path, context.options);
   outputResult(result, context.options.output, VERSION);
   if (hasCoverageExitFailure(result, context.options)) return 2;
   return result.findings.length > 0 ? 1 : 0;
@@ -270,7 +278,7 @@ configureScanOptions(
     ),
 )
   .option("--all-registries", "Scan from all registries (Marketplace + OpenVSX + Cursor)")
-  .option("--no-cache", "Bypass cache, download fresh")
+  .option("--no-cache", "Download fresh without reading or writing the cache")
   .option("--force", "Re-download even if cached")
   .option("-r, --recursive", "Recursively scan all .vsix files in a directory")
   .option("-j, --jobs <n>", "Number of parallel scans (default: 4)", "4")
@@ -292,12 +300,12 @@ cli
     "<extension-id>",
     "Extension ID (e.g., ms-python.python, ms-python/python, or ms-python.python@2024.1.0)",
   )
-  .option("-o, --output <dir>", "Also copy to this directory (in addition to cache)")
-  .option("--no-cache", "Bypass cache, download fresh")
+  .option("-o, --output <dir>", "Directory to save the downloaded extension")
+  .option("--no-cache", "Download fresh without reading or writing the cache")
   .option("--force", "Re-download even if cached")
   .action(async (extensionId: string, options: CliDownloadOptions) => {
     try {
-      const useCache = options.noCache !== true;
+      const useCache = options.cache !== false;
       const forceDownload = options.force === true;
 
       console.log(pc.cyan("Downloading:"), extensionId);

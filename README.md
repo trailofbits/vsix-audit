@@ -317,6 +317,13 @@ vsix-audit scan --no-cache ms-python.python
 vsix-audit cache clear ms-python.*
 ```
 
+`scan --no-cache` downloads to a temporary directory and removes it when the scan
+finishes or fails. `download --no-cache` saves the VSIX to the current directory,
+or to the directory selected with `--output`. Neither command reads or writes the
+persistent cache in this mode. Use `scan --force` to download fresh and update the cache.
+New downloads replace the destination after the transfer completes, so an interrupted
+transfer preserves an existing file.
+
 ### Output Formats
 
 **Text** (default) - Human-readable report for terminal output.

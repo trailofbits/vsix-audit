@@ -1,10 +1,11 @@
+import type { ScanResult } from "#internal/scanner/types.js";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { deflateRawSync } from "node:zlib";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..");
@@ -93,14 +94,18 @@ function createDeflatedZip(files: Array<{ name: string; content: string }>): Buf
   return Buffer.concat(chunks);
 }
 
-async function runCli(args: string[]): Promise<CliResult> {
+async function runCli(
+  args: string[],
+  options: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
+): Promise<CliResult> {
   return await new Promise((resolvePromise, reject) => {
     const env: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" };
     delete env["VSIX_AUDIT_ZOO_PATH"];
     delete env["VSIX_AUDIT_CACHE_DIR"];
+    Object.assign(env, options.env);
 
     const child = spawn(process.execPath, [CLI_PATH, ...args], {
-      cwd: REPO_ROOT,
+      cwd: options.cwd ?? REPO_ROOT,
       env,
     });
 
@@ -120,6 +125,238 @@ async function runCli(args: string[]): Promise<CliResult> {
     });
   });
 }
+
+describe("CLI cache options", () => {
+  let testDir: string;
+  let cacheDir: string;
+  let scanTempDir: string;
+  let downloadDir: string;
+  let payloadPath: string;
+  let env: NodeJS.ProcessEnv;
+  const filename = "test.extension-1.0.0.vsix";
+  const registries = ["marketplace", "openvsx", "cursor"];
+
+  beforeEach(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "vsix-audit-cli-cache-"));
+    cacheDir = join(testDir, "cache");
+    scanTempDir = join(testDir, "scan-temp");
+    downloadDir = join(testDir, "downloads");
+    payloadPath = join(testDir, "payload.vsix");
+    await mkdir(scanTempDir);
+    await mkdir(downloadDir);
+    for (const registry of registries) {
+      await mkdir(join(cacheDir, registry), { recursive: true });
+      await writeFile(join(cacheDir, registry, filename), "existing cached VSIX");
+    }
+    await writeFile(
+      payloadPath,
+      createDeflatedZip([
+        {
+          name: "extension/package.json",
+          content: JSON.stringify({ name: "extension", publisher: "test", version: "1.0.0" }),
+        },
+      ]),
+    );
+
+    const mockPath = join(testDir, "registry.mjs");
+    await writeFile(
+      mockPath,
+      `import { readFileSync } from "node:fs";
+globalThis.fetch = async (input) => {
+  const url = new URL(input);
+  if (url.pathname.endsWith("/extensionquery")) {
+    return Response.json({ results: [{ extensions: [{
+      publisher: { publisherName: "test" }, extensionName: "extension",
+      versions: [{ version: "1.0.0", lastUpdated: "2026-10-30T00:00:00Z", files: [] }]
+    }] }] });
+  }
+  if (url.href === "https://open-vsx.org/api/test/extension") {
+    return Response.json({ namespace: "test", name: "extension", version: "1.0.0" });
+  }
+  if (!url.pathname.endsWith(".vsix") && !url.pathname.endsWith("/VSIXPackage") &&
+      !url.pathname.endsWith("/Microsoft.VisualStudio.Services.VSIXPackage") &&
+      !url.pathname.endsWith("/vspackage")) {
+    throw new Error("Unexpected request: " + url);
+  }
+  if (process.env["VSIX_AUDIT_TEST_DOWNLOAD_FAILURE"]) {
+    return new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        setTimeout(() => controller.error(new Error("Download interrupted")), 20);
+      }
+    }));
+  }
+  return new Response(readFileSync(process.env["VSIX_AUDIT_TEST_PAYLOAD"]));
+};
+`,
+    );
+    env = {
+      NODE_OPTIONS: `--import=${pathToFileURL(mockPath).href}`,
+      VSIX_AUDIT_CACHE_DIR: cacheDir,
+      VSIX_AUDIT_TEST_PAYLOAD: payloadPath,
+      TMPDIR: scanTempDir,
+      TMP: scanTempDir,
+      TEMP: scanTempDir,
+    };
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  async function expectCacheUnchanged(): Promise<void> {
+    expect(await readdir(cacheDir)).toEqual([...registries].sort());
+    for (const registry of registries) {
+      expect(await readdir(join(cacheDir, registry))).toEqual([filename]);
+      expect(await readFile(join(cacheDir, registry, filename), "utf8")).toBe(
+        "existing cached VSIX",
+      );
+    }
+  }
+
+  it("scans a fresh download and removes temporary files", async () => {
+    const result = await runCli(
+      ["scan", "openvsx:test.extension", "--no-cache", "--output", "json", "--module", "manifest"],
+      { env },
+    );
+
+    expect(result.status).toBe(0);
+    expect((JSON.parse(result.stdout) as ScanResult).findings).toEqual([]);
+    expect(result.stderr).not.toContain("Using cached");
+    expect(await readdir(scanTempDir)).toEqual([]);
+    await expectCacheUnchanged();
+  });
+
+  it("cleans up a temporary download when scanning fails", async () => {
+    await writeFile(payloadPath, "invalid VSIX");
+
+    const result = await runCli(["scan", "openvsx:test.extension", "--no-cache"], { env });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Error:");
+    expect(await readdir(scanTempDir)).toEqual([]);
+    await expectCacheUnchanged();
+  });
+
+  it("removes temporary files when a scan reports findings", async () => {
+    await writeFile(
+      payloadPath,
+      createDeflatedZip([
+        {
+          name: "extension/package.json",
+          content: JSON.stringify({
+            name: "extension",
+            publisher: "test",
+            version: "1.0.0",
+            activationEvents: ["*"],
+          }),
+        },
+      ]),
+    );
+
+    const result = await runCli(
+      ["scan", "openvsx:test.extension", "--no-cache", "--output", "json", "--module", "manifest"],
+      { env },
+    );
+
+    expect(result.status).toBe(1);
+    expect((JSON.parse(result.stdout) as ScanResult).findings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "ACTIVATION_WILDCARD" })]),
+    );
+    expect(await readdir(scanTempDir)).toEqual([]);
+    await expectCacheUnchanged();
+  });
+
+  it("cleans up a partial download when the network stream fails", async () => {
+    const result = await runCli(["scan", "openvsx:test.extension", "--no-cache"], {
+      env: { ...env, VSIX_AUDIT_TEST_DOWNLOAD_FAILURE: "1" },
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Download interrupted");
+    expect(await readdir(scanTempDir)).toEqual([]);
+    await expectCacheUnchanged();
+  });
+
+  it("bypasses the cache and cleans up downloads from all registries", async () => {
+    const result = await runCli(
+      [
+        "scan",
+        "test.extension",
+        "--all-registries",
+        "--no-cache",
+        "--output",
+        "json",
+        "--module",
+        "manifest",
+      ],
+      { env },
+    );
+
+    expect(result.status).toBe(0);
+    expect(
+      (JSON.parse(result.stdout) as ScanResult[]).map((scan) => scan.metadata.registry),
+    ).toEqual(registries);
+    expect(result.stderr).toContain("Downloading from marketplace:");
+    expect(result.stderr).toContain("Downloading from openvsx:");
+    expect(result.stderr).toContain("Downloading from cursor:");
+    expect(result.stderr).not.toContain("Using cached");
+    expect(await readdir(scanTempDir)).toEqual([]);
+    await expectCacheUnchanged();
+  });
+
+  it.each([false, true])(
+    "keeps an uncached download with explicit output=%s",
+    async (explicitOutput) => {
+      await writeFile(join(downloadDir, filename), "existing local VSIX");
+      const args = ["download", "openvsx:test.extension", "--no-cache"];
+      if (explicitOutput) args.push("--output", downloadDir);
+
+      const result = await runCli(args, { cwd: explicitOutput ? testDir : downloadDir, env });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).not.toContain("Using cached");
+      expect(await readFile(join(downloadDir, filename))).toEqual(await readFile(payloadPath));
+      expect(await readdir(downloadDir)).toEqual([filename]);
+      expect(await readdir(scanTempDir)).toEqual([]);
+      await expectCacheUnchanged();
+    },
+  );
+
+  it.each([false, true])(
+    "preserves an existing VSIX after a failed uncached download with explicit output=%s",
+    async (explicitOutput) => {
+      const destination = join(downloadDir, filename);
+      const original = await readFile(payloadPath);
+      await writeFile(destination, original);
+      const args = ["download", "openvsx:test.extension", "--no-cache"];
+      if (explicitOutput) args.push("--output", downloadDir);
+
+      const result = await runCli(args, {
+        cwd: explicitOutput ? testDir : downloadDir,
+        env: { ...env, VSIX_AUDIT_TEST_DOWNLOAD_FAILURE: "1" },
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("Download interrupted");
+      expect(await readFile(destination)).toEqual(original);
+      expect(await readdir(downloadDir)).toEqual([filename]);
+      expect(await readdir(scanTempDir)).toEqual([]);
+      await expectCacheUnchanged();
+    },
+  );
+
+  it("keeps --force downloads in the persistent cache", async () => {
+    const result = await runCli(["download", "openvsx:test.extension", "--force"], { env });
+
+    expect(result.status).toBe(0);
+    expect(await readFile(join(cacheDir, "openvsx", filename))).toEqual(
+      await readFile(payloadPath),
+    );
+    expect(await readdir(scanTempDir)).toEqual([]);
+    expect(await readdir(downloadDir)).toEqual([]);
+  });
+});
 
 describe("built CLI smoke tests", () => {
   let tempRoot = "";

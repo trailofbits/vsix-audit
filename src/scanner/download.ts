@@ -1,8 +1,8 @@
 import { createWriteStream } from "node:fs";
-import { copyFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import {
   ensureCacheDir,
   evictStaleEntries,
@@ -419,7 +419,7 @@ export function getCursorDownloadUrl(publisher: string, name: string, version: s
 const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
 
 /**
- * Download a VSIX from a URL with size limit enforcement.
+ * Download a size-limited VSIX and replace the destination after completion.
  */
 async function downloadVsixFromUrl(url: string, destPath: string): Promise<void> {
   const response = await fetch(url);
@@ -442,32 +442,36 @@ async function downloadVsixFromUrl(url: string, destPath: string): Promise<void>
 
   await mkdir(dirname(destPath), { recursive: true });
 
-  // Stream with byte counter to enforce limit
-  let bytesWritten = 0;
-  const nodeStream = Readable.fromWeb(response.body);
-  const fileStream = createWriteStream(destPath);
+  const tempDir = await mkdtemp(join(dirname(destPath), ".vsix-audit-download-"));
+  const tempPath = join(tempDir, "download.part");
+  try {
+    let bytesWritten = 0;
+    const nodeStream = Readable.fromWeb(response.body);
+    const fileStream = createWriteStream(tempPath);
+    const limiter = new Transform({
+      transform(chunk: Buffer, _encoding, callback): void {
+        bytesWritten += chunk.length;
+        if (bytesWritten > MAX_DOWNLOAD_BYTES) {
+          callback(
+            new Error(
+              `Download exceeded ${MAX_DOWNLOAD_BYTES} ` + `byte limit at ${bytesWritten} bytes`,
+            ),
+          );
+          return;
+        }
+        callback(null, chunk);
+      },
+    });
 
-  const { Transform } = await import("node:stream");
-  const limiter = new Transform({
-    transform(chunk: Buffer, _encoding, callback): void {
-      bytesWritten += chunk.length;
-      if (bytesWritten > MAX_DOWNLOAD_BYTES) {
-        callback(
-          new Error(
-            `Download exceeded ${MAX_DOWNLOAD_BYTES} ` + `byte limit at ${bytesWritten} bytes`,
-          ),
-        );
-        return;
-      }
-      callback(null, chunk);
-    },
-  });
-
-  await pipeline(nodeStream, limiter, fileStream);
+    await pipeline(nodeStream, limiter, fileStream);
+    await rename(tempPath, destPath);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 }
 
 /**
- * Download a VSIX from the marketplace
+ * Download a VSIX, replacing the destination only after the transfer succeeds.
  */
 export async function downloadVsix(
   publisher: string,
@@ -490,6 +494,7 @@ export async function downloadVsix(
 
 /**
  * Download an extension from the VS Code Marketplace or OpenVSX
+ * Uncached downloads without a destDir are saved in the current directory.
  *
  * @param extensionId - Extension ID in format "publisher.name", "publisher/name", with optional "@version",
  *                      or with registry prefix: "openvsx:publisher.name", "marketplace:publisher/name"
@@ -514,10 +519,18 @@ export async function downloadExtension(
     metadata = await queryExtension(publisher, name, version);
   }
 
-  // If destDir is explicitly provided, download directly there (bypasses cache)
-  if (options?.destDir !== undefined && options.destDir !== "") {
+  // Uncached downloads need a lasting destination unless the caller supplies
+  // a temporary directory and owns its cleanup, as the scan command does.
+  const requestedDir = options?.destDir;
+  const destDir =
+    requestedDir !== undefined && requestedDir !== ""
+      ? requestedDir
+      : useCache
+        ? undefined
+        : process.cwd();
+  if (destDir !== undefined) {
     const filename = `${metadata.publisher}.${metadata.name}-${metadata.version}.vsix`;
-    const destPath = join(options.destDir, filename);
+    const destPath = join(destDir, filename);
 
     // Check cache first if enabled
     if (useCache && !forceDownload) {
@@ -531,7 +544,7 @@ export async function downloadExtension(
 
       if (cached) {
         // Copy from cache to destination
-        await mkdir(options.destDir, { recursive: true });
+        await mkdir(destDir, { recursive: true });
         await copyFile(cachedPath, destPath);
         return { path: destPath, metadata, fromCache: true };
       }
