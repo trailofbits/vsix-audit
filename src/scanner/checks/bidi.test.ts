@@ -26,6 +26,42 @@ const safePatterns = [
 
 describe("BIDI controls in resolved regex constructions", () => {
   it.each([
+    "let root = globalThis; root.RegExp = consume;",
+    "var root = globalThis; root.RegExp = consume;",
+    "var root = globalThis; var root; root.RegExp = consume;",
+    "var root = globalThis; function root() {} root.RegExp = consume;",
+    "function update(root = globalThis) { root.RegExp = consume; } update();",
+    "let { root = globalThis } = {}; root.RegExp = consume;",
+    "let root; root = globalThis; root.RegExp = consume;",
+    "let root = {}; root = globalThis; root.RegExp = consume;",
+    "let root = globalThis; const alias = root; alias.RegExp = consume;",
+    "let root = globalThis; function update() { root.RegExp = consume; } update();",
+    "function update() { root.RegExp = consume; } var root = globalThis; update();",
+    "function update(root) { root = globalThis; root.RegExp = consume; } update({});",
+  ])("retains controls after observed mutable global aliases: %j", (mutation) => {
+    const source = `${mutation} RegExp("[a-${LRE}]");`;
+    expect(directionalFindings(source)).toHaveLength(1);
+  });
+
+  it.each([
+    "let root = {}; root.RegExp = consume;",
+    "var root = {}; root.RegExp = consume;",
+    "let root; root = {}; root.RegExp = consume;",
+    "{ const globalThis = {}; var root = globalThis; } root.RegExp = consume;",
+  ])("accepts ranges after mutable local writes: %j", (mutation) => {
+    expect(directionalFindings(`${mutation} new RegExp("[a-${LRE}]");`)).toEqual([]);
+  });
+
+  it("bounds repeated paths through a mutable alias graph", () => {
+    const source = ["let node0 = {};"];
+    for (let index = 1; index <= 100; index++) {
+      source.push(`let node${index} = node${index - 1}; node${index} = node${index - 1};`);
+    }
+    source.push(`node100.RegExp = consume; new RegExp("[a-${LRE}]");`);
+    expect(directionalFindings(source.join(""))).toEqual([]);
+  });
+
+  it.each([
     "(globalThis as typeof globalThis).RegExp = consume;",
     "(globalThis satisfies typeof globalThis).RegExp = consume;",
     "globalThis!.RegExp = consume;",

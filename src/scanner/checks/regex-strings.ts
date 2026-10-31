@@ -21,9 +21,16 @@ interface Scope {
   bindings: Map<string, Binding | null>;
 }
 
-interface Binding {
+interface BindingValue {
   expression: Expression;
   scope: Scope;
+}
+
+interface Binding {
+  expression: Expression | undefined;
+  scope: Scope;
+  constant: boolean;
+  values: BindingValue[];
 }
 
 interface ResolvedString {
@@ -69,14 +76,23 @@ function regExpProperty(node: MemberExpression, scope: Scope, resolver: StringRe
   return resolved === undefined || resolved.value === "RegExp";
 }
 
-function globalReceiver(node: Expression, scope: Scope, active = new Set<Binding>()): boolean {
-  const expression = unwrapTypeExpression(node);
-  if (expression.type !== "Identifier") return false;
-  const binding = lookup(scope, expression.name);
-  if (binding === undefined) return GLOBAL_OBJECTS.has(expression.name);
-  if (binding === null || active.has(binding)) return false;
-  active.add(binding);
-  return globalReceiver(binding.expression, binding.scope, active);
+function globalReceiver(node: Expression, scope: Scope): boolean {
+  const pending: BindingValue[] = [{ expression: node, scope }];
+  const seen = new Set<Binding>();
+  let candidate: BindingValue | undefined;
+  while ((candidate = pending.pop()) !== undefined) {
+    const expression = unwrapTypeExpression(candidate.expression);
+    if (expression.type !== "Identifier") continue;
+    const binding = lookup(candidate.scope, expression.name);
+    if (binding === undefined) {
+      if (GLOBAL_OBJECTS.has(expression.name)) return true;
+      continue;
+    }
+    if (binding === null || seen.has(binding)) continue;
+    seen.add(binding);
+    for (const value of binding.values) pending.push(value);
+  }
+  return false;
 }
 
 function writesWrappedTarget(node: Node, scope: Scope, resolver: StringResolver): boolean {
@@ -108,13 +124,27 @@ function writesRegExp(node: Node, scope: Scope, resolver: StringResolver): boole
   return regExpProperty(node, scope, resolver) && globalReceiver(node.object, scope);
 }
 
+function bindingScope(scope: Scope, name: string): Scope {
+  let current = scope;
+  while (!current.bindings.has(name) && current.parent !== undefined) current = current.parent;
+  return current;
+}
+
 function lookup(scope: Scope, name: string): Binding | null | undefined {
-  let current: Scope | undefined = scope;
-  while (current !== undefined) {
-    if (current.bindings.has(name)) return current.bindings.get(name);
-    current = current.parent;
-  }
-  return undefined;
+  return bindingScope(scope, name).bindings.get(name);
+}
+
+function makeBinding(expression: Expression | undefined, scope: Scope, constant = false): Binding {
+  return {
+    expression,
+    scope,
+    constant,
+    values: expression === undefined ? [] : [{ expression, scope }],
+  };
+}
+
+function declareName(scope: Scope, name: string): void {
+  if (!scope.bindings.has(name)) scope.bindings.set(name, null);
 }
 
 function declarePattern(scope: Scope, pattern: BindingPattern | ParamPattern): void {
@@ -124,6 +154,9 @@ function declarePattern(scope: Scope, pattern: BindingPattern | ParamPattern): v
       break;
     case "AssignmentPattern":
       declarePattern(scope, pattern.left);
+      if (pattern.left.type === "Identifier") {
+        scope.bindings.set(pattern.left.name, makeBinding(pattern.right, scope));
+      }
       break;
     case "RestElement":
       declarePattern(scope, pattern.argument);
@@ -148,6 +181,7 @@ class Constructions {
   scope: Scope = { parent: undefined, functionScope: true, bindings: new Map() };
   calls: Construction[] = [];
   writes: Array<{ node: Node; scope: Scope }> = [];
+  assignments: Array<{ node: Node; value: Expression; scope: Scope }> = [];
   modifiedBuiltin = false;
 
   enter(functionScope = false): void {
@@ -161,12 +195,12 @@ class Constructions {
   enterFunction(node: FunctionNode | ArrowFunctionExpression, declaration = false): void {
     if (declaration && node.id !== null) {
       let scope = this.scope;
-      scope.bindings.set(node.id.name, null);
+      declareName(scope, node.id.name);
       while (!scope.functionScope && scope.parent !== undefined) scope = scope.parent;
-      scope.bindings.set(node.id.name, null);
+      declareName(scope, node.id.name);
     }
     this.enter(true);
-    if (node.id !== null) this.scope.bindings.set(node.id.name, null);
+    if (node.id !== null) declareName(this.scope, node.id.name);
     for (const parameter of node.params) declarePattern(this.scope, parameter);
   }
 
@@ -178,10 +212,17 @@ class Constructions {
           scope = scope.parent;
         }
         for (const declaration of node.declarations) {
-          if (node.kind === "const" && declaration.id.type === "Identifier") {
-            const binding =
-              declaration.init === null ? null : { expression: declaration.init, scope };
-            scope.bindings.set(declaration.id.name, binding);
+          if (declaration.id.type === "Identifier") {
+            const binding = makeBinding(
+              declaration.init ?? undefined,
+              this.scope,
+              node.kind === "const",
+            );
+            const previous = scope.bindings.get(declaration.id.name);
+            if (node.kind === "var" && previous !== undefined && previous !== null) {
+              previous.constant = false;
+              for (const value of binding.values) previous.values.push(value);
+            } else scope.bindings.set(declaration.id.name, binding);
           } else declarePattern(scope, declaration.id);
         }
       },
@@ -197,6 +238,7 @@ class Constructions {
       },
       AssignmentExpression: (node): void => {
         this.writes.push({ node: node.left, scope: this.scope });
+        this.assignments.push({ node: node.left, value: node.right, scope: this.scope });
       },
       UpdateExpression: (node): void => {
         this.writes.push({ node: node.argument, scope: this.scope });
@@ -283,7 +325,7 @@ class Constructions {
         this.exit();
       },
       ClassDeclaration: (node): void => {
-        if (node.id !== null) this.scope.bindings.set(node.id.name, null);
+        if (node.id !== null) declareName(this.scope, node.id.name);
         this.enter();
       },
       "ClassDeclaration:exit": (): void => {
@@ -291,7 +333,7 @@ class Constructions {
       },
       ClassExpression: (node): void => {
         this.enter();
-        if (node.id !== null) this.scope.bindings.set(node.id.name, null);
+        if (node.id !== null) declareName(this.scope, node.id.name);
       },
       "ClassExpression:exit": (): void => {
         this.exit();
@@ -343,7 +385,14 @@ class StringResolver {
   }
 
   private binding(binding: Binding | null | undefined, depth: number): ResolvedString | undefined {
-    if (binding === undefined || binding === null || this.active.has(binding)) return undefined;
+    if (
+      binding === undefined ||
+      binding === null ||
+      !binding.constant ||
+      binding.expression === undefined ||
+      this.active.has(binding)
+    )
+      return undefined;
     if (this.cache.has(binding)) return this.cache.get(binding);
     this.active.add(binding);
     const result = this.resolve(binding.expression, binding.scope, depth + 1);
@@ -383,11 +432,28 @@ function constructionPattern(
   };
 }
 
+function recordGlobalAliases(constructions: Constructions): void {
+  for (const assignment of constructions.assignments) {
+    const target = unwrapTypeExpression(assignment.node);
+    if (target.type !== "Identifier") continue;
+    const scope = bindingScope(assignment.scope, target.name);
+    let binding = scope.bindings.get(target.name);
+    if (binding === undefined && GLOBAL_OBJECTS.has(target.name)) continue;
+    if (binding === undefined || binding === null) {
+      binding = makeBinding(undefined, scope);
+      scope.bindings.set(target.name, binding);
+    }
+    binding.constant = false;
+    binding.values.push({ expression: assignment.value, scope: assignment.scope });
+  }
+}
+
 /** Resolve string literals and const concatenations passed to an unshadowed RegExp. */
 export function regexStrings(program: Program, content: string): RegexString[] {
   const constructions = new Constructions();
   new Visitor(constructions.visitor()).visit(program);
   if (constructions.modifiedBuiltin) return [];
+  recordGlobalAliases(constructions);
   const resolver = new StringResolver(content);
   if (constructions.writes.some(({ node, scope }) => writesRegExp(node, scope, resolver)))
     return [];
