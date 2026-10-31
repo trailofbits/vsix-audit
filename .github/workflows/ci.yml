@@ -23,8 +23,14 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Audit dependencies
+        run: npm audit --package-lock-only --audit-level=low
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Verify package signatures
+        run: npm audit signatures
 
       - name: Typecheck
         run: npm run typecheck
@@ -34,3 +40,6 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Test CLI
+        run: npm run test:cli
