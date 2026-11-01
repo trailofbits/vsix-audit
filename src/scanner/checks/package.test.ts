@@ -1,3 +1,7 @@
+import {
+  makeContents as extensionContents,
+  makeZooData as emptyZooData,
+} from "#internal/test-support/fixtures.js";
 import { describe, expect, it } from "vitest";
 import type {
   BlocklistEntry,
@@ -31,21 +35,10 @@ function makeContents(
   manifestOverrides: Partial<VsixManifest> = {},
   extraFiles: Record<string, string> = {},
 ): VsixContents {
-  const manifest: VsixManifest = {
-    name: "test-extension",
-    publisher: "test",
-    version: "1.0.0",
-    ...packageJsonContent,
-    ...manifestOverrides,
-  };
-
-  const files = new Map<string, Buffer>();
-  files.set("package.json", Buffer.from(makePackageJson(packageJsonContent), "utf8"));
-  for (const [filename, content] of Object.entries(extraFiles)) {
-    files.set(filename, Buffer.from(content, "utf8"));
-  }
-
-  return { manifest, files, basePath: "/test" };
+  return extensionContents(
+    { "package.json": makePackageJson(packageJsonContent), ...extraFiles },
+    { ...packageJsonContent, ...manifestOverrides },
+  );
 }
 
 function makeVersionAdvisory(
@@ -79,18 +72,10 @@ function makeZooData(
   maliciousPackages: string[] = [],
   maliciousVersionAdvisories: MaliciousNpmVersionAdvisory[] = [],
 ): ZooData {
-  return {
-    blocklist: [],
-    hashes: new Set(),
-    domains: new Set(),
-    ips: new Set(),
+  return emptyZooData({
     maliciousNpmPackages: new Set(maliciousPackages.map((p) => p.toLowerCase())),
     maliciousNpmVersions: makeAdvisoryMap(maliciousVersionAdvisories),
-    wallets: new Set(),
-    blockchainAllowlist: new Set(),
-    telemetryServices: new Map(),
-    githubC2Accounts: new Set(),
-  };
+  });
 }
 
 // --- Blocklist checks ---

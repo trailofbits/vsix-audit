@@ -1,13 +1,12 @@
-import { spawn } from "node:child_process";
+import { runCli, type CliResult } from "#internal/test-support/cli.js";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { BatchScanResult } from "#internal/scanner/types.js";
 import type { toSarifCombined } from "#internal/formatters.js";
 
-const CLI_PATH = fileURLToPath(new URL("../dist/index.js", import.meta.url));
 const COMMON = ["--output", "json", "--module", "manifest"];
 let home = "";
 
@@ -19,41 +18,15 @@ afterEach(async () => {
   await rm(home, { recursive: true, force: true });
 });
 
-interface CliResult {
-  status: number | null;
-  stdout: string;
-  stderr: string;
-}
-
-function runCli(args: string[], overrides: NodeJS.ProcessEnv = {}): Promise<CliResult> {
-  return new Promise((resolvePromise, reject) => {
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
+function installedCli(args: string[], env: NodeJS.ProcessEnv = {}): Promise<CliResult> {
+  return runCli(["scan-installed", ...args], {
+    env: {
       HOME: home,
       USERPROFILE: home,
-      NO_COLOR: "1",
       VSCODE_EXTENSIONS: "",
       VSCODE_PORTABLE: "",
-      ...overrides,
-    };
-    delete env["FORCE_COLOR"];
-    delete env["VSIX_AUDIT_ZOO_PATH"];
-    delete env["VSIX_AUDIT_CACHE_DIR"];
-    const child = spawn(process.execPath, [CLI_PATH, "scan-installed", ...args], { env });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
-    child.on("error", reject);
-    child.on("close", (status) => {
-      resolvePromise({ status, stdout, stderr });
-    });
+      ...env,
+    },
   });
 }
 
@@ -79,7 +52,7 @@ async function extension(
 
 describe("installed scan command", () => {
   it("documents editor selection, custom paths, and shared scan controls", async () => {
-    const result = await runCli(["--help"]);
+    const result = await installedCli(["--help"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("--editor");
     expect(result.stdout).toContain("--extensions-dir");
@@ -92,7 +65,7 @@ describe("installed scan command", () => {
     for (const directory of [".vscode", ".vscode-insiders", ".cursor"]) {
       paths.push(await extension(join(home, directory, "extensions")));
     }
-    const result = await runCli(COMMON);
+    const result = await installedCli(COMMON);
     const batch = JSON.parse(result.stdout) as BatchScanResult;
 
     expect(result.status).toBe(0);
@@ -109,7 +82,14 @@ describe("installed scan command", () => {
   it("restricts scanning to the chosen editor", async () => {
     await extension(join(home, ".vscode", "extensions"), "suspicious", "eval(code);");
     const cursor = await extension(join(home, ".cursor", "extensions"));
-    const result = await runCli(["--editor", "cursor", "--module", "ast", "--output", "json"]);
+    const result = await installedCli([
+      "--editor",
+      "cursor",
+      "--module",
+      "ast",
+      "--output",
+      "json",
+    ]);
     const batch = JSON.parse(result.stdout) as BatchScanResult;
 
     expect(result.status).toBe(0);
@@ -119,7 +99,7 @@ describe("installed scan command", () => {
   it("accepts a custom directory containing spaces", async () => {
     const store = join(home, "custom extensions");
     const installed = await extension(store);
-    const result = await runCli(["--extensions-dir", store, ...COMMON]);
+    const result = await installedCli(["--extensions-dir", store, ...COMMON]);
     const batch = JSON.parse(result.stdout) as BatchScanResult;
     expect(result.status).toBe(0);
     expect(batch.results[0]?.metadata.sourcePath).toBe(installed);
@@ -129,7 +109,7 @@ describe("installed scan command", () => {
 describe("installed finding reports", () => {
   it("shows requested timing data for a clean extension", async () => {
     await extension(join(home, ".vscode", "extensions"));
-    const result = await runCli(["--module", "ast", "--profile"]);
+    const result = await installedCli(["--module", "ast", "--profile"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Module timings:");
   });
@@ -139,7 +119,7 @@ describe("installed finding reports", () => {
     for (let index = 0; index < 120; index++) {
       await extension(store, `extension-${index}`, "eval(code);");
     }
-    const result = await runCli(["--module", "ast", "--output", "json"]);
+    const result = await installedCli(["--module", "ast", "--output", "json"]);
     expect(result.status).toBe(1);
     expect(result.stdout.length).toBeGreaterThan(65_536);
     expect((JSON.parse(result.stdout) as BatchScanResult).results).toHaveLength(120);
@@ -147,7 +127,7 @@ describe("installed finding reports", () => {
 
   it("returns findings and preserves the intelligence selection", async () => {
     await extension(join(home, ".vscode", "extensions"), "suspicious", "eval(code);");
-    const result = await runCli(["--module", "ast", "--output", "json", "--no-threat-intel"]);
+    const result = await installedCli(["--module", "ast", "--output", "json", "--no-threat-intel"]);
     const batch = JSON.parse(result.stdout) as BatchScanResult;
     expect(result.status).toBe(1);
     expect(batch.results[0]?.findings.map((finding) => finding.id)).toContain("AST_EVAL_DYNAMIC");
@@ -159,7 +139,7 @@ describe("installed finding reports", () => {
     for (const directory of [".vscode", ".cursor"]) {
       paths.push(await extension(join(home, directory, "extensions"), "same", "eval(code);"));
     }
-    const result = await runCli(["--module", "ast", "--output", "sarif"]);
+    const result = await installedCli(["--module", "ast", "--output", "sarif"]);
     const sarif = JSON.parse(result.stdout) as ReturnType<typeof toSarifCombined>;
     const uris = sarif.runs.map(
       (run) => run.results[0]?.locations[0]?.physicalLocation.artifactLocation.uri,
@@ -175,7 +155,7 @@ describe("installed finding reports", () => {
 
   it("prints the installed path alongside text findings", async () => {
     const path = await extension(join(home, ".cursor", "extensions"), "same", "eval(code);");
-    const result = await runCli(["--module", "ast"]);
+    const result = await installedCli(["--module", "ast"]);
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(path);
     expect(result.stdout).toContain("eval()");
@@ -188,7 +168,7 @@ describe("installed discovery reports", () => {
     const healthy = await extension(store);
     const broken = join(store, "test.broken-1.0.0");
     await symlink(join(home, "missing"), broken, "junction");
-    const result = await runCli(COMMON);
+    const result = await installedCli(COMMON);
     const batch = JSON.parse(result.stdout) as BatchScanResult;
     expect(result.status).toBe(2);
     expect(batch.summary).toMatchObject({ totalFiles: 2, scannedFiles: 1, failedFiles: 1 });
@@ -201,7 +181,7 @@ describe("installed discovery reports", () => {
     const store = join(home, ".vscode", "extensions");
     await extension(store);
     await symlink(join(home, "missing"), join(store, "test.broken-1.0.0"), "junction");
-    const result = await runCli(["--module", "manifest", "--output", "sarif"]);
+    const result = await installedCli(["--module", "manifest", "--output", "sarif"]);
     const sarif = JSON.parse(result.stdout) as ReturnType<typeof toSarifCombined>;
     expect(result.status).toBe(2);
     expect(sarif.runs).toHaveLength(2);
@@ -214,7 +194,7 @@ describe("installed discovery reports", () => {
     const healthy = await extension(store);
     const broken = join(store, "test.broken-1.0.0");
     await symlink(join(home, "missing"), broken, "junction");
-    const result = await runCli(["--module", "manifest"]);
+    const result = await installedCli(["--module", "manifest"]);
     expect(result.status).toBe(2);
     expect(result.stdout).toContain(healthy);
     expect(result.stdout).toContain(broken);
@@ -223,7 +203,7 @@ describe("installed discovery reports", () => {
 
   it("retains YARA coverage diagnostics in SARIF after severity filtering", async () => {
     await extension(join(home, ".vscode", "extensions"));
-    const result = await runCli(
+    const result = await installedCli(
       ["--module", "yara", "--output", "sarif", "--severity", "critical", "--strict"],
       { PATH: "" },
     );
@@ -236,7 +216,7 @@ describe("installed discovery reports", () => {
 
   it("emits structured output when every discovery target fails", async () => {
     const missing = join(home, "missing");
-    const result = await runCli(["--extensions-dir", missing, ...COMMON]);
+    const result = await installedCli(["--extensions-dir", missing, ...COMMON]);
     const batch = JSON.parse(result.stdout) as BatchScanResult;
     expect(result.status).toBe(2);
     expect(batch.results).toEqual([]);
@@ -246,7 +226,7 @@ describe("installed discovery reports", () => {
 
   it("escapes malicious paths on stderr while keeping JSON lossless", async () => {
     const missing = join(home, "bad\x1b[2J\x1b[8m\rstore");
-    const result = await runCli(["--extensions-dir", missing, ...COMMON]);
+    const result = await installedCli(["--extensions-dir", missing, ...COMMON]);
     expect(result.status).toBe(2);
     expect(result.stderr).not.toContain("\x1b");
     expect(result.stderr).not.toContain("\r");
@@ -258,7 +238,7 @@ describe("installed discovery reports", () => {
 describe("installed scan failures", () => {
   it("explains strict coverage failures with high severity filters", async () => {
     await extension(join(home, ".vscode", "extensions"));
-    const result = await runCli(["--module", "yara", "--strict", "--severity", "critical"], {
+    const result = await installedCli(["--module", "yara", "--strict", "--severity", "critical"], {
       PATH: "",
     });
     expect(result.status).toBe(2);
@@ -271,7 +251,7 @@ describe("installed scan failures", () => {
     await extension(store);
     const broken = join(store, "test.broken-1.0.0");
     await mkdir(broken);
-    const result = await runCli(COMMON);
+    const result = await installedCli(COMMON);
     const batch = JSON.parse(result.stdout) as BatchScanResult;
     expect(result.status).toBe(2);
     expect(batch.summary).toMatchObject({ scannedFiles: 1, failedFiles: 1 });
@@ -282,7 +262,7 @@ describe("installed scan failures", () => {
     const store = join(home, ".vscode", "extensions");
     await extension(store, "suspicious", "eval(code);");
     await mkdir(join(store, "test.broken-1.0.0"));
-    const result = await runCli(["--module", "ast", "--output", "json"]);
+    const result = await installedCli(["--module", "ast", "--output", "json"]);
     const batch = JSON.parse(result.stdout) as BatchScanResult;
     expect(result.status).toBe(2);
     expect(batch.summary.totalFindings).toBeGreaterThan(0);
@@ -292,7 +272,7 @@ describe("installed scan failures", () => {
   it("reports failed extension paths when all scans fail in SARIF", async () => {
     const broken = join(home, ".vscode", "extensions", "test.broken-1.0.0");
     await mkdir(broken, { recursive: true });
-    const result = await runCli(["--module", "manifest", "--output", "sarif"]);
+    const result = await installedCli(["--module", "manifest", "--output", "sarif"]);
     const sarif = JSON.parse(result.stdout) as ReturnType<typeof toSarifCombined>;
     expect(result.status).toBe(2);
     expect(sarif.runs[0]?.invocations?.[0]?.executionSuccessful).toBe(false);
@@ -303,7 +283,7 @@ describe("installed scan failures", () => {
 
   it.each(["--strict", "--require-yara"])("honors %s when YARA is unavailable", async (flag) => {
     await extension(join(home, ".vscode", "extensions"));
-    const result = await runCli(["--module", "yara", "--output", "json", flag], { PATH: "" });
+    const result = await installedCli(["--module", "yara", "--output", "json", flag], { PATH: "" });
     const batch = JSON.parse(result.stdout) as BatchScanResult;
     expect(result.status).toBe(2);
     expect(batch.results[0]?.metadata.coverage.incompleteModules).toContain("yara");
@@ -312,13 +292,13 @@ describe("installed scan failures", () => {
 
 describe("installed scan argument validation", () => {
   it("rejects an unexpected positional target", async () => {
-    const result = await runCli(["some.publisher"]);
+    const result = await installedCli(["some.publisher"]);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("too many arguments");
   });
 
   it("reports no installed extensions with an actionable error", async () => {
-    const result = await runCli(COMMON);
+    const result = await installedCli(COMMON);
     expect(result.status).toBe(2);
     expect((JSON.parse(result.stdout) as BatchScanResult).errors).toHaveLength(1);
     expect(result.stderr).toContain("No installed extensions found");
@@ -328,20 +308,20 @@ describe("installed scan argument validation", () => {
   it.each(["0", "-1", "1.5", "2junk", "9007199254740992"])(
     "rejects invalid --jobs %s",
     async (jobs) => {
-      const result = await runCli(["--jobs", jobs]);
+      const result = await installedCli(["--jobs", jobs]);
       expect(result.status).toBe(2);
       expect(result.stderr).toContain("positive safe integer");
     },
   );
 
   it("rejects an unknown editor", async () => {
-    const result = await runCli(["--editor", "unknown"]);
+    const result = await installedCli(["--editor", "unknown"]);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("Allowed choices");
   });
 
   it("rejects an editor combined with a custom directory", async () => {
-    const result = await runCli(["--editor", "vscode", "--extensions-dir", home]);
+    const result = await installedCli(["--editor", "vscode", "--extensions-dir", home]);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("cannot be used with");
   });
@@ -352,7 +332,7 @@ describe("installed scan argument validation", () => {
     ["--severity", "urgent", "Invalid severity"],
     ["--threat-intel", "remote", "Invalid intel mode"],
   ])("validates the shared %s control", async (flag, value, message) => {
-    const result = await runCli([flag, value]);
+    const result = await installedCli([flag, value]);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain(message);
   });
@@ -363,7 +343,9 @@ describe("installed scope reporting", () => {
     const store = join(home, "configured");
     const installed = await extension(store);
     await extension(join(home, ".vscode", "extensions"));
-    const result = await runCli(["--editor", "vscode", ...COMMON], { VSCODE_EXTENSIONS: store });
+    const result = await installedCli(["--editor", "vscode", ...COMMON], {
+      VSCODE_EXTENSIONS: store,
+    });
     const batch = JSON.parse(result.stdout) as BatchScanResult;
     expect(result.status).toBe(0);
     expect(result.stderr).toContain(store);
@@ -375,7 +357,7 @@ describe("installed scope reporting", () => {
   it("records configured roots in SARIF", async () => {
     const store = join(home, "configured");
     await extension(store);
-    const result = await runCli(
+    const result = await installedCli(
       ["--editor", "vscode", "--module", "manifest", "--output", "sarif"],
       {
         VSCODE_EXTENSIONS: store,
@@ -389,7 +371,7 @@ describe("installed scope reporting", () => {
   it("shows configured roots and scope in text", async () => {
     const store = join(home, "configured");
     await extension(store);
-    const result = await runCli(["--editor", "vscode", "--module", "manifest"], {
+    const result = await installedCli(["--editor", "vscode", "--module", "manifest"], {
       VSCODE_EXTENSIONS: store,
     });
     expect(result.status).toBe(0);

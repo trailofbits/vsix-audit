@@ -1,22 +1,18 @@
-import type { Finding } from "#internal/scanner/types.js";
-
-/**
- * Capability extraction from scanner findings.
- *
- * Aggregates findings into high-level capability buckets for quick
- * understanding of what an extension can do.
- */
+import type { Finding, Observation, ScanResult } from "#internal/scanner/types.js";
 
 export interface Evidence {
   file: string;
-  line?: number | undefined;
-  matched?: string | undefined;
+  line: number;
+  column: number;
+  matched: string;
 }
 
 export interface CapabilityInfo {
   detected: boolean;
   summary: string[];
   evidence: Evidence[];
+  /** Detector signals remain available without being promoted into observed API calls. */
+  indicators: Finding[];
 }
 
 export interface Capabilities {
@@ -27,34 +23,32 @@ export interface Capabilities {
   obfuscation: CapabilityInfo;
 }
 
-/** Aggregate detector-declared capabilities without interpreting finding identifiers. */
-export function extractCapabilities(findings: Finding[]): Capabilities {
+/** Summarize source observations separately from security-detector indicators. */
+export function extractCapabilities(
+  result: Pick<ScanResult, "observations" | "findings">,
+): Capabilities {
   return {
-    network: buildCapabilityInfo(findings, "network"),
-    execution: buildCapabilityInfo(findings, "execution"),
-    fileAccess: buildCapabilityInfo(findings, "fileAccess"),
-    credentials: buildCapabilityInfo(findings, "credentials"),
-    obfuscation: buildCapabilityInfo(findings, "obfuscation"),
+    network: buildCapabilityInfo(result, "network"),
+    execution: buildCapabilityInfo(result, "execution"),
+    fileAccess: buildCapabilityInfo(result, "fileAccess"),
+    credentials: buildCapabilityInfo(result, "credentials"),
+    obfuscation: buildCapabilityInfo(result, "obfuscation"),
   };
 }
 
-function buildCapabilityInfo(findings: Finding[], capability: keyof Capabilities): CapabilityInfo {
-  const matching = findings.filter(
-    (finding) => finding.capabilities?.includes(capability) === true,
-  );
-  const evidence: Evidence[] = [];
-  for (const finding of matching) {
-    if (finding.location === undefined) continue;
-    const matched = finding.metadata?.matched ?? finding.metadata?.["codeSnippet"];
-    evidence.push({
-      ...finding.location,
-      ...(typeof matched === "string" && matched !== "" ? { matched } : {}),
-    });
-    if (evidence.length === 10) break;
-  }
+function evidence(observation: Observation): Evidence {
+  return { ...observation.location, matched: observation.snippet };
+}
+
+function buildCapabilityInfo(
+  result: Pick<ScanResult, "observations" | "findings">,
+  capability: keyof Capabilities,
+): CapabilityInfo {
+  const matching = result.observations.filter((item) => item.capability === capability);
   return {
     detected: matching.length > 0,
-    summary: [...new Set(matching.map((finding) => finding.title))],
-    evidence,
+    summary: [...new Set(matching.map((item) => `${item.kind}: ${item.api}`))],
+    evidence: matching.map(evidence),
+    indicators: result.findings.filter((item) => item.capabilities?.includes(capability) === true),
   };
 }

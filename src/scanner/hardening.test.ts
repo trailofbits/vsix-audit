@@ -1,7 +1,7 @@
 import { rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deflateRawSync } from "node:zlib";
+import { crc32, deflateRawSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { scanExtension } from "#internal/scanner/index.js";
 import type { ScanOptions } from "#internal/scanner/types.js";
@@ -14,17 +14,6 @@ interface ZipFileSpec {
   content: string;
   spoofedCompressedSize?: number;
   spoofedUncompressedSize?: number;
-}
-
-function crc32(data: Buffer): number {
-  let crc = 0xffffffff;
-  for (const byte of data) {
-    crc ^= byte;
-    for (let i = 0; i < 8; i++) {
-      crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0;
 }
 
 function createZip(files: ZipFileSpec[]): Buffer {

@@ -1,73 +1,63 @@
 import { describe, expect, it } from "vitest";
-import { extractCapabilities } from "#internal/scanner/capabilities.js";
+import { extractCapabilities, type Capabilities } from "#internal/scanner/capabilities.js";
 import { checkAST } from "#internal/scanner/checks/ast.js";
 import { checkWallets } from "#internal/scanner/checks/ioc.js";
-import { CAPABILITY_NAMES } from "#internal/scanner/types.js";
+import { makeContents } from "#internal/test-support/fixtures.js";
 
-describe("explicit finding capabilities", () => {
+function capabilities(source: string): Capabilities {
+  const result = checkAST(makeContents({ "main.js": source }));
+  return extractCapabilities({
+    findings: result.findings,
+    observations: result.observations ?? [],
+  });
+}
+
+describe("capability evidence", () => {
   it.each([
-    [false, "CRYPTO_WALLET_DETECTED"],
-    [true, "KNOWN_MALWARE_WALLET"],
-  ] as const)("keeps public wallet indicators separate from credential access: %s", (known, id) => {
-    const wallet = "0x1234567890abcdef1234567890abcdef12345678";
-    const findings = checkWallets(
-      {
-        manifest: { name: "fixture", version: "1.0.0" },
-        basePath: "/fixture",
-        files: new Map([["main.js", Buffer.from(`const address = "${wallet}";`)]]),
-      },
-      new Set(known ? [wallet] : []),
+    ['fetch("https://example.invalid");', "network", "global.fetch"],
+    ['require("fs").readFileSync("/tmp/cache");', "fileAccess", "fs.readFileSync"],
+    ["new Function(payload);", "execution", "global.Function"],
+    ['require("keytar").getPassword("service", "account");', "credentials", "keytar.getPassword"],
+  ] as const)("summarizes actual source observations: %s", (source, capability, api) => {
+    const result = capabilities(source)[capability];
+    expect(result.detected).toBe(true);
+    expect(result.summary.join(" ")).toContain(api);
+    expect(result.evidence).toContainEqual(
+      expect.objectContaining({
+        file: "main.js",
+        line: 1,
+        column: expect.any(Number) as unknown,
+        matched: expect.stringContaining("(") as unknown,
+      }),
     );
-    expect(findings.map((finding) => finding.id)).toContain(id);
-    expect(extractCapabilities(findings).credentials.detected).toBe(false);
   });
 
-  it("includes Function construction in execution evidence", () => {
-    const result = checkAST({
-      manifest: { name: "fixture", version: "1.0.0" },
-      basePath: "/fixture",
-      files: new Map([["main.js", Buffer.from("new Function(payload);")]]),
-    });
-    expect(extractCapabilities(result.findings).execution).toMatchObject({
-      detected: true,
-      evidence: [{ file: "main.js" }],
-    });
-  });
-
-  it.each(CAPABILITY_NAMES)(
-    "uses an explicit %s capability regardless of finding name",
-    (capability) => {
-      const findings = [
-        {
-          id: "UNRELATED_NAME",
-          title: "Observed behavior",
-          description: "Fixture",
-          severity: "high" as const,
-          category: "fixture",
-          capabilities: [capability],
-          location: { file: "main.js", line: 3 },
-          metadata: { matched: "evidence" },
-        },
-      ];
-      expect(extractCapabilities(findings)[capability]).toEqual({
-        detected: true,
-        summary: ["Observed behavior"],
-        evidence: [{ file: "main.js", line: 3, matched: "evidence" }],
+  it.each([false, true])(
+    "keeps public wallet references separate from credential access: %s",
+    (known) => {
+      const wallet = "0x1234567890abcdef1234567890abcdef12345678";
+      const findings = checkWallets(
+        makeContents({ "main.js": `const address = "${wallet}";` }),
+        new Set(known ? [wallet] : []),
+      );
+      expect(findings).toHaveLength(1);
+      expect(extractCapabilities({ findings, observations: [] }).credentials).toEqual({
+        detected: false,
+        summary: [],
+        evidence: [],
+        indicators: [],
       });
     },
   );
 
-  it("does not infer behavior from incidental words in an identifier", () => {
-    expect(
-      extractCapabilities([
-        {
-          id: "NETWORK_EXEC_SSH",
-          title: "Fixture",
-          description: "Fixture",
-          severity: "low",
-          category: "fixture",
-        },
-      ]).execution.detected,
-    ).toBe(false);
+  it("does not discard evidence after the tenth occurrence", () => {
+    const result = capabilities(
+      Array.from({ length: 12 }, (_, n) => `eval(payload${n});`).join("\n"),
+    );
+    expect(result.execution.evidence).toHaveLength(12);
+    expect(result.execution.evidence.at(-1)).toMatchObject({
+      line: 12,
+      matched: "eval(payload11)",
+    });
   });
 });

@@ -401,14 +401,11 @@ cli
       }
 
       const contents = await loadExtension(infoTarget);
-      // Run scanner to get findings for capability extraction
       const scanResult = await scanExtension(infoTarget, {
         output: "text",
         severity: "low",
       });
-      const capabilities = extractCapabilities(scanResult.findings);
-
-      printExtensionInfo(contents, capabilities, options.verbose ?? false);
+      printExtensionInfo(contents, scanResult, options.verbose ?? false);
     } catch (error) {
       printError(error);
       process.exit(2);
@@ -455,11 +452,7 @@ function printManifestInfo(manifest: VsixContents["manifest"]): void {
   }
 }
 
-function printExtensionInfo(
-  contents: VsixContents,
-  capabilities: Capabilities,
-  verbose: boolean,
-): void {
+function printExtensionInfo(contents: VsixContents, result: ScanResult, verbose: boolean): void {
   const { manifest } = contents;
   console.log();
   console.log(
@@ -475,7 +468,10 @@ function printExtensionInfo(
   // Capabilities section
   console.log();
   console.log(pc.dim("── Capabilities ") + pc.dim("─".repeat(34)));
-  printCapabilities(capabilities, verbose);
+  printCapabilities(extractCapabilities(result), verbose);
+  for (const warning of result.metadata.coverage.warnings) {
+    console.log(pc.yellow(`Coverage: ${terminalText(warning)}`));
+  }
 
   printManifestInfo(manifest);
 
@@ -505,17 +501,24 @@ function printCapabilities(capabilities: Capabilities, verbose: boolean): void {
   for (const [label, key] of capEntries) {
     const cap = capabilities[key];
     const icon = cap.detected ? pc.green("✓") : pc.dim("✗");
-    const summary = cap.detected ? terminalText(cap.summary.join(", ")) : pc.dim("None detected");
+    const summary = cap.detected
+      ? terminalText(cap.summary.join(", "))
+      : pc.dim("No source observations");
     console.log(`${label.padEnd(16)}${icon} ${summary}`);
 
     if (verbose && cap.detected) printCapabilityEvidence(cap.evidence);
+    if (cap.indicators.length > 0) {
+      console.log(
+        `                  Indicators: ${terminalText(cap.indicators.map((item) => item.title).join(", "))}`,
+      );
+    }
   }
 }
 
 function printCapabilityEvidence(evidence: Capabilities["network"]["evidence"]): void {
   for (const ev of evidence.slice(0, 5)) {
-    const loc = ev.line !== undefined && ev.line > 0 ? `${ev.file}:${ev.line}` : ev.file;
-    const excerpt = ev.matched?.slice(0, 40) ?? "";
+    const loc = `${ev.file}:${ev.line}:${ev.column}`;
+    const excerpt = ev.matched.slice(0, 40);
     const matched = excerpt === "" ? "" : pc.dim(` (${terminalText(excerpt)})`);
     console.log(`                  ${pc.dim("└")} ${pc.dim(terminalText(loc))}${matched}`);
   }

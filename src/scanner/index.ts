@@ -25,6 +25,7 @@ import type {
   CheckResult,
   CoverageMetadata,
   Finding,
+  Observation,
   ModuleTimings,
   OutputFormat,
   ScanOptions,
@@ -117,6 +118,8 @@ function deduplicateFindings(findings: Finding[]): Finding[] {
       finding.id,
       finding.location?.file ?? "",
       finding.location?.line ?? "",
+      finding.location?.column ?? "",
+      finding.location?.byteOffset ?? "",
       findingEvidenceFingerprint(finding),
     ].join(":");
     if (!seen.has(key)) {
@@ -377,6 +380,7 @@ export async function scanExtension(
   const zooData = intelMode === "none" ? removeThreatIntel(loadedZooData) : loadedZooData;
 
   let findings: Finding[] = [];
+  const observations: Observation[] = [];
   const inventory: CheckSummary[] = [];
   const coverageWarnings: string[] = nativeCoverageWarnings(contents);
   const incompleteModules: ModuleName[] = [];
@@ -392,6 +396,7 @@ export async function scanExtension(
     const start = performance.now();
     const result = await mod.run(contents, zooData, repositoryCheck);
     findings.push(...result.findings);
+    for (const observation of result.observations ?? []) observations.push(observation);
     coverageWarnings.push(...result.warnings);
     if (result.warnings.length > 0) incompleteModules.push(mod.name);
     timings[mod.name] = performance.now() - start;
@@ -412,6 +417,7 @@ export async function scanExtension(
   return {
     extension: extensionMetadata(contents.manifest),
     findings,
+    observations,
     inventory,
     metadata: {
       scannedAt: new Date().toISOString(),

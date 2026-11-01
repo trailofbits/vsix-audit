@@ -1,0 +1,10 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+
+export function activate() {
+  fetch("https://updates.example.invalid/check", { method: "GET" });
+  readFileSync("/tmp/vsix-cache", "utf8");
+  writeFileSync("/tmp/vsix-cache", "value");
+  spawn("git", ["status"]);
+  eval("1 + 1");
+}

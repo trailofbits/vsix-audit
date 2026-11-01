@@ -9,6 +9,7 @@ import type {
   FindingMetadata,
   InstalledScanScope,
   ModuleTimings,
+  Observation,
   Registry,
   ScanResult,
   Severity,
@@ -50,6 +51,7 @@ interface SarifRun {
     registry?: Registry;
     coverage?: CoverageMetadata;
     discovery?: InstalledScanScope;
+    observations?: Observation[];
   };
   invocations?: Array<{
     executionSuccessful: boolean;
@@ -153,9 +155,11 @@ export function toSarif(result: ScanResult, toolVersion: string): SarifReport {
   }
 
   const run = createSarifRun(toolVersion, rules);
+  run.properties = { observations: result.observations, coverage: result.metadata.coverage };
   const { sourcePath, registry } = result.metadata;
   if (sourcePath !== undefined || registry !== undefined) {
     run.properties = {
+      ...run.properties,
       ...(sourcePath === undefined ? {} : { sourcePath }),
       ...(registry === undefined ? {} : { registry }),
     };
@@ -364,12 +368,13 @@ export function printTextReport(result: ScanResult): void {
   }
 
   printCoverageWarnings(result.metadata.coverage);
+  printObservations(result.observations);
 
   if (result.findings.length === 0) {
     console.log(
       result.metadata.coverage.degraded
         ? pc.yellow("No findings in completed checks. The scan is incomplete.")
-        : pc.green("✓ No security issues found"),
+        : pc.green("✓ No findings at the selected severity."),
     );
     return;
   }
@@ -378,6 +383,22 @@ export function printTextReport(result: ScanResult): void {
   console.log();
 
   for (const finding of result.findings) printFinding(finding);
+}
+
+function printObservations(observations: Observation[]): void {
+  if (observations.length === 0) return;
+  console.log(pc.cyan(`Source observations (${observations.length}):`));
+  for (const item of observations.slice(0, 20)) {
+    const location = `${item.location.file}:${item.location.line}:${item.location.column}`;
+    console.log(`  ${terminalText(item.kind)} ${terminalText(item.api)} ${terminalText(location)}`);
+    console.log(`    ${terminalText(item.snippet)}`);
+  }
+  if (observations.length > 20) {
+    console.log(
+      `  ${observations.length - 20} more observations. Use JSON or SARIF for all evidence.`,
+    );
+  }
+  console.log();
 }
 
 function printBatchFindings(results: ScanResult[]): void {
@@ -468,12 +489,16 @@ export function printBatchSummary(batch: BatchScanResult): void {
   printRegistryResults(results);
   printBatchTimings(results);
   printBatchCoverage(results);
+  for (const result of results.filter((item) => item.observations.length > 0)) {
+    console.log(terminalText(result.metadata.sourcePath ?? result.extension.id));
+    printObservations(result.observations);
+  }
   const incomplete =
     summary.failedFiles > 0 || results.some((result) => result.metadata.coverage.degraded === true);
   if (summary.totalFindings === 0) {
     const message = incomplete
       ? "No findings in completed checks. The scan is incomplete."
-      : "No issues found across all extensions";
+      : "No findings at the selected severity across all extensions.";
     console.log(incomplete ? pc.yellow(message) : pc.green(message));
     return;
   }

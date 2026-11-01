@@ -22,7 +22,8 @@ const cleanCorpusPath = join(repoRoot, "dist", "scanner", "clean-corpus.js");
 /**
  * @typedef {{id: string, version: string, registry: string, category: string,
  *   file: string, findings: FindingSummary, neverFindings: CompactFinding[],
- *   error?: string}} ExtensionReport
+ *   coverage?: import("#internal/scanner/types.js").CoverageMetadata,
+ *   observationCount?: number, error?: string}} ExtensionReport
  */
 /**
  * @typedef {{generatedAt: string, manifest: string, inputDir: string,
@@ -118,6 +119,7 @@ async function loadBuiltModules() {
     cleanCorpusFilename: cleanCorpus.cleanCorpusFilename,
     isNeverCleanFinding: cleanCorpus.isNeverCleanFinding,
     validateCleanCorpusManifest: cleanCorpus.validateCleanCorpusManifest,
+    validateCleanCorpusCoverage: cleanCorpus.validateCleanCorpusCoverage,
   };
 }
 
@@ -169,8 +171,13 @@ function formatTextReport(report) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const { scanExtension, cleanCorpusFilename, isNeverCleanFinding, validateCleanCorpusManifest } =
-    await loadBuiltModules();
+  const {
+    scanExtension,
+    cleanCorpusFilename,
+    isNeverCleanFinding,
+    validateCleanCorpusManifest,
+    validateCleanCorpusCoverage,
+  } = await loadBuiltModules();
 
   const manifest = validateCleanCorpusManifest(
     JSON.parse(await readFile(options.manifestPath, "utf8")),
@@ -213,6 +220,9 @@ async function main() {
 
         intel: "local",
       });
+      extensionReport.coverage = result.metadata.coverage;
+      extensionReport.observationCount = result.observations.length;
+      if (options.failOnNever) validateCleanCorpusCoverage(extension, result.metadata.coverage);
       const findings = result.findings.map(compactFinding);
       const neverFindings = findings.filter((finding) => isNeverCleanFinding(finding));
 

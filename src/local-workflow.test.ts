@@ -68,6 +68,7 @@ describe("local coverage regressions", () => {
 
 function report(): ScanResult {
   return {
+    observations: [],
     extension: { id: "test.fixture", name: "fixture", version: "1.0.0" },
     findings: [
       {

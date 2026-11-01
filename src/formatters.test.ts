@@ -11,6 +11,7 @@ import {
 import type { BatchScanResult, ScanResult } from "#internal/scanner/types.js";
 
 const result: ScanResult = {
+  observations: [],
   extension: { id: "test.extension", name: "extension", publisher: "test", version: "1.0.0" },
   findings: [
     {
@@ -58,7 +59,11 @@ describe("registry batch reports", () => {
     }));
     const sarif = toSarifCombined(results, "0.3.0");
     expect(sarif.runs.map((run) => run.properties)).toEqual(
-      registries.map((registry) => ({ registry })),
+      registries.map((registry) => ({
+        registry,
+        observations: [],
+        coverage: result.metadata.coverage,
+      })),
     );
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     printBatchSummary({

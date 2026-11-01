@@ -74,8 +74,12 @@ async function writeExtension(name, main, dependencies = {}) {
   await writeFile(join(directory, "main.js"), main);
 }
 
-/** @param {string} name @param {number} status */
-function scan(name, status) {
+/**
+ * @param {string} name
+ * @param {number} status
+ * @param {import("#internal/scanner/types.js").Severity} [severity]
+ */
+function scan(name, status, severity = "low") {
   const output = cli(
     [
       "scan",
@@ -84,6 +88,8 @@ function scan(name, status) {
       "--no-cache",
       "--strict",
       "--require-yara",
+      "--severity",
+      severity,
     ],
     status,
   );
@@ -96,6 +102,10 @@ function scan(name, status) {
 try {
   await chmod(fixtures, 0o755);
   await writeExtension("clean", 'console.log("hello");');
+  await writeExtension(
+    "behavior",
+    await readFile(new URL("../test-corpus/behavior/source.txt", import.meta.url), "utf8"),
+  );
   await writeExtension("suspicious", 'eval(atob("Y29uc29sZS5sb2coJ3Rlc3QnKQ=="));', {
     "vscode-darcula": "1.0.0",
   });
@@ -121,6 +131,20 @@ try {
   ]);
 
   assert.deepEqual(scan("clean", 0).findings, []);
+  const behavior = scan("behavior", 0, "critical");
+  assert.deepEqual(behavior.findings, []);
+  assert.deepEqual(
+    behavior.observations.map((item) => item.api),
+    [
+      "import",
+      "import",
+      "global.fetch",
+      "fs.readFileSync",
+      "fs.writeFileSync",
+      "child_process.spawn",
+      "global.eval",
+    ],
+  );
   const suspicious = scan("suspicious", 1);
   const ids = suspicious.findings.map((finding) => finding.id);
   assert.ok(ids.includes("AST_EVAL_DYNAMIC"), "Native AST parser must produce findings");
@@ -144,7 +168,12 @@ try {
       ),
     )
   );
-  assert.equal(installed.summary.scannedFiles, 2);
+  assert.equal(installed.summary.scannedFiles, 3);
+  assert.equal(
+    installed.results.find((result) => result.extension.id === "test.behavior")?.observations
+      .length,
+    7,
+  );
   assert.deepEqual(installed.errors, []);
   cli(["scan", "/fixtures/missing.vsix"], 2);
   console.log(`Docker smoke tests passed for ${image}`);

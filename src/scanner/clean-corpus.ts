@@ -1,3 +1,5 @@
+import type { CoverageMetadata } from "#internal/scanner/types.js";
+
 export interface CleanCorpusEntry {
   id: string;
   publisher: string;
@@ -7,6 +9,8 @@ export interface CleanCorpusEntry {
   sha256: string;
   category: "baseline" | "edge-case";
   notes?: string;
+  /** Pinned compiled files whose native and YARA coverage limits are expected. */
+  unanalyzedFiles?: string[];
 }
 
 export interface CleanCorpusManifest {
@@ -65,7 +69,6 @@ function validateEntry(value: unknown): CleanCorpusEntry {
   const registry = requireString(value["registry"], "registry", id);
   const sha256 = requireString(value["sha256"], "sha256", id);
   const category = requireString(value["category"], "category", id);
-  const notes = typeof value["notes"] === "string" ? value["notes"] : undefined;
 
   if (id !== `${publisher}.${name}`) {
     throw new Error(`${id}: id must equal publisher.name`);
@@ -91,8 +94,26 @@ function validateEntry(value: unknown): CleanCorpusEntry {
     registry: registry as CleanCorpusEntry["registry"],
     sha256,
     category: category as CleanCorpusEntry["category"],
-    ...(notes !== undefined ? { notes } : {}),
+    ...corpusAnnotations(value, id),
   };
+}
+
+function corpusAnnotations(
+  value: Record<string, unknown>,
+  id: string,
+): Pick<CleanCorpusEntry, "notes" | "unanalyzedFiles"> {
+  const annotations: Pick<CleanCorpusEntry, "notes" | "unanalyzedFiles"> = {};
+  if (typeof value["notes"] === "string") annotations.notes = value["notes"];
+  const files = value["unanalyzedFiles"];
+  if (files === undefined) return annotations;
+  if (
+    !Array.isArray(files) ||
+    !files.every((file: unknown) => typeof file === "string" && file !== "")
+  ) {
+    throw new Error(`${id}: unanalyzedFiles must be an array of nonempty file paths`);
+  }
+  annotations.unanalyzedFiles = files as string[];
+  return annotations;
 }
 
 export function validateCleanCorpusManifest(value: unknown): CleanCorpusManifest {
@@ -138,4 +159,28 @@ export function cleanCorpusFilename(extension: CleanCorpusEntry): string {
 /** Reject every critical finding and known high-confidence signals in verified clean inputs. */
 export function isNeverCleanFinding(finding: { id: string; severity: string }): boolean {
   return finding.severity === "critical" || CLEAN_CORPUS_NEVER_FINDINGS.has(finding.id);
+}
+
+/** Require completed checks, allowing only the compiled files annotated in the pinned manifest. */
+export function validateCleanCorpusCoverage(
+  entry: CleanCorpusEntry,
+  coverage: CoverageMetadata,
+): void {
+  const files = entry.unanalyzedFiles ?? [];
+  const expected = files.flatMap((file) => [
+    `Limited analysis of ${JSON.stringify(file)}: native or compiled code is outside `,
+    `YARA-X skipped ${JSON.stringify(file)}: the bundled script rules do not analyze this compiled format.`,
+  ]);
+  const warningsMatch =
+    coverage.warnings.length === expected.length &&
+    expected.every((prefix) => coverage.warnings.some((warning) => warning.startsWith(prefix)));
+  const modules = coverage.incompleteModules;
+  const modulesMatch =
+    files.length === 0 ? modules.length === 0 : modules.length === 1 && modules[0] === "yara";
+  if (!warningsMatch || !modulesMatch || coverage.degraded !== files.length > 0) {
+    throw new Error(
+      `${entry.id}: unexpected scan coverage; inspect coverage diagnostics and ` +
+        "restore the required analyzers before accepting this corpus result.",
+    );
+  }
 }

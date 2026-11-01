@@ -1,10 +1,7 @@
+import { makeZooData as emptyZooData } from "#internal/test-support/fixtures.js";
+import { makeContents } from "#internal/test-support/fixtures.js";
 import { describe, expect, it } from "vitest";
-import type {
-  TelemetryServiceInfo,
-  VsixContents,
-  VsixManifest,
-  ZooData,
-} from "#internal/scanner/types.js";
+import type { TelemetryServiceInfo, ZooData } from "#internal/scanner/types.js";
 import { checkTelemetry } from "#internal/scanner/checks/telemetry.js";
 
 describe("unverified opt-out references", () => {
@@ -26,36 +23,8 @@ describe("unverified opt-out references", () => {
   );
 });
 
-function makeContents(
-  files: Record<string, string>,
-  manifestOverrides?: Partial<VsixManifest>,
-): VsixContents {
-  const manifest: VsixManifest = {
-    name: "test-extension",
-    publisher: "test",
-    version: "1.0.0",
-    ...manifestOverrides,
-  };
-
-  const fileMap = new Map<string, Buffer>();
-  for (const [name, content] of Object.entries(files)) {
-    fileMap.set(name, Buffer.from(content, "utf8"));
-  }
-
-  return { manifest, files: fileMap, basePath: "/test" };
-}
-
 function makeZooData(telemetryServices?: Map<string, TelemetryServiceInfo>): ZooData {
-  return {
-    blocklist: [],
-    hashes: new Set(),
-    domains: new Set(),
-    ips: new Set(),
-    maliciousNpmPackages: new Set(),
-    maliciousNpmVersions: new Map(),
-    wallets: new Set(),
-    blockchainAllowlist: new Set(),
-    githubC2Accounts: new Set(),
+  return emptyZooData({
     telemetryServices:
       telemetryServices ??
       new Map([
@@ -87,7 +56,7 @@ function makeZooData(telemetryServices?: Map<string, TelemetryServiceInfo>): Zoo
         ],
         ["datadoghq.com", { name: "Datadog", category: "apm", domains: ["datadoghq.com"] }],
       ]),
-  };
+  });
 }
 
 describe("checkTelemetry", () => {
@@ -431,31 +400,19 @@ describe("checkTelemetry", () => {
   // ============================================================================
 
   describe("file type filtering", () => {
-    it("scans .js files", () => {
-      const content = `import * as Sentry from "@sentry/node";`;
-      const contents = makeContents({ "extension.js": content });
-      const zooData = makeZooData();
-
-      const findings = checkTelemetry(contents, zooData);
-      expect(findings.length).toBeGreaterThan(0);
-    });
-
-    it("scans .ts files", () => {
-      const content = `import * as Sentry from "@sentry/node";`;
-      const contents = makeContents({ "extension.ts": content });
-      const zooData = makeZooData();
-
-      const findings = checkTelemetry(contents, zooData);
-      expect(findings.length).toBeGreaterThan(0);
-    });
-
-    it("scans .mjs files", () => {
-      const content = `import * as Sentry from "@sentry/node";`;
-      const contents = makeContents({ "extension.mjs": content });
-      const zooData = makeZooData();
-
-      const findings = checkTelemetry(contents, zooData);
-      expect(findings.length).toBeGreaterThan(0);
+    it.each(["js", "ts", "mjs"])("scans .%s source with telemetry evidence", (extension) => {
+      const file = `main.${extension}`;
+      const findings = checkTelemetry(
+        makeContents({ [file]: 'import * as Sentry from "@sentry/node";' }),
+        makeZooData(),
+      );
+      expect(findings).toMatchObject([
+        {
+          id: "TELEMETRY_DETECTED",
+          location: { file },
+          metadata: { serviceName: "Sentry", sdkPackage: "@sentry/node" },
+        },
+      ]);
     });
 
     it("ignores .json files", () => {
@@ -513,9 +470,7 @@ describe("checkTelemetry", () => {
       const contents = makeContents({ "extension.js": content });
       const zooData = makeZooData();
 
-      // Should not throw
-      const findings = checkTelemetry(contents, zooData);
-      expect(Array.isArray(findings)).toBe(true);
+      expect(checkTelemetry(contents, zooData)).toEqual([]);
     });
 
     it("deduplicates multiple SDK imports of the same service", () => {

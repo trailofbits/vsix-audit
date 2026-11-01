@@ -1,7 +1,8 @@
+import { makeContents as extensionContents, makeZooData } from "#internal/test-support/fixtures.js";
 import { createHash, X509Certificate } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { performance } from "node:perf_hooks";
-import type { VsixContents, VsixManifest, ZooData } from "#internal/scanner/types.js";
+import type { VsixContents } from "#internal/scanner/types.js";
 import {
   checkDomains,
   checkGithubC2,
@@ -15,21 +16,7 @@ import {
 } from "#internal/scanner/checks/ioc.js";
 
 function makeContents(files: Record<string, string>): VsixContents {
-  const manifest: VsixManifest = {
-    name: "test",
-    publisher: "test",
-    version: "1.0.0",
-  };
-  const fileMap = new Map<string, Buffer>();
-  fileMap.set("package.json", Buffer.from(JSON.stringify(manifest)));
-  for (const [name, content] of Object.entries(files)) {
-    fileMap.set(name, Buffer.from(content));
-  }
-  return {
-    manifest,
-    files: fileMap,
-    basePath: "/test",
-  };
+  return makeContentsWithPublisher(files, "test", "test");
 }
 
 function makeWalletBlob(wallet: string, pad = 600): string {
@@ -58,42 +45,13 @@ N4x+tfGgJpsOO1I9e2M5n2jLLEYKC4eLrqP02sOZmhm7ixPSAXaXMrUNiEL+b86d
 Hg==
 -----END CERTIFICATE-----`;
 
-function makeZooData(overrides: Partial<ZooData> = {}): ZooData {
-  return {
-    blocklist: [],
-    hashes: new Set(),
-    domains: new Set(),
-    ips: new Set(),
-    maliciousNpmPackages: new Set(),
-    maliciousNpmVersions: new Map(),
-    wallets: new Set(),
-    blockchainAllowlist: new Set(),
-    telemetryServices: new Map(),
-    githubC2Accounts: new Set(),
-    ...overrides,
-  };
-}
-
 function makeContentsWithPublisher(
   files: Record<string, string>,
   publisher: string,
   name: string,
 ): VsixContents {
-  const manifest: VsixManifest = {
-    name,
-    publisher,
-    version: "1.0.0",
-  };
-  const fileMap = new Map<string, Buffer>();
-  fileMap.set("package.json", Buffer.from(JSON.stringify(manifest)));
-  for (const [fname, content] of Object.entries(files)) {
-    fileMap.set(fname, Buffer.from(content));
-  }
-  return {
-    manifest,
-    files: fileMap,
-    basePath: "/test",
-  };
+  const manifest = { name, publisher, version: "1.0.0" };
+  return extensionContents({ "package.json": JSON.stringify(manifest), ...files }, manifest);
 }
 
 describe("checkHashes", () => {

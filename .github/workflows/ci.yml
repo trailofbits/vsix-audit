@@ -37,6 +37,33 @@ jobs:
       - name: Verify package signatures
         run: npm audit signatures
 
+      - name: Install pinned YARA-X
+        env:
+          YARA_RELEASE: https://github.com/VirusTotal/yara-x/releases/download/v1.22.1
+          YARA_SHA256: c0ff80408d57b94f8348b9b19b5c70fb03e6471e7fdd761c97e0b4876804eecf
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/yara-x.tar.gz" \
+            "$YARA_RELEASE/yara-x-v1.22.1-x86_64-unknown-linux-gnu.tar.gz"
+          echo "$YARA_SHA256  $RUNNER_TEMP/yara-x.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/yara-x.tar.gz" -C "$RUNNER_TEMP" yr
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Check out pinned malware specimens
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: trailofbits/vsix-zoo
+          ref: 9216b078c2ec939a3ebb36dbd2c402d0f739b282
+          path: .cache/vsix-zoo
+          persist-credentials: false
+          sparse-checkout: |
+            samples/apollyon
+            samples/kagema
+            samples/glassworm
+            samples/ecm3401
+            samples/teampcp
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -51,3 +78,12 @@ jobs:
 
       - name: Test CLI
         run: npm run test:cli
+
+      - name: Check behavior mutation guards
+        run: npm run test:mutations
+
+      - name: Download and verify pinned benign artifacts
+        run: npm run corpus:download
+
+      - name: Test required corpora
+        run: npm run test:corpus

@@ -5,6 +5,7 @@ import {
   cleanCorpusKey,
   isNeverCleanFinding,
   validateCleanCorpusManifest,
+  validateCleanCorpusCoverage,
 } from "#internal/scanner/clean-corpus.js";
 
 const CLEAN_CORPUS_MANIFEST = join(
@@ -21,6 +22,70 @@ async function loadManifest(): Promise<unknown> {
 }
 
 describe("clean corpus manifest", () => {
+  it.each(["complete", "missing warning", "extra warning", "wrong module", "wrong status"])(
+    "validates an annotated compiled-file exception: %s",
+    async (variation) => {
+      const entry = validateCleanCorpusManifest(await loadManifest()).extensions[0];
+      if (entry === undefined) throw new Error("Missing pinned fixture");
+      const warnings = [
+        'Limited analysis of "runtime.wasm": native or compiled code is outside the script analyzers.',
+        'YARA-X skipped "runtime.wasm": the bundled script rules do not analyze this compiled format.',
+      ];
+      const actualWarnings =
+        variation === "missing warning"
+          ? warnings.slice(0, 1)
+          : variation === "extra warning"
+            ? [...warnings, "Unexpected parser failure"]
+            : warnings;
+      const check = (): void => {
+        validateCleanCorpusCoverage(
+          { ...entry, unanalyzedFiles: ["runtime.wasm"] },
+          {
+            degraded: variation !== "wrong status",
+            warnings: actualWarnings,
+            incompleteModules: variation === "wrong module" ? ["ast"] : ["yara"],
+          },
+        );
+      };
+      let failure: unknown;
+      try {
+        check();
+      } catch (error) {
+        failure = error;
+      }
+      const message = failure instanceof Error ? failure.message : undefined;
+      expect(message).toBe(
+        variation === "complete"
+          ? undefined
+          : `${entry.id}: unexpected scan coverage; inspect coverage diagnostics and ` +
+              "restore the required analyzers before accepting this corpus result.",
+      );
+    },
+  );
+  it.each([null, "file.wasm", [false], [""]])(
+    "rejects invalid compiled-file annotations: %j",
+    async (unanalyzedFiles) => {
+      const source = (await loadManifest()) as { extensions: Array<Record<string, unknown>> };
+      if (source.extensions[0] === undefined) throw new Error("Missing pinned fixture");
+      source.extensions[0]["unanalyzedFiles"] = unanalyzedFiles;
+      expect(() => validateCleanCorpusManifest(source)).toThrow("unanalyzedFiles");
+    },
+  );
+
+  it("rejects missing analyzers even when the finding list is empty", async () => {
+    const entry = validateCleanCorpusManifest(await loadManifest()).extensions[0];
+    if (entry === undefined) throw new Error("Missing pinned fixture");
+    expect(() => {
+      validateCleanCorpusCoverage(entry, {
+        degraded: true,
+        warnings: ["YARA-X not installed"],
+        incompleteModules: ["yara"],
+      });
+    }).toThrow("unexpected scan coverage");
+    expect(() => {
+      validateCleanCorpusCoverage(entry, { degraded: false, warnings: [], incompleteModules: [] });
+    }).not.toThrow();
+  });
   it("rejects critical findings from rules that are not in a fixed identifier list", () => {
     expect(isNeverCleanFinding({ id: "NEW_RULE", severity: "critical" })).toBe(true);
     expect(

@@ -34,6 +34,7 @@
     },
     {
       "id": "yzhang.markdown-all-in-one",
+      "unanalyzedFiles": ["dist/node/zola_slug_bg.wasm"],
       "publisher": "yzhang",
       "name": "markdown-all-in-one",
       "version": "3.6.3",

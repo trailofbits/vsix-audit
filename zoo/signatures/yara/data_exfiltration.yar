@@ -153,9 +153,10 @@ rule STEALER_JS_Credential_File_Exfil_Jan25 {
 rule STEALER_JS_Browser_Data_Theft_Jan25 {
   meta:
     capabilities = "credentials,fileAccess"
-    description = "Detects browser credential and cookie theft pattern targeting Chrome/Firefox/Edge storage files"
-    severity    = "critical"
-    score       = 95
+    description = "Browser storage and file-read references co-occur; review whether code connects them"
+    severity    = "medium"
+    evidence    = "co-occurring references"
+    score       = 60
     author      = "vsix-audit"
     date        = "2025-01-29"
 
