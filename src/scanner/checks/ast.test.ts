@@ -115,6 +115,27 @@ describe("checkAST", () => {
   // ============================================================================
 
   describe("Function() constructor detection", () => {
+    it.each(['new Function("", payload);', 'new Function("", "return process.env;");'])(
+      "retains execution evidence when an empty parameter precedes the body: %s",
+      (source) => {
+        const findings = checkAST(makeContents({ "extension.js": source })).findings;
+        expect(findings.some((finding) => finding.id === "AST_FUNCTION_CONSTRUCTOR")).toBe(true);
+      },
+    );
+
+    it("ignores an empty literal body used as a code-generation feature probe", () => {
+      const contents = makeContents({
+        "extension.js":
+          "const supported = (() => {" +
+          ' try { return new Function(""); } catch { return false; }' +
+          " })();",
+      });
+
+      const findings = checkAST(contents).findings;
+
+      expect(findings.some((f) => f.id === "AST_FUNCTION_CONSTRUCTOR")).toBe(false);
+    });
+
     it("detects new Function() with dynamic argument", () => {
       const content = `
         const body = getCode();

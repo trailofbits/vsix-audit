@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 import { isScannable, SCANNABLE_EXTENSIONS_IOC } from "#internal/scanner/constants.js";
 import type { Finding, VsixContents, ZooData } from "#internal/scanner/types.js";
 import {
@@ -384,6 +384,29 @@ export function isLikelySolanaAddress(candidate: string): boolean {
 // match inside a multi-megabyte blob stays cheap.
 const MIN_BASE64_RUN = 1000;
 
+// PEM certificates wrap Base64 at short line lengths, so the long-run filter
+// cannot recognize wallet-shaped fragments in their encoded bodies.
+const PEM_CERTIFICATE =
+  /-----BEGIN CERTIFICATE-----\r?\n((?:[A-Za-z0-9+/=]+\r?\n)+)-----END CERTIFICATE-----/g;
+
+function certificateBodyRanges(content: string): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (const match of content.matchAll(PEM_CERTIFICATE)) {
+    const body = match[1];
+    if (body === undefined) continue;
+    try {
+      // A marker alone must not let an attacker hide a wallet from generic checks.
+      const certificate = new X509Certificate(match[0]);
+      if (!certificate.raw.equals(Buffer.from(body, "base64"))) continue;
+    } catch {
+      continue;
+    }
+    const start = match.index + match[0].indexOf("\n") + 1;
+    ranges.push({ start, end: start + body.length });
+  }
+  return ranges;
+}
+
 function isBase64Char(charCode: number): boolean {
   const lowerCaseCode = charCode | 32;
   return (
@@ -417,6 +440,18 @@ function isGenericWalletAddress(currency: string, wallet: string): boolean {
   return true;
 }
 
+function isEncodedWalletData(
+  content: string,
+  start: number,
+  end: number,
+  certificates: Array<{ start: number; end: number }>,
+): boolean {
+  return (
+    isInsideLongBase64Run(content, start, end) ||
+    certificates.some((body) => start >= body.start && end <= body.end)
+  );
+}
+
 function checkWalletsInFile(
   filename: string,
   content: string,
@@ -425,6 +460,7 @@ function checkWalletsInFile(
   const findings: Finding[] = [];
   const lineStarts = computeLineStarts(content);
   const seenWallets = new Set<string>();
+  const certificateBodies = certificateBodyRanges(content);
 
   for (const { name, pattern } of WALLET_PATTERNS) {
     pattern.lastIndex = 0;
@@ -440,8 +476,8 @@ function checkWalletsInFile(
       if (!isKnownMalicious) {
         if (!isGenericWalletAddress(name, wallet)) continue;
 
-        if (isInsideLongBase64Run(content, start, start + wallet.length)) {
-          // A later occurrence outside the blob must remain eligible.
+        if (isEncodedWalletData(content, start, start + wallet.length, certificateBodies)) {
+          // A later occurrence outside encoded data must remain eligible.
           seenWallets.delete(wallet);
           continue;
         }

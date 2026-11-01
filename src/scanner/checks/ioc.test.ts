@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { performance } from "node:perf_hooks";
 import type { VsixContents, VsixManifest, ZooData } from "#internal/scanner/types.js";
@@ -35,6 +35,28 @@ function makeContents(files: Record<string, string>): VsixContents {
 function makeWalletBlob(wallet: string, pad = 600): string {
   return `"${"A".repeat(pad)}+${wallet}/${"A".repeat(pad)}"`;
 }
+
+// A generated X.509 certificate whose Base64 contains a wallet-shaped fragment.
+const TEST_CERTIFICATE = `-----BEGIN CERTIFICATE-----
+MIIDLTCCAhWgAwIBAgIUEqUPd+SIXPKmCSSUwfC5p91V4xowDQYJKoZIhvcNAQEL
+BQAwJjEkMCIGA1UEAwwbdnNpeC1hdWRpdCB0ZXN0IGNlcnRpZmljYXRlMB4XDTI2
+MTAzMTIwMjUwM1oXDTI3MTAzMTIwMjUwM1owJjEkMCIGA1UEAwwbdnNpeC1hdWRp
+dCB0ZXN0IGNlcnRpZmljYXRlMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC
+AQEAoqwFYTitqKh1lzm885UEZnlVVyUWBb9agaApESlM6EY/3rkLGPgpST/GeNks
+GsTGLDoW2NOeo80DTef9ov3h9NKNMiIkEPGkr/+nlc77Fx8WeQ5tcQ487j5d4vRr
+BcCHq15yaa7iztlex7eJbP2Z7HxPXnSxNtGiMxHZiSvuVHpuPrBt1IvccqE6rCZ0
+h9Gq5fbag6qcjEyLJ41Hj8ANgviDYWm49Ty0U3D15NnNhRR1FSYGLTvAsBsiG7Yr
+do2I5czTr7R90Sa89l5YpSO9Sdo6WEZi/zhifqVcoYha3uF7BYFQ+pVXZihGv6Qg
+sgpaL3SRJt6OZKjo8J9zqLz5LwIDAQABo1MwUTAdBgNVHQ4EFgQUUmTblVZD1A4c
+PWrDbmgq7F/24gMwHwYDVR0jBBgwFoAUUmTblVZD1A4cPWrDbmgq7F/24gMwDwYD
+VR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAR2aFZtxEptPvGh7g13jx
+wF5mGcvqDdUBHn0voTZlM5suA9AsrrWYH9lq3GTqu4rFVSTUEZ9UL9p42Ec/EgKX
+0+NjbOKYDp6wUNbl6Jk23csamTofncrgIz4HbpnxA1xk5/rwrXsSDpvgNwtANP59
+UZk/iJPpZ9DUuh9tEJwweJsxO6cT/+jaAUKG5Xnb9VgBxt7NNGt4VcZzaU3Kz9kR
+N4x+tfGgJpsOO1I9e2M5n2jLLEYKC4eLrqP02sOZmhm7ixPSAXaXMrUNiEL+b86d
+6bOcOhG1QYX9BVDPG5qsMpBrY3kX3oFauUMslr3T8vvUqRhhJbF664YyXCvGSpGS
+Hg==
+-----END CERTIFICATE-----`;
 
 function makeZooData(overrides: Partial<ZooData> = {}): ZooData {
   return {
@@ -337,6 +359,73 @@ describe("checkWallets", () => {
     expect(findings).toHaveLength(1);
     expect(findings[0]?.id).toBe("CRYPTO_WALLET_DETECTED");
     expect(findings[0]?.metadata?.["currency"]).toBe("SOL");
+  });
+
+  it.each(["\n", "\r\n"])("ignores certificate Base64 fragments with newline %j", (newline) => {
+    const contents = makeContents({
+      "extension.js": `const pem = \`${TEST_CERTIFICATE.replaceAll("\n", newline)}\`;`,
+    });
+
+    expect(checkWallets(contents, new Set())).toEqual([]);
+  });
+
+  it("reports a wallet in auxiliary data appended to an accepted certificate", () => {
+    const wallet = "BjVeAjPrSKFiingBn4vZvghsGj9KCE8AJVtbc9S8o8SC";
+    const certificate = new X509Certificate(TEST_CERTIFICATE);
+    // Alias and key-ID auxiliary fields are accepted outside the certificate's DER bytes.
+    const auxiliary = Buffer.concat([
+      Buffer.from([0x30, 78, 0x0c, 41]),
+      Buffer.from("A".repeat(41)),
+      Buffer.from([0x04, 33]),
+      Buffer.from(wallet, "base64"),
+    ]);
+    const encoded = Buffer.concat([certificate.raw, auxiliary]).toString("base64");
+    const body = (encoded.match(/.{1,64}/g) ?? []).join("\n");
+    const pem = `-----BEGIN CERTIFICATE-----\n${body}\n-----END CERTIFICATE-----`;
+    expect(new X509Certificate(pem).raw.equals(certificate.raw)).toBe(true);
+    expect(pem).toContain(`\n${wallet}\n`);
+    const findings = checkWallets(
+      makeContents({ "extension.js": `const pem = \`${pem}\`;` }),
+      new Set(),
+    );
+    expect(findings.find((finding) => finding.metadata?.["wallet"] === wallet)).toMatchObject({
+      id: "CRYPTO_WALLET_DETECTED",
+      severity: "high",
+    });
+  });
+
+  it("detects a wallet used outside a PEM certificate after the same fragment inside it", () => {
+    const wallet = "jaAUKG5Xnb9VgBxt7NNGt4VcZzaU3Kz9kR";
+    const contents = makeContents({
+      "extension.js": `const pem = \`${TEST_CERTIFICATE}\`;\n` + `const payout = "${wallet}";`,
+    });
+
+    const findings = checkWallets(contents, new Set());
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.metadata?.["wallet"]).toBe(wallet);
+    expect(findings[0]?.location?.line).toBe(TEST_CERTIFICATE.split("\n").length + 1);
+  });
+
+  it("still reports a known malicious wallet inside a PEM certificate", () => {
+    const wallet = "jaAUKG5Xnb9VgBxt7NNGt4VcZzaU3Kz9kR";
+    const contents = makeContents({
+      "extension.js": `const pem = \`${TEST_CERTIFICATE}\`;`,
+    });
+
+    const findings = checkWallets(contents, new Set([wallet]));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.id).toBe("KNOWN_MALWARE_WALLET");
+  });
+
+  it("does not suppress a wallet inside a fake PEM certificate", () => {
+    const wallet = "BjVeAjPrSKFiingBn4vZvghsGj9KCE8AJVtbc9S8o8SC";
+    const contents = makeContents({
+      "extension.js": `const pem = \`-----BEGIN CERTIFICATE-----\n${wallet}\n-----END CERTIFICATE-----\`;`,
+    });
+
+    const findings = checkWallets(contents, new Set());
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.metadata?.["wallet"]).toBe(wallet);
   });
 
   it("escalates known malicious wallet to critical", () => {
