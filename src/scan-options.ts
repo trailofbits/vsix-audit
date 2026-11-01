@@ -25,6 +25,7 @@ export function configureScanOptions(command: Command): Command {
     .option("--threat-intel <mode>", "Threat intelligence mode (local, none)", "local")
     .option("--no-threat-intel", "Disable threat-intelligence datasets, keeping generic detections")
     .option("--profile", "Show detailed timing breakdown for each module")
+    .option("--check-repository", "Check declared GitHub source repositories over the network")
     .option("--strict", "Exit with an error if scanner coverage is degraded")
     .option("--require-yara", "Exit with an error if YARA scanning cannot run");
 }
@@ -49,6 +50,7 @@ export function parseScanOptions(options: CliScanOptions): ScanOptions {
     profile: options.profile === true,
     strict: options.strict === true,
     requireYara: options.requireYara === true,
+    checkRepository: options.checkRepository === true,
     ...(modules ? { modules: modules as ModuleName[] } : {}),
   };
   validateScanOptions(scanOptions);

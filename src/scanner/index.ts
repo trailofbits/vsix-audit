@@ -10,6 +10,8 @@ import {
 } from "#internal/scanner/checks/package.js";
 import { checkTelemetry } from "#internal/scanner/checks/telemetry.js";
 import { checkYara } from "#internal/scanner/checks/yara.js";
+import { createRepositoryCheck } from "#internal/scanner/checks/repository.js";
+import type { RepositoryCheck } from "#internal/scanner/checks/repository.js";
 import {
   isScannable,
   JS_EXTENSIONS,
@@ -145,12 +147,24 @@ function countScannableFiles(contents: VsixContents, extensions: Set<string>): n
 
 interface ScanModule {
   name: ModuleName;
-  run: (contents: VsixContents, data: ZooData) => CheckResult | Promise<CheckResult>;
+  run: (
+    contents: VsixContents,
+    data: ZooData,
+    repository: RepositoryCheck,
+  ) => CheckResult | Promise<CheckResult>;
   inventory: Omit<CheckSummary, "enabled" | "filesExamined">;
   extensions?: Set<string>;
 }
 
 const SCAN_MODULES: readonly ScanModule[] = [
+  {
+    name: "repository",
+    run: (contents, _data, checkRepository) => checkRepository(contents),
+    inventory: {
+      name: "Repository",
+      description: "Opt-in source repository accessibility and empty-repository checks",
+    },
+  },
   {
     name: "manifest",
     run: (contents) => ({ findings: checkManifest(contents), warnings: [] }),
@@ -216,6 +230,13 @@ const SCAN_MODULES: readonly ScanModule[] = [
 ];
 
 function shouldRunModule(name: ModuleName, options: ScanOptions): boolean {
+  if (
+    name === "repository" &&
+    options.checkRepository !== true &&
+    options.modules?.includes(name) !== true
+  ) {
+    return false;
+  }
   return !options.modules || options.modules.length === 0 || options.modules.includes(name);
 }
 
@@ -256,23 +277,23 @@ export function validateScanOptions(options: ScanOptions): void {
 }
 
 function validateModuleOptions(options: ScanOptions): void {
-  if (options.modules) {
-    const invalidModules = options.modules.filter(
-      (moduleName) => !MODULE_NAMES.includes(moduleName),
+  if (options.modules === undefined || options.modules.length === 0) return;
+  const invalid = options.modules.filter((name) => !MODULE_NAMES.includes(name));
+  if (invalid.length > 0) {
+    throw new Error(
+      `Invalid module(s): ${invalid.join(", ")}. Valid modules: ${MODULE_NAMES.join(", ")}`,
     );
-    if (invalidModules.length > 0) {
+  }
+  const requirements = [
+    { enabled: options.checkRepository, module: "repository", flag: "--check-repository" },
+    { enabled: options.requireYara, module: "yara", flag: "--require-yara" },
+  ] as const;
+  for (const requirement of requirements) {
+    if (requirement.enabled === true && !options.modules.includes(requirement.module)) {
       throw new Error(
-        `Invalid module(s): ${invalidModules.join(", ")}. Valid modules: ${MODULE_NAMES.join(", ")}`,
+        `${requirement.flag} cannot be used when the module filter excludes ${requirement.module}`,
       );
     }
-  }
-  if (
-    options.requireYara === true &&
-    options.modules &&
-    options.modules.length > 0 &&
-    !options.modules.includes("yara")
-  ) {
-    throw new Error("--require-yara cannot be used when the module filter excludes yara");
   }
 }
 
@@ -333,8 +354,16 @@ function extensionMetadata(manifest: VsixManifest): ScanResult["extension"] {
   };
 }
 
-/** Scan an archive or directory, retaining findings and explicit coverage failures. */
-export async function scanExtension(target: string, options: ScanOptions): Promise<ScanResult> {
+/**
+ * Scan an archive or directory, retaining findings and explicit coverage failures.
+ *
+ * A batch can pass one repository check to share bounded HTTP lookups across extensions.
+ */
+export async function scanExtension(
+  target: string,
+  options: ScanOptions,
+  repositoryCheck: RepositoryCheck = createRepositoryCheck(),
+): Promise<ScanResult> {
   validateScanOptions(options);
 
   const startTime = performance.now();
@@ -360,7 +389,7 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
   // Execute all modules
   for (const mod of SCAN_MODULES.filter((module) => shouldRunModule(module.name, options))) {
     const start = performance.now();
-    const result = await mod.run(contents, zooData);
+    const result = await mod.run(contents, zooData, repositoryCheck);
     findings.push(...result.findings);
     coverageWarnings.push(...result.warnings);
     if (result.warnings.length > 0) incompleteModules.push(mod.name);

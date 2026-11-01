@@ -29,6 +29,8 @@ import {
   type ParsedExtensionId,
 } from "#internal/scanner/download.js";
 import { scanDirectory, scanExtension } from "#internal/scanner/index.js";
+import { createRepositoryCheck } from "#internal/scanner/checks/repository.js";
+import type { RepositoryCheck } from "#internal/scanner/checks/repository.js";
 import { summarizeBatch, type BatchScanCallbacks } from "#internal/scanner/batch.js";
 import type {
   BatchScanResult,
@@ -123,6 +125,7 @@ export function classifyTarget(target: string, options: TargetClassifierOptions 
 
 interface ScanContext {
   options: ScanOptions;
+  repositoryCheck: RepositoryCheck;
   useCache: boolean;
   forceDownload: boolean;
   statusStream: NodeJS.WriteStream;
@@ -134,6 +137,7 @@ function createScanContext(options: CliScanOptions): ScanContext {
   const machineOutput = scanOptions.output !== "text";
   return {
     options: scanOptions,
+    repositoryCheck: createRepositoryCheck(),
     useCache: options.cache !== false,
     forceDownload: options.force === true,
     statusStream: machineOutput ? process.stderr : process.stdout,
@@ -157,7 +161,7 @@ async function scanDownloadedExtension(
     });
     const message = downloaded.fromCache === true ? "✓ Using cached" : "✓ Downloaded";
     context.statusLog(pc.green(message), pc.dim(downloaded.path));
-    return await scanExtension(downloaded.path, context.options);
+    return await scanExtension(downloaded.path, context.options, context.repositoryCheck);
   } finally {
     if (tempDir !== undefined) await rm(tempDir, { recursive: true, force: true });
   }
@@ -247,7 +251,7 @@ async function scanSingle(target: CliTarget, context: ScanContext): Promise<numb
     context.statusLog(pc.cyan("Downloading:"), target.extensionId);
     result = await scanDownloadedExtension(target.extensionId, context);
     context.statusLog();
-  } else result = await scanExtension(target.path, context.options);
+  } else result = await scanExtension(target.path, context.options, context.repositoryCheck);
   outputResult(result, context.options.output, VERSION);
   if (hasCoverageExitFailure(result, context.options)) return 2;
   return result.findings.length > 0 ? 1 : 0;
