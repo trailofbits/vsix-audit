@@ -5,7 +5,8 @@ function validOffset(value: unknown, size: number): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= size;
 }
 
-function readStringMatch(entry: unknown, buffer: Buffer): YaraStringMatch {
+/** Validate one string match before retaining it, using the input size as a byte boundary. */
+export function readStringMatch(entry: unknown, size: number): YaraStringMatch {
   if (typeof entry !== "object" || entry === null) {
     throw new Error("YARA-X string evidence must be an object.");
   }
@@ -14,7 +15,7 @@ function readStringMatch(entry: unknown, buffer: Buffer): YaraStringMatch {
     throw new Error("YARA-X string evidence must have an identifier and excerpt.");
   }
   const offset = match["offset"];
-  if (!validOffset(offset, buffer.length)) {
+  if (!validOffset(offset, size)) {
     throw new Error("YARA-X string offset is outside the scanned file.");
   }
   return { identifier: match["identifier"], offset, match: match["match"] };
@@ -24,7 +25,7 @@ function readStringMatch(entry: unknown, buffer: Buffer): YaraStringMatch {
 export function readStringMatches(value: unknown, buffer: Buffer): YaraStringMatch[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new Error("YARA-X strings must be an array.");
-  return (value as unknown[]).map((entry) => readStringMatch(entry, buffer));
+  return (value as unknown[]).map((entry) => readStringMatch(entry, buffer.length));
 }
 
 /** Locate the first matching byte, with one-based text coordinates when UTF-8 is valid. */

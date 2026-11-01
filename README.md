@@ -329,8 +329,11 @@ format. Inspect these files with tools for their executable format.
 SARIF retains coverage warnings as tool execution notifications and marks incomplete
 invocations unsuccessful. YARA findings include up to 20 string excerpts and their byte
 offsets in JSON and SARIF, plus the total match count. Text reports show the first five.
-YARA text locations include one-based lines and UTF-16 columns. Binary evidence uses byte offsets. Terminal reports escape controls in untrusted text;
-JSON and SARIF preserve the original values through JSON escapes.
+YARA output is streamed so repeated matches cannot exhaust an output buffer. The YARA process
+has a 60-second deadline; timeouts produce a coverage failure while retaining completed records.
+YARA text locations include one-based lines and UTF-16 columns. Binary evidence uses byte
+offsets. Terminal reports escape controls in untrusted text; JSON and SARIF preserve the
+original values through JSON escapes.
 
 Generated and dependency paths receive the same detection checks. Unicode exceptions
 use validated regex ranges, the pinned KaTeX occurrence, and local emoji or Arabic

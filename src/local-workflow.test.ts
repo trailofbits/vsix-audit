@@ -211,6 +211,44 @@ describe("YARA evidence", () => {
 });
 
 describe("script YARA format boundaries", () => {
+  it.skipIf(!yaraAvailable).each(["payload.js", "payload"])(
+    "reports a renamed executable outside YARA's script scope: %s",
+    async (file) => {
+      const contents = await loadDirectory(root);
+      contents.files.clear();
+      contents.files.set(file, Buffer.from([0x7f, 0x45, 0x4c, 0x46, ...Buffer.from("sentinel")]));
+      const result = await checkYara(contents);
+      expect(result.findings).toMatchObject([{ id: "YARA_SKIPPED_BINARY" }]);
+      expect(result.warnings.join(" ")).toContain(file);
+    },
+  );
+
+  it.skipIf(!yaraAvailable)(
+    "keeps count-based rules complete when evidence exceeds 10 MiB",
+    async () => {
+      const rules = join(root, "large-output-rules");
+      await mkdir(rules);
+      await writeFile(
+        join(rules, "repeat.yar"),
+        'rule Repeat { meta: severity = "high" strings: $a = "sentinel" condition: #a > 200000 }',
+      );
+      const contents = await loadDirectory(root);
+      contents.files.clear();
+      contents.files.set("main.js", Buffer.from("sentinel\n".repeat(240_000)));
+      const result = await checkYara(contents, rules);
+      expect(result.warnings).toEqual([]);
+      expect(result.findings).toMatchObject([
+        {
+          id: "YARA_Repeat",
+          severity: "high",
+          metadata: { totalMatches: 240_000 },
+        },
+      ]);
+      expect(result.findings[0]?.metadata?.matches).toHaveLength(20);
+    },
+    30_000,
+  );
+
   it.skipIf(!yaraAvailable)("does not apply script obfuscation rules to GIF data", async () => {
     const image = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
     const comment = Buffer.from("()".repeat(40));

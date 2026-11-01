@@ -57,6 +57,7 @@
   },
   "dependencies": {
     "@eslint-community/regexpp": "4.12.2",
+    "@streamparser/json": "0.0.26",
     "commander": "15.0.0",
     "oxc-parser": "0.155.0",
     "picocolors": "1.1.1",
