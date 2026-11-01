@@ -427,7 +427,7 @@ function analyzeFile(filename: string, content: string, findings: Finding[]): bo
       location: {
         file: filename,
         line,
-        column: offsetToColumn(match.start, lineStarts),
+        column: offsetToColumn(match.start, lineStarts) + 1,
       },
       metadata: {
         codeSnippet: match.codeSnippet,

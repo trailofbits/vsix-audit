@@ -222,14 +222,21 @@ Every version on disk is scanned, including disabled extensions and leftover ver
 
 On Windows, `~` means the current user's home directory, normally `%USERPROFILE%`.
 Use `--extensions-dir <path>` for custom, portable, or remote extension stores mounted locally,
-including locations set with `VSCODE_EXTENSIONS`. This option cannot be combined with `--editor`.
+or for editor settings that this process cannot see. This option cannot be combined with `--editor`.
+For VS Code and Insiders, discovery follows [VS Code's][vscode-extensions]
+path precedence: `--extensions-dir`, `VSCODE_EXTENSIONS`, `VSCODE_PORTABLE` plus `/extensions`,
+then the default store. Cursor uses its own default store unless `--extensions-dir` is given.
 Directories reached through multiple symbolic links are scanned once.
 
 The command accepts the output, severity, module, threat-intelligence, profiling, and coverage
 options below, plus `--jobs <n>` (default: 4). JSON results include each directory in
 `metadata.sourcePath`; SARIF findings use absolute file URIs to distinguish editor stores.
+Text, JSON, and SARIF reports record the searched roots and the inventory scope. Discovery
+does not identify the active profile or enumerate remote hosts. `--profile` reports scan
+timings. It does not select a VS Code profile.
 Missing default stores are skipped. An empty inventory, an unreadable store, or any failed
-extension scan returns exit code `2`, including when other extensions scan successfully.
+extension scan returns exit code `2`. Broken extension links and unreadable stores are retained
+as errors while healthy targets continue scanning. Partial reports include both results and errors.
 
 **Download an extension for offline analysis:**
 
@@ -308,8 +315,22 @@ when YARA coverage is incomplete. Missing detection datasets fail with a named e
 required data never silently becomes an empty dataset.
 
 Directory scans include bundled dependencies and apply the archive entry-point and size
-checks. Symbolic links and special files inside an extension are skipped with a coverage
-warning. The scanner reads extension contents without executing them.
+checks, including files inside `.git` directories. Symbolic links and special files inside
+an extension are skipped with a coverage warning. The scanner reads extension contents without
+executing them.
+
+Known network indicators are checked regardless of filename or binary format. YARA retains
+its script-oriented format filters and 10 MiB file limit. Native libraries, executables,
+WebAssembly, and other recognized compiled formats produce coverage warnings because the
+script analyzers cannot inspect their behavior. `--strict` fails on these limits even when
+indicator checks find no threats. `--require-yara` also fails when YARA skips a compiled
+format. Inspect these files with tools for their executable format.
+
+SARIF retains coverage warnings as tool execution notifications and marks incomplete
+invocations unsuccessful. YARA findings include up to 20 string excerpts and their byte
+offsets in JSON and SARIF, plus the total match count. Text reports show the first five.
+YARA text locations include one-based lines and UTF-16 columns. Binary evidence uses byte offsets. Terminal reports escape controls in untrusted text;
+JSON and SARIF preserve the original values through JSON escapes.
 
 Generated and dependency paths receive the same detection checks. Unicode exceptions
 use validated regex ranges, the pinned KaTeX occurrence, and local emoji or Arabic
@@ -446,3 +467,5 @@ npm run check  # typecheck + type-aware lint + formatting + tests
 ## License
 
 AGPL-3.0
+
+[vscode-extensions]: https://code.visualstudio.com/docs/configure/extensions/extension-marketplace

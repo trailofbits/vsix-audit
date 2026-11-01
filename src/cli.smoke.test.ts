@@ -137,6 +137,77 @@ describe("retired CLI options", () => {
   );
 });
 
+describe("terminal output safety", () => {
+  let root = "";
+  const attack = "unsafe\x1b[2J\x1b[H\x1b[8m\r\x9b2J\u202e";
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "vsix-terminal-cli-"));
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({
+        name: "fixture",
+        displayName: attack,
+        description: attack,
+        publisher: "test",
+        version: "1.0.0",
+        main: "main.js",
+        activationEvents: [attack],
+      }),
+    );
+    await writeFile(join(root, "main.js"), "throw new Error('never execute'); eval(code);");
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("escapes metadata while preserving the CLI's own colors", async () => {
+    const result = await runCli(["scan", root, "--module", "ast"], {
+      env: { FORCE_COLOR: "1", NO_COLOR: undefined },
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).not.toContain("\x1b[2J");
+    expect(result.stdout).not.toContain("\x1b[8m");
+    expect(result.stdout).not.toContain("\r");
+    expect(result.stdout).not.toContain("\x9b");
+    expect(result.stdout).toContain("\\x1b[2J");
+    expect(result.stdout).toContain("\x1b[1m");
+  });
+
+  it("escapes metadata and capability evidence in info output", async () => {
+    const result = await runCli(["info", root, "--verbose"], { env: { PATH: "" } });
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain("\x1b");
+    expect(result.stdout).not.toContain("\r");
+    expect(result.stdout).not.toContain("\x9b");
+    expect(result.stdout).toContain("\\x1b[2J");
+  });
+
+  it("escapes local scan errors on stderr", async () => {
+    const result = await runCli(["scan", join(root, attack), "--output", "json"]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).not.toContain("\x1b");
+    expect(result.stderr).not.toContain("\r");
+    expect(result.stderr).toContain("\\x1b[2J");
+  });
+
+  it("escapes Commander argument errors", async () => {
+    const result = await runCli(["scan-installed", "--editor", attack]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).not.toContain("\x1b");
+    expect(result.stderr).not.toContain("\r");
+    expect(result.stderr).toContain("\\x1b[2J");
+  });
+
+  it("escapes custom cache paths", async () => {
+    const result = await runCli(["cache", "path"], {
+      env: { VSIX_AUDIT_CACHE_DIR: join(root, attack) },
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain("\x1b");
+    expect(result.stdout).toContain("\\x1b[2J");
+  });
+});
+
 describe("CLI cache options", () => {
   let testDir: string;
   let cacheDir: string;

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -32,6 +32,8 @@ function runCli(args: string[], overrides: NodeJS.ProcessEnv = {}): Promise<CliR
       HOME: home,
       USERPROFILE: home,
       NO_COLOR: "1",
+      VSCODE_EXTENSIONS: "",
+      VSCODE_PORTABLE: "",
       ...overrides,
     };
     delete env["FORCE_COLOR"];
@@ -180,6 +182,79 @@ describe("installed finding reports", () => {
   });
 });
 
+describe("installed discovery reports", () => {
+  it("retains healthy scans and discovery errors in JSON", async () => {
+    const store = join(home, ".vscode", "extensions");
+    const healthy = await extension(store);
+    const broken = join(store, "test.broken-1.0.0");
+    await symlink(join(home, "missing"), broken, "junction");
+    const result = await runCli(COMMON);
+    const batch = JSON.parse(result.stdout) as BatchScanResult;
+    expect(result.status).toBe(2);
+    expect(batch.summary).toMatchObject({ totalFiles: 2, scannedFiles: 1, failedFiles: 1 });
+    expect(batch.results[0]?.metadata.sourcePath).toBe(healthy);
+    expect(batch.errors[0]?.path).toBe(broken);
+    expect(batch.discovery?.roots).toContain(store);
+  });
+
+  it("retains healthy scans and discovery errors in SARIF", async () => {
+    const store = join(home, ".vscode", "extensions");
+    await extension(store);
+    await symlink(join(home, "missing"), join(store, "test.broken-1.0.0"), "junction");
+    const result = await runCli(["--module", "manifest", "--output", "sarif"]);
+    const sarif = JSON.parse(result.stdout) as ReturnType<typeof toSarifCombined>;
+    expect(result.status).toBe(2);
+    expect(sarif.runs).toHaveLength(2);
+    expect(sarif.runs[1]?.invocations?.[0]?.executionSuccessful).toBe(false);
+    expect(sarif.runs[0]?.properties?.discovery?.roots).toContain(store);
+  });
+
+  it("shows partial discovery and completed paths in text", async () => {
+    const store = join(home, ".vscode", "extensions");
+    const healthy = await extension(store);
+    const broken = join(store, "test.broken-1.0.0");
+    await symlink(join(home, "missing"), broken, "junction");
+    const result = await runCli(["--module", "manifest"]);
+    expect(result.status).toBe(2);
+    expect(result.stdout).toContain(healthy);
+    expect(result.stdout).toContain(broken);
+    expect(result.stdout).toContain("scan is incomplete");
+  });
+
+  it("retains YARA coverage diagnostics in SARIF after severity filtering", async () => {
+    await extension(join(home, ".vscode", "extensions"));
+    const result = await runCli(
+      ["--module", "yara", "--output", "sarif", "--severity", "critical", "--strict"],
+      { PATH: "" },
+    );
+    const sarif = JSON.parse(result.stdout) as ReturnType<typeof toSarifCombined>;
+    expect(result.status).toBe(2);
+    expect(sarif.runs[0]?.results).toEqual([]);
+    expect(sarif.runs[0]?.invocations?.[0]?.executionSuccessful).toBe(false);
+    expect(sarif.runs[0]?.properties?.coverage?.incompleteModules).toContain("yara");
+  });
+
+  it("emits structured output when every discovery target fails", async () => {
+    const missing = join(home, "missing");
+    const result = await runCli(["--extensions-dir", missing, ...COMMON]);
+    const batch = JSON.parse(result.stdout) as BatchScanResult;
+    expect(result.status).toBe(2);
+    expect(batch.results).toEqual([]);
+    expect(batch.errors[0]?.path).toBe(missing);
+    expect(batch.discovery?.roots).toEqual([missing]);
+  });
+
+  it("escapes malicious paths on stderr while keeping JSON lossless", async () => {
+    const missing = join(home, "bad\x1b[2J\x1b[8m\rstore");
+    const result = await runCli(["--extensions-dir", missing, ...COMMON]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).not.toContain("\x1b");
+    expect(result.stderr).not.toContain("\r");
+    expect(result.stderr).toContain("\\x1b[2J");
+    expect((JSON.parse(result.stdout) as BatchScanResult).errors[0]?.path).toBe(missing);
+  });
+});
+
 describe("installed scan failures", () => {
   it("explains strict coverage failures with high severity filters", async () => {
     await extension(join(home, ".vscode", "extensions"));
@@ -245,7 +320,7 @@ describe("installed scan argument validation", () => {
   it("reports no installed extensions with an actionable error", async () => {
     const result = await runCli(COMMON);
     expect(result.status).toBe(2);
-    expect(result.stdout).toBe("");
+    expect((JSON.parse(result.stdout) as BatchScanResult).errors).toHaveLength(1);
     expect(result.stderr).toContain("No installed extensions found");
     expect(result.stderr).toContain("--extensions-dir");
   });
@@ -280,5 +355,45 @@ describe("installed scan argument validation", () => {
     const result = await runCli([flag, value]);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain(message);
+  });
+});
+
+describe("installed scope reporting", () => {
+  it("honors configured paths and records scope in JSON", async () => {
+    const store = join(home, "configured");
+    const installed = await extension(store);
+    await extension(join(home, ".vscode", "extensions"));
+    const result = await runCli(["--editor", "vscode", ...COMMON], { VSCODE_EXTENSIONS: store });
+    const batch = JSON.parse(result.stdout) as BatchScanResult;
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(store);
+    expect(result.stderr).toContain("Active profiles and remote extension hosts");
+    expect(batch.results.map((scan) => scan.metadata.sourcePath)).toEqual([installed]);
+    expect(batch.discovery?.roots).toEqual([store]);
+  });
+
+  it("records configured roots in SARIF", async () => {
+    const store = join(home, "configured");
+    await extension(store);
+    const result = await runCli(
+      ["--editor", "vscode", "--module", "manifest", "--output", "sarif"],
+      {
+        VSCODE_EXTENSIONS: store,
+      },
+    );
+    const sarif = JSON.parse(result.stdout) as ReturnType<typeof toSarifCombined>;
+    expect(result.status).toBe(0);
+    expect(sarif.runs[0]?.properties?.discovery?.roots).toEqual([store]);
+  });
+
+  it("shows configured roots and scope in text", async () => {
+    const store = join(home, "configured");
+    await extension(store);
+    const result = await runCli(["--editor", "vscode", "--module", "manifest"], {
+      VSCODE_EXTENSIONS: store,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(`Store: ${store}`);
+    expect(result.stdout).toContain("Scope: All on-disk versions");
   });
 });

@@ -5,7 +5,6 @@ import {
   computeLineStarts,
   extensionId,
   findLineNumberByIndex,
-  findLineNumberByString,
   getStringContent,
 } from "#internal/scanner/utils.js";
 import { computeSha256 } from "#internal/scanner/vsix.js";
@@ -70,8 +69,8 @@ function isValidDomainCandidate(candidate: string): boolean {
   return true;
 }
 
-function extractDomains(content: string): string[] {
-  const matches: string[] = [];
+function extractDomains(content: string): Array<{ value: string; offset: number }> {
+  const matches: Array<{ value: string; offset: number }> = [];
   let cursor = 0;
 
   while (cursor < content.length) {
@@ -80,35 +79,30 @@ function extractDomains(content: string): string[] {
     }
 
     const start = cursor;
-    let hasDot = false;
     while (cursor < content.length && isDomainChar(content.charCodeAt(cursor))) {
-      if (content.charCodeAt(cursor) === 46) {
-        hasDot = true;
-      }
       cursor++;
     }
 
-    if (!hasDot) {
-      continue;
-    }
-
-    const candidate = trimDomainCandidate(content.slice(start, cursor)).toLowerCase();
+    const original = content.slice(start, cursor);
+    if (!original.includes(".")) continue;
+    const trimmed = trimDomainCandidate(original);
+    const candidate = trimmed.toLowerCase();
     if (isValidDomainCandidate(candidate)) {
-      matches.push(candidate);
+      matches.push({ value: candidate, offset: start + original.indexOf(trimmed) });
     }
   }
 
   return matches;
 }
 
-function extractIps(content: string): string[] {
+function extractIps(content: string): Array<{ value: string; offset: number }> {
   const ipPattern = /\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/g;
-  const matches: string[] = [];
+  const matches: Array<{ value: string; offset: number }> = [];
 
   for (const match of content.matchAll(ipPattern)) {
     const ip = match[1];
     if (ip !== undefined && ip !== "" && isValidIp(ip)) {
-      matches.push(ip);
+      matches.push({ value: ip, offset: match.index });
     }
   }
 
@@ -168,22 +162,40 @@ export function checkHashes(contents: VsixContents, knownHashes: Set<string>): F
   return findings;
 }
 
+function indicatorFile(
+  contents: VsixContents,
+  filename: string,
+  buffer: Buffer,
+): {
+  content: string;
+  location: (offset: number) => NonNullable<Finding["location"]>;
+} {
+  const textFile = isScannable(filename, SCANNABLE_EXTENSIONS_IOC);
+  const content = textFile
+    ? getStringContent(contents, filename, buffer)
+    : buffer.toString("latin1");
+  let lineStarts: number[] | undefined;
+  return {
+    content,
+    location: (offset) => {
+      if (!textFile) return { file: filename, byteOffset: offset };
+      lineStarts ??= computeLineStarts(content);
+      return { file: filename, line: findLineNumberByIndex(content, offset, lineStarts) };
+    },
+  };
+}
+
 export function checkDomains(contents: VsixContents, knownDomains: Set<string>): Finding[] {
   if (knownDomains.size === 0) return [];
 
   const findings: Finding[] = [];
 
   for (const [filename, buffer] of contents.files) {
-    if (!isScannable(filename, SCANNABLE_EXTENSIONS_IOC)) continue;
-
-    const content = getStringContent(contents, filename, buffer);
+    const { content, location } = indicatorFile(contents, filename, buffer);
     const foundDomains = extractDomains(content);
-    let lineStarts: number[] | undefined;
 
-    for (const domain of foundDomains) {
+    for (const { value: domain, offset } of foundDomains) {
       if (knownDomains.has(domain)) {
-        lineStarts ??= computeLineStarts(content);
-        const line = findLineNumberByString(content, domain, lineStarts);
         findings.push({
           id: "KNOWN_C2_DOMAIN",
           capabilities: ["network"],
@@ -191,7 +203,7 @@ export function checkDomains(contents: VsixContents, knownDomains: Set<string>):
           description: `File "${filename}" contains known C2 domain: ${domain}`,
           severity: "critical",
           category: "ioc",
-          location: line !== undefined ? { file: filename, line } : { file: filename },
+          location: location(offset),
           metadata: {
             domain,
           },
@@ -209,16 +221,11 @@ export function checkIps(contents: VsixContents, knownIps: Set<string>): Finding
   const findings: Finding[] = [];
 
   for (const [filename, buffer] of contents.files) {
-    if (!isScannable(filename, SCANNABLE_EXTENSIONS_IOC)) continue;
-
-    const content = getStringContent(contents, filename, buffer);
+    const { content, location } = indicatorFile(contents, filename, buffer);
     const foundIps = extractIps(content);
-    let lineStarts: number[] | undefined;
 
-    for (const ip of foundIps) {
+    for (const { value: ip, offset } of foundIps) {
       if (knownIps.has(ip)) {
-        lineStarts ??= computeLineStarts(content);
-        const line = findLineNumberByString(content, ip, lineStarts);
         findings.push({
           id: "KNOWN_C2_IP",
           capabilities: ["network"],
@@ -226,7 +233,7 @@ export function checkIps(contents: VsixContents, knownIps: Set<string>): Finding
           description: `File "${filename}" contains known C2 IP: ${ip}`,
           severity: "critical",
           category: "ioc",
-          location: line !== undefined ? { file: filename, line } : { file: filename },
+          location: location(offset),
           metadata: {
             ip,
           },
@@ -540,10 +547,7 @@ export function checkGithubC2(contents: VsixContents, githubC2Accounts: Set<stri
   const findings: Finding[] = [];
 
   for (const [filename, buffer] of contents.files) {
-    if (!isScannable(filename, SCANNABLE_EXTENSIONS_IOC)) continue;
-
-    const content = getStringContent(contents, filename, buffer);
-    const lineStarts = computeLineStarts(content);
+    const { content, location } = indicatorFile(contents, filename, buffer);
 
     for (const account of githubC2Accounts) {
       // Match GitHub API URLs or raw content URLs containing the username
@@ -556,7 +560,6 @@ export function checkGithubC2(contents: VsixContents, githubC2Accounts: Set<stri
         const idx = content.indexOf(pattern);
         if (idx === -1) continue;
 
-        const line = findLineNumberByString(content, pattern, lineStarts);
         findings.push({
           id: "KNOWN_GITHUB_C2",
           capabilities: ["network"],
@@ -567,7 +570,7 @@ export function checkGithubC2(contents: VsixContents, githubC2Accounts: Set<stri
             "Malware uses GitHub repos to poll for commands.",
           severity: "critical",
           category: "ioc",
-          location: line !== undefined ? { file: filename, line } : { file: filename },
+          location: location(idx),
           metadata: {
             account,
             matched: pattern,

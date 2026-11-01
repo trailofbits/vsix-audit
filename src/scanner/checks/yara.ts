@@ -4,14 +4,17 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { getZooRoot } from "#internal/scanner/loaders/zoo.js";
+import { isCompiledFile } from "#internal/scanner/native.js";
 import type {
   Capability,
   CheckResult,
   Finding,
   Severity,
   VsixContents,
+  YaraStringMatch,
 } from "#internal/scanner/types.js";
 import { CAPABILITY_NAMES, SEVERITIES } from "#internal/scanner/types.js";
+import { evidenceLocation, readStringMatches } from "#internal/scanner/checks/yara-evidence.js";
 
 const BINARY_EXTENSIONS = new Set([
   // Java
@@ -124,7 +127,27 @@ function ruleCapabilities(value: unknown): Capability[] {
   return names as Capability[];
 }
 
-function toFinding(rule: unknown, file: string, rulesDir: string): Finding {
+function readEvidence(value: unknown, buffer: Buffer, result: CheckResult): YaraStringMatch[] {
+  try {
+    return readStringMatches(value, buffer);
+  } catch (error) {
+    addFailure(
+      result,
+      "YARA_OUTPUT_ERROR",
+      `Cannot read YARA-X string evidence: ${String(error)}. ` +
+        "The rule match is retained. Check the YARA-X installation and retry.",
+    );
+    return [];
+  }
+}
+
+function toFinding(
+  rule: unknown,
+  file: string,
+  rulesDir: string,
+  buffer: Buffer,
+  result: CheckResult,
+): Finding {
   if (
     !isRecord(rule) ||
     typeof rule["identifier"] !== "string" ||
@@ -139,6 +162,7 @@ function toFinding(rule: unknown, file: string, rulesDir: string): Finding {
   }
   const ruleFile = relative(rulesDir, rule["namespace"]).split(sep).join("/");
   const description = metadata.get("description");
+  const matches = readEvidence(rule["strings"], buffer, result);
   return {
     id: `YARA_${rule["identifier"]}`,
     title: `YARA rule match: ${rule["identifier"]}`,
@@ -149,11 +173,13 @@ function toFinding(rule: unknown, file: string, rulesDir: string): Finding {
           "Review the matched behavior.",
     severity: severity as Severity,
     category: "yara",
-    location: { file },
+    location: evidenceLocation(file, matches, buffer),
     capabilities: ruleCapabilities(metadata.get("capabilities")),
     metadata: {
       rule: rule["identifier"],
       ruleFile,
+      matches: matches.slice(0, 20),
+      totalMatches: matches.length,
       ...(metadata.has("evidence") ? { evidence: metadata.get("evidence") } : {}),
       fileType: file.slice(file.lastIndexOf(".")).toLowerCase(),
     },
@@ -172,13 +198,21 @@ function parseRecord(line: string, tempDir: string): { file: string; rules: unkn
   return { file: file.split(sep).join("/"), rules: record["rules"] };
 }
 
-function readMatches(output: string, tempDir: string, rulesDir: string, result: CheckResult): void {
+function readMatches(
+  output: string,
+  tempDir: string,
+  rulesDir: string,
+  result: CheckResult,
+  contents: VsixContents,
+): void {
   for (const line of output.split("\n").filter(Boolean)) {
     try {
       const record = parseRecord(line, tempDir);
+      const buffer = contents.files.get(record.file);
+      if (buffer === undefined) throw new Error("YARA-X reported an unknown file.");
       for (const rule of record.rules) {
         try {
-          result.findings.push(toFinding(rule, record.file, rulesDir));
+          result.findings.push(toFinding(rule, record.file, rulesDir, buffer, result));
         } catch (error) {
           addFailure(
             result,
@@ -207,7 +241,18 @@ async function writeScanFiles(
   const directories = new Set<string>();
   for (const [filename, buffer] of contents.files) {
     const extension = filename.slice(filename.lastIndexOf(".")).toLowerCase();
-    if (BINARY_EXTENSIONS.has(extension)) continue;
+    if (BINARY_EXTENSIONS.has(extension)) {
+      if (isCompiledFile(filename, buffer)) {
+        addFailure(
+          result,
+          "YARA_SKIPPED_BINARY",
+          `YARA-X skipped ${JSON.stringify(filename)}: ` +
+            "the bundled script rules do not analyze this compiled format. Inspect it with " +
+            "tools for its executable format.",
+        );
+      }
+      continue;
+    }
     const path = resolve(directory, filename);
     if (!path.startsWith(resolve(directory) + sep) || buffer.length > MAX_YARA_FILE_SIZE) {
       addFailure(
@@ -274,6 +319,7 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
           "-r",
           "--output-format=ndjson",
           "--print-meta",
+          "--print-strings=120",
           "--print-namespace",
           "--path-as-namespace",
           targetRulesDir,
@@ -281,7 +327,7 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
         ],
         { maxBuffer: 10 * 1024 * 1024 },
       );
-      readMatches(stdout, directory, targetRulesDir, result);
+      readMatches(stdout, directory, targetRulesDir, result, contents);
       if (stderr.trim() !== "") {
         addFailure(
           result,
@@ -290,7 +336,7 @@ export async function checkYara(contents: VsixContents, rulesDir?: string): Prom
         );
       }
     } catch (error) {
-      readMatches(processOutput(error, "stdout"), directory, targetRulesDir, result);
+      readMatches(processOutput(error, "stdout"), directory, targetRulesDir, result, contents);
       addFailure(
         result,
         "YARA_SCAN_ERROR",

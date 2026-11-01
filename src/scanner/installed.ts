@@ -2,6 +2,7 @@ import type { Dirent } from "node:fs";
 import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import type { BatchScanResult, InstalledScanScope } from "#internal/scanner/types.js";
 
 export const INSTALLED_EDITORS = ["vscode", "insiders", "cursor", "all"] as const;
 export type InstalledEditor = (typeof INSTALLED_EDITORS)[number];
@@ -10,6 +11,16 @@ export interface InstalledDiscoveryOptions {
   editor: InstalledEditor;
   extensionsDir?: string;
 }
+
+export interface InstalledDiscoveryResult extends InstalledScanScope {
+  paths: string[];
+  errors: BatchScanResult["errors"];
+}
+
+const INSTALLED_SCOPE =
+  "All on-disk versions in the listed local stores, including disabled " +
+  "and obsolete versions. Active profiles and remote extension hosts are not enumerated; " +
+  "use --extensions-dir for other stores mounted locally.";
 
 const EDITOR_DIRECTORIES = {
   vscode: ".vscode",
@@ -28,10 +39,30 @@ function customDirectory(path: string): string {
   return resolve(path);
 }
 
-function defaultDirectories(editor: InstalledEditor): string[] {
-  const directories =
-    editor === "all" ? Object.values(EDITOR_DIRECTORIES) : [EDITOR_DIRECTORIES[editor]];
-  return directories.map((directory) => join(homedir(), directory, "extensions"));
+function configuredVsCodeStore(): string | undefined {
+  const configured = process.env["VSCODE_EXTENSIONS"];
+  if (configured !== undefined && configured !== "") return resolve(configured);
+  const portable = process.env["VSCODE_PORTABLE"];
+  if (portable !== undefined && portable !== "") return join(resolve(portable), "extensions");
+  return undefined;
+}
+
+function extensionStores(
+  options: InstalledDiscoveryOptions,
+): Array<{ path: string; optional: boolean }> {
+  if (options.extensionsDir !== undefined) {
+    return [{ path: customDirectory(options.extensionsDir), optional: false }];
+  }
+  const configured = options.editor === "cursor" ? undefined : configuredVsCodeStore();
+  const editors =
+    options.editor === "all" ? (["vscode", "insiders", "cursor"] as const) : [options.editor];
+  const stores = new Map<string, boolean>();
+  for (const editor of editors) {
+    const override = editor !== "cursor" && configured !== undefined;
+    const path = override ? configured : join(homedir(), EDITOR_DIRECTORIES[editor], "extensions");
+    stores.set(path, !override);
+  }
+  return [...stores].map(([path, optional]) => ({ path, optional }));
 }
 
 function isMissing(error: unknown): boolean {
@@ -76,15 +107,27 @@ async function resolveExtension(path: string): Promise<string | undefined> {
   }
 }
 
-async function storePaths(root: string, optional: boolean): Promise<string[]> {
+async function storePaths(
+  root: string,
+  optional: boolean,
+  errors: BatchScanResult["errors"],
+): Promise<string[]> {
   const entries = await readStore(root, optional);
   const candidates = entries.filter(
     (entry) => !entry.name.startsWith(".") && (entry.isDirectory() || entry.isSymbolicLink()),
   );
   const paths: string[] = [];
   for (const entry of candidates) {
-    const path = await resolveExtension(join(root, entry.name));
-    if (path !== undefined) paths.push(path);
+    const candidate = join(root, entry.name);
+    try {
+      const path = await resolveExtension(candidate);
+      if (path !== undefined) paths.push(path);
+    } catch (error) {
+      errors.push({
+        path: candidate,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
   return paths;
 }
@@ -93,26 +136,33 @@ async function storePaths(root: string, optional: boolean): Promise<string[]> {
  * Find extension directories in the selected user's editor stores.
  *
  * Returns each physical directory once, including all on-disk extension versions.
- * Missing default stores are skipped; inaccessible stores and an empty inventory fail.
+ * Missing default stores are skipped. Other discovery failures accompany healthy paths.
  */
 export async function findInstalledExtensions(
   options: InstalledDiscoveryOptions,
-): Promise<string[]> {
-  const custom = options.extensionsDir !== undefined;
-  const roots =
-    options.extensionsDir === undefined
-      ? defaultDirectories(options.editor)
-      : [customDirectory(options.extensionsDir)];
+): Promise<InstalledDiscoveryResult> {
+  const stores = extensionStores(options);
+  const roots = stores.map((store) => store.path);
+  const errors: BatchScanResult["errors"] = [];
   const paths = new Set<string>();
-  for (const root of roots) {
-    const candidates = await storePaths(root, !custom);
-    for (const path of candidates) paths.add(path);
+  for (const store of stores) {
+    try {
+      const candidates = await storePaths(store.path, store.optional, errors);
+      for (const path of candidates) paths.add(path);
+    } catch (error) {
+      errors.push({
+        path: store.path,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
-  if (paths.size === 0) {
-    throw new Error(
-      `No installed extensions found in ${roots.join(", ")}. ` +
+  if (paths.size === 0 && errors.length === 0) {
+    errors.push({
+      path: roots.join(", "),
+      error:
+        `No installed extensions found in ${roots.join(", ")}. ` +
         "Choose another --editor or use --extensions-dir <path>.",
-    );
+    });
   }
-  return [...paths].sort();
+  return { paths: [...paths].sort(), errors, roots, scope: INSTALLED_SCOPE };
 }
