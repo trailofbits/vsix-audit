@@ -418,7 +418,7 @@ describe("loadDirectory", () => {
     expect(contents.files.has("README.md")).toBe(true);
   });
 
-  it("includes bundled dependencies and excludes .git directories", async () => {
+  it("includes bundled dependencies and .git directories", async () => {
     // Create node_modules and .git directories
     await mkdir(join(testDir, "node_modules", "dep"), { recursive: true });
     await mkdir(join(testDir, ".git", "objects"), { recursive: true });
@@ -428,7 +428,13 @@ describe("loadDirectory", () => {
     const contents = await loadDirectory(testDir);
 
     expect(contents.files.has("node_modules/dep/index.js")).toBe(true);
-    expect([...contents.files.keys()].some((f) => f.includes(".git"))).toBe(false);
+    expect(contents.files.get(".git/objects/abc")?.toString()).toBe("git object");
+    expect(contents.artifacts).toContainEqual(
+      expect.objectContaining({
+        path: ".git/objects/abc",
+        skipped: false,
+      }),
+    );
   });
 
   it("throws error for directory without package.json", async () => {

@@ -1,5 +1,6 @@
 import { Option, type Command } from "commander";
 import { outputBatchResult } from "#internal/formatters.js";
+import { printError, terminalText } from "#internal/terminal.js";
 import {
   configureScanOptions,
   batchExitCode,
@@ -7,7 +8,7 @@ import {
   parseScanOptions,
   type CliScanOptions,
 } from "#internal/scan-options.js";
-import { scanPaths } from "#internal/scanner/batch.js";
+import { scanPaths, summarizeBatch } from "#internal/scanner/batch.js";
 import {
   findInstalledExtensions,
   INSTALLED_EDITORS,
@@ -22,12 +23,16 @@ interface InstalledCliOptions extends CliScanOptions {
 
 async function scanInstalled(options: InstalledCliOptions, version: string): Promise<number> {
   const scanOptions = parseScanOptions(options);
-  const paths = await findInstalledExtensions({
+  const started = Date.now();
+  const { paths, errors, ...discovery } = await findInstalledExtensions({
     editor: options.editor,
     ...(options.extensionsDir === undefined ? {} : { extensionsDir: options.extensionsDir }),
   });
+  console.error(`Scope: ${terminalText(discovery.scope)}`);
+  for (const root of discovery.roots) console.error(`Store: ${terminalText(root)}`);
+  for (const error of errors) printError(error.error);
   console.error(`Scanning ${paths.length} installed extension(s).`);
-  const batch = await scanPaths(
+  const scanned = await scanPaths(
     paths,
     scanOptions,
     {
@@ -37,6 +42,13 @@ async function scanInstalled(options: InstalledCliOptions, version: string): Pro
     },
     { concurrency: options.jobs },
   );
+  const batch = summarizeBatch(
+    scanned.results,
+    [...errors, ...scanned.errors],
+    paths.length + errors.length,
+    started,
+  );
+  batch.discovery = discovery;
   outputBatchResult(batch, scanOptions.output, version);
   return batchExitCode(batch, scanOptions);
 }
@@ -63,7 +75,7 @@ export function registerInstalledCommand(program: Command, version: string): voi
     try {
       process.exitCode = await scanInstalled(options, version);
     } catch (error) {
-      console.error("Error:", error instanceof Error ? error.message : String(error));
+      printError(error);
       process.exitCode = 2;
     }
   });

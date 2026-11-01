@@ -46,9 +46,18 @@ export interface ScanOptions {
 
 export interface FindingMetadata {
   matched?: string | undefined;
+  matches?: YaraStringMatch[];
+  totalMatches?: number;
   legitimateUses?: string[] | undefined;
   redFlags?: string[] | undefined;
   [key: string]: unknown;
+}
+
+export interface YaraStringMatch {
+  identifier: string;
+  offset: number;
+  /** YARA-X's escaped excerpt, limited to 120 characters. */
+  match: string;
 }
 
 export const CAPABILITY_NAMES = [
@@ -69,8 +78,11 @@ export interface Finding {
   readonly capabilities?: readonly Capability[];
   readonly location?: {
     readonly file: string;
+    /** One-based line and UTF-16 column in text files. */
     readonly line?: number;
     readonly column?: number;
+    /** Zero-based byte position, including for binary evidence. */
+    readonly byteOffset?: number;
   };
   readonly metadata?: FindingMetadata;
 }
@@ -222,6 +234,8 @@ export interface ZooData {
 export interface BatchScanResult {
   results: ScanResult[];
   errors: Array<{ path: string; error: string }>;
+  /** Searched stores and inventory scope for installed scans, including failed discovery. */
+  discovery?: InstalledScanScope;
   summary: {
     totalFiles: number;
     scannedFiles: number;
@@ -230,4 +244,9 @@ export interface BatchScanResult {
     findingsBySeverity: Record<Severity, number>;
     scanDuration: number;
   };
+}
+
+export interface InstalledScanScope {
+  roots: string[];
+  scope: string;
 }

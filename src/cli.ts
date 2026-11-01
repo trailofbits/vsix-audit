@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
+import { printError, reportJson, terminalText } from "#internal/terminal.js";
 import { registerInstalledCommand } from "#internal/scan-installed.js";
 import {
   batchExitCode,
@@ -160,7 +161,7 @@ async function scanDownloadedExtension(
       ...(tempDir === undefined ? {} : { destDir: tempDir }),
     });
     const message = downloaded.fromCache === true ? "✓ Using cached" : "✓ Downloaded";
-    context.statusLog(pc.green(message), pc.dim(downloaded.path));
+    context.statusLog(pc.green(message), pc.dim(terminalText(downloaded.path)));
     return await scanExtension(downloaded.path, context.options, context.repositoryCheck);
   } finally {
     if (tempDir !== undefined) await rm(tempDir, { recursive: true, force: true });
@@ -178,14 +179,14 @@ async function scanAllRegistries(
   for (const registry of REGISTRIES) {
     const extensionId = `${registry}:${baseId}`;
     try {
-      context.statusLog(pc.cyan(`Downloading from ${registry}:`), baseId);
+      context.statusLog(pc.cyan(`Downloading from ${registry}:`), terminalText(baseId));
       const result = await scanDownloadedExtension(extensionId, context);
       result.metadata.registry = registry;
       results.push(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const label = error instanceof ExtensionNotFoundError ? "Not found" : "Failed";
-      context.statusLog(pc.dim(`  ${label} in ${registry}: ${message}`));
+      context.statusLog(pc.dim(terminalText(`  ${label} in ${registry}: ${message}`)));
       errors.push({ path: extensionId, error: message });
     }
   }
@@ -203,7 +204,7 @@ function recursiveCallbacks(concurrency: number, context: ScanContext): BatchSca
     },
     onResult: (_path, result) => {
       stream.write("\r\x1b[K");
-      const label = `${result.extension.name} v${result.extension.version}`;
+      const label = terminalText(`${result.extension.name} v${result.extension.version}`);
       if (result.findings.length === 0) {
         context.statusLog(`[${pc.green("OK")}] ${label}`);
         return;
@@ -215,7 +216,9 @@ function recursiveCallbacks(concurrency: number, context: ScanContext): BatchSca
     },
     onError: (path, error) => {
       stream.write("\r\x1b[K");
-      context.statusLog(`[${pc.red("ERROR")}] ${basename(path)} - Error: ${error}`);
+      context.statusLog(
+        `[${pc.red("ERROR")}] ${terminalText(basename(path))} - Error: ${terminalText(error)}`,
+      );
     },
   };
 }
@@ -230,7 +233,7 @@ async function scanRecursive(
     throw new Error(`--recursive requires a directory path: ${target}`);
   }
   const concurrency = parseJobs(options.jobs ?? "4");
-  context.statusLog(pc.cyan("Scanning directory:"), target);
+  context.statusLog(pc.cyan("Scanning directory:"), terminalText(target));
   if (concurrency > 1) {
     context.statusLog(pc.dim(`Parallel mode: ${concurrency} concurrent scans`));
   }
@@ -248,7 +251,7 @@ async function scanRecursive(
 async function scanSingle(target: CliTarget, context: ScanContext): Promise<number> {
   let result: ScanResult;
   if (target.kind === "extension-id") {
-    context.statusLog(pc.cyan("Downloading:"), target.extensionId);
+    context.statusLog(pc.cyan("Downloading:"), terminalText(target.extensionId));
     result = await scanDownloadedExtension(target.extensionId, context);
     context.statusLog();
   } else result = await scanExtension(target.path, context.options, context.repositoryCheck);
@@ -279,6 +282,11 @@ export const cli = new Command()
   .name("vsix-audit")
   .description("Security scanner for VS Code extensions")
   .version(VERSION)
+  .configureOutput({
+    outputError: (message, write) => {
+      write(`${terminalText(message.trimEnd())}\n`);
+    },
+  })
   .exitOverride((error) => process.exit(error.exitCode === 0 ? 0 : 2));
 
 configureScanOptions(
@@ -299,7 +307,7 @@ configureScanOptions(
     try {
       process.exitCode = await runScan(target, options);
     } catch (error) {
-      console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
+      printError(error);
       process.exitCode = 2;
     }
   });
@@ -321,7 +329,7 @@ cli
       const useCache = options.cache !== false;
       const forceDownload = options.force === true;
 
-      console.log(pc.cyan("Downloading:"), extensionId);
+      console.log(pc.cyan("Downloading:"), terminalText(extensionId));
 
       const downloadOptions = {
         useCache,
@@ -332,29 +340,35 @@ cli
       };
       const result = await downloadExtension(extensionId, downloadOptions);
 
-      console.log();
-      if (result.fromCache === true) {
-        console.log(pc.green("✓ Using cached version"));
-      } else {
-        console.log(pc.green("✓ Downloaded successfully"));
-      }
-      console.log(pc.dim("─".repeat(50)));
-      console.log(`${pc.cyan("Name:")} ${result.metadata.displayName ?? result.metadata.name}`);
-      console.log(`${pc.cyan("Publisher:")} ${result.metadata.publisher}`);
-      console.log(`${pc.cyan("Version:")} ${result.metadata.version}`);
-      if (
-        result.metadata.installCount !== undefined &&
-        result.metadata.installCount !== 0 &&
-        !Number.isNaN(result.metadata.installCount)
-      ) {
-        console.log(`${pc.cyan("Installs:")} ${result.metadata.installCount.toLocaleString()}`);
-      }
-      console.log(`${pc.cyan("Path:")} ${result.path}`);
+      printDownloadResult(result);
     } catch (error) {
-      console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
+      printError(error);
       process.exit(2);
     }
   });
+
+function printDownloadResult(result: Awaited<ReturnType<typeof downloadExtension>>): void {
+  console.log();
+  if (result.fromCache === true) {
+    console.log(pc.green("✓ Using cached version"));
+  } else {
+    console.log(pc.green("✓ Downloaded successfully"));
+  }
+  console.log(pc.dim("─".repeat(50)));
+  console.log(
+    `${pc.cyan("Name:")} ${terminalText(result.metadata.displayName ?? result.metadata.name)}`,
+  );
+  console.log(`${pc.cyan("Publisher:")} ${terminalText(result.metadata.publisher)}`);
+  console.log(`${pc.cyan("Version:")} ${terminalText(result.metadata.version)}`);
+  if (
+    result.metadata.installCount !== undefined &&
+    result.metadata.installCount !== 0 &&
+    !Number.isNaN(result.metadata.installCount)
+  ) {
+    console.log(`${pc.cyan("Installs:")} ${result.metadata.installCount.toLocaleString()}`);
+  }
+  console.log(`${pc.cyan("Path:")} ${terminalText(result.path)}`);
+}
 
 interface CliInfoOptions {
   verbose?: boolean;
@@ -373,14 +387,14 @@ cli
       const targetInfo = classifyTarget(target);
       let infoTarget: string;
       if (targetInfo.kind === "extension-id") {
-        console.log(pc.cyan("Downloading:"), targetInfo.extensionId);
+        console.log(pc.cyan("Downloading:"), terminalText(targetInfo.extensionId));
         const result = await downloadExtension(targetInfo.extensionId);
         infoTarget = result.path;
 
         if (result.fromCache === true) {
-          console.log(pc.green("✓ Using cached"), pc.dim(result.path));
+          console.log(pc.green("✓ Using cached"), pc.dim(terminalText(result.path)));
         } else {
-          console.log(pc.green("✓ Downloaded"), pc.dim(result.path));
+          console.log(pc.green("✓ Downloaded"), pc.dim(terminalText(result.path)));
         }
       } else {
         infoTarget = targetInfo.path;
@@ -396,7 +410,7 @@ cli
 
       printExtensionInfo(contents, capabilities, options.verbose ?? false);
     } catch (error) {
-      console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
+      printError(error);
       process.exit(2);
     }
   });
@@ -408,7 +422,7 @@ function printManifestInfo(manifest: VsixContents["manifest"]): void {
 
   // Activation events
   const events = manifest.activationEvents ?? [];
-  const activation = events.length > 0 ? events.join(", ") : pc.dim("(none)");
+  const activation = events.length > 0 ? terminalText(events.join(", ")) : pc.dim("(none)");
   console.log(`${pc.cyan("Activation:".padEnd(16))}${activation}`);
 
   // Entry points
@@ -417,7 +431,7 @@ function printManifestInfo(manifest: VsixContents["manifest"]): void {
     return value === undefined || value === "" ? [] : [`${field}: ${value}`];
   });
   if (entryPoints.length > 0) {
-    console.log(`${pc.cyan("Entry Points:".padEnd(16))}${entryPoints.join(", ")}`);
+    console.log(`${pc.cyan("Entry Points:".padEnd(16))}${terminalText(entryPoints.join(", "))}`);
   }
 
   // Contributions summary
@@ -429,13 +443,15 @@ function printManifestInfo(manifest: VsixContents["manifest"]): void {
       return `${key} (${count})`;
     });
   if (contributionSummary.length > 0) {
-    console.log(`${pc.cyan("Contributes:".padEnd(16))}${contributionSummary.join(", ")}`);
+    console.log(
+      `${pc.cyan("Contributes:".padEnd(16))}${terminalText(contributionSummary.join(", "))}`,
+    );
   }
 
   // Dependencies
   const deps = manifest.extensionDependencies;
   if (deps && deps.length > 0) {
-    console.log(`${pc.cyan("Dependencies:".padEnd(16))}${deps.join(", ")}`);
+    console.log(`${pc.cyan("Dependencies:".padEnd(16))}${terminalText(deps.join(", "))}`);
   }
 }
 
@@ -446,10 +462,14 @@ function printExtensionInfo(
 ): void {
   const { manifest } = contents;
   console.log();
-  console.log(pc.bold(`Extension: ${manifest.displayName ?? manifest.name} v${manifest.version}`));
-  console.log(`${pc.cyan("Publisher:")} ${manifest.publisher ?? "(unknown)"}`);
+  console.log(
+    pc.bold(
+      terminalText(`Extension: ${manifest.displayName ?? manifest.name} v${manifest.version}`),
+    ),
+  );
+  console.log(`${pc.cyan("Publisher:")} ${terminalText(manifest.publisher ?? "(unknown)")}`);
   if (manifest.description !== undefined && manifest.description !== "") {
-    console.log(`${pc.dim(manifest.description)}`);
+    console.log(`${pc.dim(terminalText(manifest.description))}`);
   }
 
   // Capabilities section
@@ -485,25 +505,22 @@ function printCapabilities(capabilities: Capabilities, verbose: boolean): void {
   for (const [label, key] of capEntries) {
     const cap = capabilities[key];
     const icon = cap.detected ? pc.green("✓") : pc.dim("✗");
-    const summary = cap.detected ? cap.summary.join(", ") : pc.dim("None detected");
+    const summary = cap.detected ? terminalText(cap.summary.join(", ")) : pc.dim("None detected");
     console.log(`${label.padEnd(16)}${icon} ${summary}`);
 
-    if (verbose && cap.detected && cap.evidence.length > 0) {
-      for (const ev of cap.evidence.slice(0, 5)) {
-        const loc =
-          ev.line !== undefined && ev.line !== 0 && !Number.isNaN(ev.line)
-            ? `${ev.file}:${ev.line}`
-            : ev.file;
-        const matched =
-          ev.matched !== undefined && ev.matched !== ""
-            ? pc.dim(` (${ev.matched.slice(0, 40)})`)
-            : "";
-        console.log(`                  ${pc.dim("└")} ${pc.dim(loc)}${matched}`);
-      }
-      if (cap.evidence.length > 5) {
-        console.log(`                  ${pc.dim(`... and ${cap.evidence.length - 5} more`)}`);
-      }
-    }
+    if (verbose && cap.detected) printCapabilityEvidence(cap.evidence);
+  }
+}
+
+function printCapabilityEvidence(evidence: Capabilities["network"]["evidence"]): void {
+  for (const ev of evidence.slice(0, 5)) {
+    const loc = ev.line !== undefined && ev.line > 0 ? `${ev.file}:${ev.line}` : ev.file;
+    const excerpt = ev.matched?.slice(0, 40) ?? "";
+    const matched = excerpt === "" ? "" : pc.dim(` (${terminalText(excerpt)})`);
+    console.log(`                  ${pc.dim("└")} ${pc.dim(terminalText(loc))}${matched}`);
+  }
+  if (evidence.length > 5) {
+    console.log(`                  ${pc.dim(`... and ${evidence.length - 5} more`)}`);
   }
 }
 
@@ -514,7 +531,7 @@ cacheCommand
   .command("path")
   .description("Print the cache directory path")
   .action(() => {
-    console.log(getCacheDir());
+    console.log(terminalText(getCacheDir()));
   });
 
 cacheCommand
@@ -535,7 +552,7 @@ cacheCommand
       }
 
       if (options.json === true) {
-        console.log(JSON.stringify(extensions, null, 2));
+        console.log(reportJson(extensions));
         return;
       }
 
@@ -547,10 +564,10 @@ cacheCommand
         const extensionId = `${ext.publisher}.${ext.name}`;
         const cachedDate = ext.cachedAt.toLocaleDateString();
         console.log(
-          `  ${pc.cyan(extensionId.padEnd(40))} ` +
-            `${pc.dim(ext.version.padEnd(12))} ` +
+          `  ${pc.cyan(terminalText(extensionId).padEnd(40))} ` +
+            `${pc.dim(terminalText(ext.version).padEnd(12))} ` +
             `${pc.dim(formatBytes(ext.size).padEnd(10))} ` +
-            `${pc.dim(ext.registry.padEnd(12))} ` +
+            `${pc.dim(terminalText(ext.registry).padEnd(12))} ` +
             `${pc.dim(cachedDate)}`,
         );
       }
@@ -561,7 +578,7 @@ cacheCommand
         `${pc.cyan("Total:")} ${extensions.length} extensions, ${formatBytes(totalSize)}`,
       );
     } catch (error) {
-      console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
+      printError(error);
       process.exit(2);
     }
   });
@@ -576,7 +593,7 @@ cacheCommand
 
       if (deleted === 0) {
         if (pattern !== undefined && pattern !== "") {
-          console.log(pc.dim(`No extensions matching "${pattern}" found in cache`));
+          console.log(pc.dim(`No extensions matching "${terminalText(pattern)}" found in cache`));
         } else {
           console.log(pc.dim("Cache is already empty"));
         }
@@ -584,7 +601,7 @@ cacheCommand
         console.log(pc.green(`✓ Cleared ${deleted} extension(s) from cache`));
       }
     } catch (error) {
-      console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
+      printError(error);
       process.exit(2);
     }
   });
@@ -599,19 +616,19 @@ cacheCommand
       const versions = await getCachedVersions(publisher, name);
 
       if (versions.length === 0) {
-        console.log(pc.dim(`No cached versions of ${extensionId}`));
+        console.log(pc.dim(`No cached versions of ${terminalText(extensionId)}`));
         return;
       }
 
       console.log();
-      console.log(pc.bold(`Cached versions of ${extensionId}`));
+      console.log(pc.bold(`Cached versions of ${terminalText(extensionId)}`));
       console.log(pc.dim("─".repeat(50)));
 
       for (const ext of versions) {
         const cachedDate = ext.cachedAt.toLocaleDateString();
         console.log(
-          `  ${pc.cyan(ext.version.padEnd(15))} ` +
-            `${pc.dim(ext.registry.padEnd(12))} ` +
+          `  ${pc.cyan(terminalText(ext.version).padEnd(15))} ` +
+            `${pc.dim(terminalText(ext.registry).padEnd(12))} ` +
             `${pc.dim(formatBytes(ext.size).padEnd(10))} ` +
             `${pc.dim(cachedDate)}`,
         );
@@ -619,7 +636,7 @@ cacheCommand
 
       console.log();
     } catch (error) {
-      console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
+      printError(error);
       process.exit(2);
     }
   });

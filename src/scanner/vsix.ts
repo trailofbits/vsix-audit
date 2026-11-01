@@ -550,7 +550,6 @@ export async function loadDirectory(dirPath: string): Promise<VsixContents> {
   async function walkDir(dir: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.name === ".git") continue;
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
         await walkDir(fullPath);

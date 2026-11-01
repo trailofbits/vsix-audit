@@ -1,8 +1,9 @@
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkYara } from "#internal/scanner/checks/yara.js";
+import { runYara } from "#internal/scanner/checks/yara-process.js";
 
 const failures = vi.hoisted(() => ({ write: false, cleanup: false, leftovers: [] as string[] }));
 vi.mock("node:fs/promises", async (original) => {
@@ -30,6 +31,8 @@ interface ProcessFixture {
   stderr?: string;
   status?: number;
   versionStatus?: number;
+  removeAfterVersion?: boolean;
+  hang?: boolean;
 }
 
 let root = "";
@@ -49,13 +52,15 @@ beforeEach(async () => {
   await writeFile(
     executable,
     `#!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 const fixture = JSON.parse(readFileSync(process.env.VSIX_YARA_PROCESS_FIXTURE, "utf8"));
 if (process.argv.includes("--version")) {
+  if (fixture.removeAfterVersion) unlinkSync(process.argv[1]);
   console.log("yara-x-cli fixture");
   process.exit(fixture.versionStatus ?? 0);
 }
+if (fixture.hang) await new Promise(resolve => setTimeout(resolve, 10000));
 const directory = process.argv.at(-1);
 const rules = process.argv.at(-2);
 const record = fixture.record ?? { path: "$TARGET/main.js", rules: [{ identifier: "Fixture",
@@ -64,8 +69,8 @@ if (typeof record.path === "string") record.path = record.path.replace("$TARGET"
 for (const rule of Array.isArray(record.rules) ? record.rules : []) {
   if (typeof rule.namespace === "string") rule.namespace = rule.namespace.replace("$RULES", rules);
 }
-process.stdout.write(fixture.stdout ?? JSON.stringify(record) + "\\n");
-process.stderr.write(fixture.stderr ?? "");
+await new Promise(resolve => process.stdout.write(fixture.stdout ?? JSON.stringify(record) + "\\n", resolve));
+await new Promise(resolve => process.stderr.write(fixture.stderr ?? "", resolve));
 process.exit(fixture.status ?? 0);
 `,
   );
@@ -89,6 +94,62 @@ async function run(fixture: ProcessFixture = {}): ReturnType<typeof checkYara> {
 }
 
 describe("YARA-X process boundary", () => {
+  it("reports a process that disappears after its version probe", async () => {
+    await symlink(process.execPath, join(root, "node"));
+    vi.stubEnv("PATH", root);
+    const result = await run({ removeAfterVersion: true });
+    expect(result.findings).toContainEqual(expect.objectContaining({ id: "YARA_SCAN_ERROR" }));
+    expect(result.warnings.join(" ")).toContain("ENOENT");
+  });
+
+  it("bounds diagnostics while draining a noisy child", async () => {
+    const result = await run({ stderr: "diagnostic ".repeat(20_000) });
+    expect(result.warnings.join(" ")).toContain("diagnostics truncated");
+    expect(result.warnings.join(" ").length).toBeLessThan(70_000);
+    expect(result.findings).toContainEqual(expect.objectContaining({ id: "YARA_Fixture" }));
+  });
+
+  it("terminates a scan that exceeds its deadline", async () => {
+    await writeFile(join(root, "process.json"), JSON.stringify({ hang: true }));
+    await expect(
+      runYara(
+        ["scan", rules, root],
+        () => {},
+        () => {},
+        100,
+      ),
+    ).rejects.toThrow(/SIGKILL/);
+  });
+  it.each([null, 42, [{ identifier: "$a", offset: 999, match: "sentinel" }]])(
+    "retains valid rule matches when string evidence is malformed: %j",
+    async (strings) => {
+      const result = await run({
+        record: {
+          path: "$TARGET/main.js",
+          rules: [
+            {
+              identifier: "Matched",
+              namespace: "$RULES/a.yar",
+              meta: [["severity", "critical"]],
+              strings,
+            },
+          ],
+        },
+      });
+      expect(result.findings).toContainEqual(
+        expect.objectContaining({
+          id: "YARA_Matched",
+          severity: "critical",
+        }),
+      );
+      expect(result.warnings.join(" ")).toContain("string evidence");
+    },
+  );
+
+  it("reports records naming a file that was not scanned", async () => {
+    const result = await run({ record: { path: "$TARGET/unknown.js", rules: [] } });
+    expect(result.warnings.join(" ")).toContain("unknown file");
+  });
   it("retains valid rules on both sides of malformed rule metadata", async () => {
     const result = await run({
       record: {

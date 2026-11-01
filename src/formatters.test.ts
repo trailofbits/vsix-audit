@@ -2,7 +2,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { printBatchSummary, toSarif, toSarifCombined } from "#internal/formatters.js";
+import {
+  printBatchSummary,
+  printTextReport,
+  toSarif,
+  toSarifCombined,
+} from "#internal/formatters.js";
 import type { BatchScanResult, ScanResult } from "#internal/scanner/types.js";
 
 const result: ScanResult = {
@@ -147,6 +152,80 @@ describe("installed scan reports", () => {
 });
 
 describe("batch diagnostics", () => {
+  it("marks coverage failures even if the warning list is empty", () => {
+    const scan = {
+      ...result,
+      metadata: {
+        ...result.metadata,
+        coverage: {
+          degraded: true,
+          warnings: [],
+          incompleteModules: [],
+        },
+      },
+    };
+    const report = toSarif(scan, "test");
+    expect(report.runs[0]?.invocations?.[0]?.executionSuccessful).toBe(false);
+    expect(report.runs[0]?.invocations?.[0]?.toolExecutionNotifications[0]?.message.text).toContain(
+      "Incomplete scan coverage",
+    );
+  });
+
+  it("does not print a clean verdict for an incomplete individual scan", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const scan = {
+      ...result,
+      findings: [],
+      metadata: {
+        ...result.metadata,
+        coverage: {
+          degraded: true,
+          warnings: ["Native behavior is unexamined"],
+          incompleteModules: [],
+        },
+      },
+    };
+    printTextReport(scan);
+    const text = log.mock.calls.flat().join("\n");
+    expect(text).toContain("scan is incomplete");
+    expect(text).not.toContain("No security issues found");
+  });
+
+  it("escapes every untrusted part of a batch report", () => {
+    const attack = "bad\x1b[8m\r\u202e";
+    const scan: ScanResult = {
+      ...result,
+      extension: { ...result.extension, name: attack, version: attack },
+      findings: result.findings.map((finding) => ({
+        ...finding,
+        title: attack,
+        description: attack,
+        location: { file: attack },
+        metadata: { matches: [{ identifier: attack, offset: 0, match: attack }] },
+      })),
+      metadata: {
+        ...result.metadata,
+        sourcePath: attack,
+        coverage: {
+          degraded: true,
+          warnings: [attack],
+          incompleteModules: [],
+        },
+      },
+    };
+    const batch = failedBatch();
+    batch.errors = [{ path: attack, error: attack }];
+    batch.results = [scan];
+    batch.summary.totalFindings = 1;
+    batch.discovery = { roots: [attack], scope: attack };
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    printBatchSummary(batch);
+    const text = log.mock.calls.flat().join("\n");
+    expect(text).not.toContain("\x1b[8m");
+    expect(text).not.toContain("\r");
+    expect(text).not.toContain("\u202e");
+    expect(text).toContain("\\x1b[8m");
+  });
   it("shows timing data for clean batch results", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const batch = failedBatch();

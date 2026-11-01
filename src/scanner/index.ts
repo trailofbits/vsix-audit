@@ -38,6 +38,7 @@ import { INTEL_MODES, MODULE_NAMES, OUTPUT_FORMATS, SEVERITIES } from "#internal
 import type { ModuleName } from "#internal/scanner/types.js";
 import { extensionId } from "#internal/scanner/utils.js";
 import { loadExtension } from "#internal/scanner/vsix.js";
+import { nativeCoverageWarnings } from "#internal/scanner/native.js";
 
 export { MODULE_NAMES };
 export type {
@@ -377,7 +378,7 @@ export async function scanExtension(
 
   let findings: Finding[] = [];
   const inventory: CheckSummary[] = [];
-  const coverageWarnings: string[] = [];
+  const coverageWarnings: string[] = nativeCoverageWarnings(contents);
   const incompleteModules: ModuleName[] = [];
 
   const archiveFindings = archiveWarningsToFindings(contents);

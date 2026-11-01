@@ -1,8 +1,13 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import pc from "picocolors";
+import { reportJson, terminalText } from "#internal/terminal.js";
 import type {
   BatchScanResult,
+  CoverageMetadata,
+  Finding,
+  FindingMetadata,
+  InstalledScanScope,
   ModuleTimings,
   Registry,
   ScanResult,
@@ -20,15 +25,17 @@ interface SarifResult {
   ruleId: string;
   level: SarifLevel;
   message: { text: string };
+  properties?: FindingMetadata;
   locations: Array<{
     physicalLocation: {
       artifactLocation: { uri: string };
-      region: { startLine: number } | undefined;
+      region: { startLine?: number; startColumn?: number; byteOffset?: number } | undefined;
     };
   }>;
 }
 
 interface SarifRun {
+  columnKind: "utf16CodeUnits";
   tool: {
     driver: {
       name: string;
@@ -38,10 +45,15 @@ interface SarifRun {
     };
   };
   results: SarifResult[];
-  properties?: { sourcePath?: string; registry?: Registry };
+  properties?: {
+    sourcePath?: string;
+    registry?: Registry;
+    coverage?: CoverageMetadata;
+    discovery?: InstalledScanScope;
+  };
   invocations?: Array<{
     executionSuccessful: boolean;
-    toolExecutionNotifications: Array<{ level: "error"; message: { text: string } }>;
+    toolExecutionNotifications: Array<{ level: "error" | "warning"; message: { text: string } }>;
   }>;
 }
 
@@ -51,8 +63,54 @@ interface SarifReport {
   runs: SarifRun[];
 }
 
-function locationLineSuffix(line: number | undefined): string {
-  return line !== undefined && line !== 0 && !Number.isNaN(line) ? `:${line}` : "";
+function locationSuffix(location: NonNullable<Finding["location"]>): string {
+  if (location.line !== undefined && location.line > 0) {
+    return `:${location.line}` + (location.column === undefined ? "" : `:${location.column}`);
+  }
+  return location.byteOffset === undefined ? "" : ` (byte ${location.byteOffset})`;
+}
+
+function sarifTextRegion(location: NonNullable<Finding["location"]>): {
+  startLine?: number;
+  startColumn?: number;
+} {
+  const region: { startLine?: number; startColumn?: number } = {};
+  if (location.line !== undefined && Number.isInteger(location.line) && location.line > 0) {
+    region.startLine = location.line;
+    if (location.column !== undefined && Number.isInteger(location.column) && location.column > 0) {
+      region.startColumn = location.column;
+    }
+  }
+  return region;
+}
+
+function sarifRegion(
+  location: NonNullable<Finding["location"]>,
+): SarifResult["locations"][number]["physicalLocation"]["region"] {
+  const region: NonNullable<SarifResult["locations"][number]["physicalLocation"]["region"]> =
+    sarifTextRegion(location);
+  if (
+    location.byteOffset !== undefined &&
+    Number.isSafeInteger(location.byteOffset) &&
+    location.byteOffset >= 0
+  )
+    region.byteOffset = location.byteOffset;
+  return Object.keys(region).length === 0 ? undefined : region;
+}
+
+function sarifCoverage(run: SarifRun, coverage: CoverageMetadata): void {
+  if (!coverage.degraded) return;
+  run.properties = { ...run.properties, coverage };
+  const warnings =
+    coverage.warnings.length > 0
+      ? coverage.warnings
+      : [`Incomplete scan coverage: ${coverage.incompleteModules.join(", ") || "unknown cause"}`];
+  run.invocations = [
+    {
+      executionSuccessful: false,
+      toolExecutionNotifications: warnings.map((text) => ({ level: "warning", message: { text } })),
+    },
+  ];
 }
 
 function severityToSarifLevel(severity: Severity): SarifLevel {
@@ -67,6 +125,7 @@ function severityToSarifLevel(severity: Severity): SarifLevel {
 
 function createSarifRun(toolVersion: string, rules: SarifRule[]): SarifRun {
   return {
+    columnKind: "utf16CodeUnits",
     tool: {
       driver: {
         name: "vsix-audit",
@@ -105,6 +164,7 @@ export function toSarif(result: ScanResult, toolVersion: string): SarifReport {
     ruleId: f.id,
     level: severityToSarifLevel(f.severity),
     message: { text: f.description },
+    ...(f.metadata === undefined ? {} : { properties: f.metadata }),
     locations: f.location
       ? [
           {
@@ -115,17 +175,13 @@ export function toSarif(result: ScanResult, toolVersion: string): SarifReport {
                     ? f.location.file
                     : pathToFileURL(resolve(sourcePath, f.location.file)).href,
               },
-              region:
-                f.location.line !== undefined &&
-                f.location.line !== 0 &&
-                !Number.isNaN(f.location.line)
-                  ? { startLine: f.location.line }
-                  : undefined,
+              region: sarifRegion(f.location),
             },
           },
         ]
       : [],
   }));
+  sarifCoverage(run, result.metadata.coverage);
   return { $schema: SARIF_SCHEMA, version: "2.1.0", runs: [run] };
 }
 
@@ -136,6 +192,7 @@ export function toSarifCombined(
   results: ScanResult[],
   toolVersion: string,
   errors: BatchScanResult["errors"] = [],
+  discovery?: InstalledScanScope,
 ): SarifReport {
   const runs = results.flatMap((result) => toSarif(result, toolVersion).runs);
   if (errors.length > 0) {
@@ -150,6 +207,10 @@ export function toSarifCombined(
       },
     ];
     runs.push(run);
+  }
+  if (discovery !== undefined) {
+    if (runs.length === 0) runs.push(createSarifRun(toolVersion, []));
+    for (const run of runs) run.properties = { ...run.properties, discovery };
   }
   return {
     $schema: SARIF_SCHEMA,
@@ -199,7 +260,7 @@ function printTimings(timings: ModuleTimings): void {
   const entries: [string, number][] = [["Load", timings.load]];
   for (const [key, value] of Object.entries(timings)) {
     if (key === "load" || key === "total") continue;
-    entries.push([displayName(key), value]);
+    entries.push([terminalText(displayName(key)), value]);
   }
 
   const maxNameLen = Math.max(...entries.map(([name]) => name.length));
@@ -225,11 +286,14 @@ function printCheckInventory(inventory: ScanResult["inventory"]): void {
   console.log(pc.cyan("Checks performed:"));
   for (const check of inventory) {
     if (check.enabled) {
-      console.log(`  ${pc.green("✓")} ${pc.bold(check.name.padEnd(14))}${check.description}`);
+      console.log(
+        `  ${pc.green("✓")} ${pc.bold(terminalText(check.name).padEnd(14))}` +
+          terminalText(check.description),
+      );
     } else {
       console.log(
-        `  ${pc.yellow("⚠")} ${pc.bold(check.name.padEnd(14))}` +
-          pc.dim(`Skipped (${check.skipReason})`),
+        `  ${pc.yellow("⚠")} ${pc.bold(terminalText(check.name).padEnd(14))}` +
+          pc.dim(`Skipped (${terminalText(check.skipReason)})`),
       );
     }
   }
@@ -240,7 +304,7 @@ function printCoverageWarnings(coverage: ScanResult["metadata"]["coverage"]): vo
   if (!coverage.degraded) return;
   console.log(pc.yellow("Coverage degraded:"));
   for (const warning of coverage.warnings.slice(0, 10)) {
-    console.log(`  ${pc.yellow("⚠")} ${warning}`);
+    console.log(`  ${pc.yellow("⚠")} ${terminalText(warning)}`);
   }
   if (coverage.warnings.length > 10) {
     console.log(`  ${pc.dim(`... and ${coverage.warnings.length - 10} more`)}`);
@@ -249,8 +313,32 @@ function printCoverageWarnings(coverage: ScanResult["metadata"]["coverage"]): vo
 }
 
 function printSource(result: ScanResult): void {
-  if (result.metadata.registry !== undefined) console.log(`Registry: ${result.metadata.registry}`);
-  if (result.metadata.sourcePath !== undefined) console.log(`Path: ${result.metadata.sourcePath}`);
+  if (result.metadata.registry !== undefined)
+    console.log(`Registry: ${terminalText(result.metadata.registry)}`);
+  if (result.metadata.sourcePath !== undefined)
+    console.log(`Path: ${terminalText(result.metadata.sourcePath)}`);
+}
+
+function printFinding(finding: Finding): void {
+  const color = severityColor(finding.severity);
+  console.log(`  ${color(`[${finding.severity.toUpperCase()}]`)} ${terminalText(finding.title)}`);
+  console.log(`  ${pc.dim(terminalText(finding.description))}`);
+  if (finding.location) {
+    console.log(
+      `  ${pc.dim(`at ${terminalText(finding.location.file)}` + locationSuffix(finding.location))}`,
+    );
+  }
+  const matches = finding.metadata?.matches ?? [];
+  for (const match of matches.slice(0, 5)) {
+    console.log(
+      `  ${terminalText(match.identifier)} at byte ${match.offset}: ` + terminalText(match.match),
+    );
+  }
+  const remaining = (finding.metadata?.totalMatches ?? matches.length) - 5;
+  if (remaining > 0) {
+    console.log(`  ... and ${remaining} more string matches. JSON/SARIF retains up to 20.`);
+  }
+  console.log();
 }
 
 export function printTextReport(result: ScanResult): void {
@@ -258,10 +346,15 @@ export function printTextReport(result: ScanResult): void {
   console.log(pc.bold("vsix-audit scan results"));
   console.log(pc.dim("─".repeat(50)));
   console.log();
-  console.log(`${pc.cyan("Extension:")} ${result.extension.name} v${result.extension.version}`);
-  console.log(`${pc.cyan("Publisher:")} ${result.extension.publisher ?? "(unknown)"}`);
+  console.log(
+    `${pc.cyan("Extension:")} ${terminalText(result.extension.name)} ` +
+      `v${terminalText(result.extension.version)}`,
+  );
+  console.log(
+    `${pc.cyan("Publisher:")} ${terminalText(result.extension.publisher ?? "(unknown)")}`,
+  );
   printSource(result);
-  console.log(`${pc.cyan("Scanned:")} ${result.metadata.scannedAt}`);
+  console.log(`${pc.cyan("Scanned:")} ${terminalText(result.metadata.scannedAt)}`);
   console.log();
 
   printCheckInventory(result.inventory);
@@ -273,24 +366,18 @@ export function printTextReport(result: ScanResult): void {
   printCoverageWarnings(result.metadata.coverage);
 
   if (result.findings.length === 0) {
-    console.log(pc.green("✓ No security issues found"));
+    console.log(
+      result.metadata.coverage.degraded
+        ? pc.yellow("No findings in completed checks. The scan is incomplete.")
+        : pc.green("✓ No security issues found"),
+    );
     return;
   }
 
   console.log(pc.yellow(`Found ${result.findings.length} issue(s):`));
   console.log();
 
-  for (const finding of result.findings) {
-    const color = severityColor(finding.severity);
-    console.log(`  ${color(`[${finding.severity.toUpperCase()}]`)} ${finding.title}`);
-    console.log(`  ${pc.dim(finding.description)}`);
-    if (finding.location) {
-      console.log(
-        `  ${pc.dim(`at ${finding.location.file}${locationLineSuffix(finding.location.line)}`)}`,
-      );
-    }
-    console.log();
-  }
+  for (const finding of result.findings) printFinding(finding);
 }
 
 function printBatchFindings(results: ScanResult[]): void {
@@ -299,19 +386,10 @@ function printBatchFindings(results: ScanResult[]): void {
     console.log(pc.cyan("Extensions with findings:"));
     console.log();
     for (const r of withFindings) {
-      console.log(pc.bold(`${r.extension.name} v${r.extension.version}`));
+      console.log(pc.bold(terminalText(`${r.extension.name} v${r.extension.version}`)));
       printSource(r);
       console.log(pc.dim("─".repeat(40)));
-      for (const finding of r.findings) {
-        const color = severityColor(finding.severity);
-        console.log(`  ${color(`[${finding.severity.toUpperCase()}]`)} ${finding.title}`);
-        console.log(`  ${pc.dim(finding.description)}`);
-        if (finding.location) {
-          const { file, line } = finding.location;
-          console.log(`  ${pc.dim(`at ${file}${locationLineSuffix(line)}`)}`);
-        }
-        console.log();
-      }
+      for (const finding of r.findings) printFinding(finding);
     }
   }
 }
@@ -321,8 +399,8 @@ function printBatchErrors(errors: BatchScanResult["errors"]): void {
     console.log();
     console.log(pc.cyan("Failed targets:"));
     for (const e of errors) {
-      console.log(`  - ${e.path}`);
-      console.log(`    ${pc.dim(e.error)}`);
+      console.log(`  - ${terminalText(e.path)}`);
+      console.log(`    ${pc.dim(terminalText(e.error))}`);
     }
   }
 }
@@ -330,7 +408,7 @@ function printBatchErrors(errors: BatchScanResult["errors"]): void {
 function printBatchTimings(results: ScanResult[]): void {
   for (const result of results) {
     if (!result.metadata.timings) continue;
-    console.log(pc.bold(`${result.extension.name} v${result.extension.version}`));
+    console.log(pc.bold(terminalText(`${result.extension.name} v${result.extension.version}`)));
     printSource(result);
     printTimings(result.metadata.timings);
   }
@@ -343,8 +421,8 @@ function printBatchCoverage(results: ScanResult[]): void {
     const source = result.metadata.sourcePath ?? result.extension.id;
     const registry = result.metadata.registry;
     const label = registry === undefined ? source : `${registry}:${source}`;
-    console.log(pc.yellow(`Coverage degraded: ${label}`));
-    for (const warning of coverage.warnings) console.log(`  ${warning}`);
+    console.log(pc.yellow(`Coverage degraded: ${terminalText(label)}`));
+    for (const warning of coverage.warnings) console.log(`  ${terminalText(warning)}`);
     console.log();
   }
 }
@@ -360,7 +438,17 @@ function printRegistryResults(results: ScanResult[]): void {
   });
   if (rows.length === 0) return;
   console.log(pc.cyan("Registry results:"));
-  for (const row of rows) console.log(`  ${row}`);
+  for (const row of rows) console.log(`  ${terminalText(row)}`);
+  console.log();
+}
+
+function printDiscovery(discovery: InstalledScanScope | undefined, results: ScanResult[]): void {
+  if (discovery === undefined) return;
+  console.log(`Scope: ${terminalText(discovery.scope)}`);
+  for (const root of discovery.roots) console.log(`Store: ${terminalText(root)}`);
+  for (const result of results) {
+    console.log(`Scanned extension: ${terminalText(result.metadata.sourcePath)}`);
+  }
   console.log();
 }
 
@@ -371,10 +459,11 @@ export function printBatchSummary(batch: BatchScanResult): void {
   console.log(pc.bold("Batch Scan Summary"));
   console.log(pc.dim("─".repeat(50)));
   console.log();
-  console.log(`Extensions scanned: ${summary.scannedFiles}/${summary.totalFiles}`);
+  console.log(`Targets scanned: ${summary.scannedFiles}/${summary.totalFiles}`);
   if (summary.failedFiles > 0) console.log(`Failed: ${pc.red(String(summary.failedFiles))}`);
   console.log(`Duration: ${(summary.scanDuration / 1000).toFixed(1)}s`);
   console.log();
+  printDiscovery(batch.discovery, results);
   printBatchErrors(errors);
   printRegistryResults(results);
   printBatchTimings(results);
@@ -402,9 +491,9 @@ export function printBatchSummary(batch: BatchScanResult): void {
  */
 export function outputResult(result: ScanResult, format: string, toolVersion: string): void {
   if (format === "json") {
-    console.log(JSON.stringify(result, null, 2));
+    console.log(reportJson(result));
   } else if (format === "sarif") {
-    console.log(JSON.stringify(toSarif(result, toolVersion), null, 2));
+    console.log(reportJson(toSarif(result, toolVersion)));
   } else {
     printTextReport(result);
   }
@@ -419,13 +508,16 @@ export function outputBatchResult(
   toolVersion: string,
 ): void {
   if (format === "json") {
-    console.log(JSON.stringify(batchResult, null, 2));
+    console.log(reportJson(batchResult));
   } else if (format === "sarif") {
     console.log(
-      JSON.stringify(
-        toSarifCombined(batchResult.results, toolVersion, batchResult.errors),
-        null,
-        2,
+      reportJson(
+        toSarifCombined(
+          batchResult.results,
+          toolVersion,
+          batchResult.errors,
+          batchResult.discovery,
+        ),
       ),
     );
   } else {

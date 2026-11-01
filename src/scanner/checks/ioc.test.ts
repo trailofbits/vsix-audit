@@ -146,14 +146,14 @@ describe("checkDomains", () => {
     expect(findings.some((f) => f.id === "KNOWN_C2_DOMAIN")).toBe(true);
   });
 
-  it("skips non-scannable files", () => {
+  it("checks known domains in files regardless of their extension", () => {
     const contents = makeContents({
       "image.png": "evil-c2.example.com",
     });
     const knownDomains = new Set(["evil-c2.example.com"]);
 
     const findings = checkDomains(contents, knownDomains);
-    expect(findings).toHaveLength(0);
+    expect(findings).toMatchObject([{ id: "KNOWN_C2_DOMAIN", location: { file: "image.png" } }]);
   });
 
   it("does not flag unknown domains", () => {
@@ -455,6 +455,36 @@ describe("checkWallets", () => {
 });
 
 describe("checkIocs", () => {
+  it.each(["binding.node", "payload.dat", "icon.png"])(
+    "retains known network indicators and byte offsets in %s",
+    (file) => {
+      const bytes = Buffer.from(
+        [
+          "\xff",
+          "https://evil.example.com",
+          "185.234.123.45",
+          "https://github.com/eviluser/repo/",
+        ].join("\0"),
+        "latin1",
+      );
+      const contents = makeContents({});
+      contents.files.set(file, bytes);
+      const findings = checkIocs(
+        contents,
+        makeZooData({
+          domains: new Set(["evil.example.com"]),
+          ips: new Set(["185.234.123.45"]),
+          githubC2Accounts: new Set(["eviluser"]),
+        }),
+      );
+      const domain = findings.find((finding) => finding.id === "KNOWN_C2_DOMAIN");
+      const ip = findings.find((finding) => finding.id === "KNOWN_C2_IP");
+      const github = findings.find((finding) => finding.id === "KNOWN_GITHUB_C2");
+      expect(domain?.location).toEqual({ file, byteOffset: bytes.indexOf("evil.example.com") });
+      expect(ip?.location).toEqual({ file, byteOffset: bytes.indexOf("185.234.123.45") });
+      expect(github?.location).toEqual({ file, byteOffset: bytes.indexOf("github.com/eviluser/") });
+    },
+  );
   it("combines all IOC checks", () => {
     const contents = makeContents({
       "extension.js": 'fetch("https://evil.example.com"); const ip = "185.234.123.45";',
@@ -905,13 +935,13 @@ describe("checkGithubC2", () => {
     expect(findings).toHaveLength(0);
   });
 
-  it("skips non-scannable files", () => {
+  it("checks known GitHub C2 references regardless of file extension", () => {
     const contents = makeContents({
       "image.png": "https://github.com/eviluser/c2repo/",
     });
 
     const findings = checkGithubC2(contents, new Set(["eviluser"]));
-    expect(findings).toHaveLength(0);
+    expect(findings).toMatchObject([{ id: "KNOWN_GITHUB_C2", location: { file: "image.png" } }]);
   });
 
   it("reports correct line number", () => {
