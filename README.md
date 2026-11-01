@@ -1,6 +1,37 @@
 # vsix-audit
 
-Security scanner for VS Code extensions. Detects malicious extensions before installation by analyzing code patterns, indicators of compromise, and known malware signatures.
+Security scanner for VS Code extensions. Extracts source observations and security
+findings so you can review extension behavior before installation or in a local editor store.
+
+## Reviewing behavior
+
+`vsix-audit info <extension> --verbose` summarizes source observations and detector
+indicators separately. JSON scan reports retain every observation in `observations`.
+SARIF reports retain them in each run's `properties.observations` without creating
+security alerts for ordinary behavior.
+
+```bash
+vsix-audit scan ./extension --output json --no-threat-intel > report.json
+jq '.observations[] | select(.kind == "network-request")' report.json
+```
+
+Observations include the API, arguments, evidence type, and original source span.
+They survive severity filtering and changes to threat intelligence. You can inspect
+network destinations, filesystem paths, process commands, and unresolved arguments
+when deciding which behavior to allow. Findings retain separate severity judgments.
+
+The AST module recognizes common Node filesystem and process APIs, network clients,
+VS Code authentication APIs, code execution, and module loads. It resolves direct
+ESM imports, CommonJS `require`, simple aliases, and lexical shadowing. Imports are
+distinguished from calls. Computed arguments remain explicitly unresolved.
+
+These are observations of source syntax. The scanner does not establish reachability
+or recover every dynamic operation, cross-module flow, bundler wrapper, or mutated
+alias. Literal values are bounded to 4,096 characters, collections to 64 entries, and
+argument nesting to eight levels; larger values remain unresolved. Excerpts contain
+up to 200 UTF-16 code units, and source spans identify the full original expressions.
+Coverage diagnostics describe failed or incomplete checks. An empty observation
+list does not establish that an extension lacks a capability.
 
 ## The Problem
 
@@ -429,14 +460,17 @@ The `zoo/` directory contains threat intelligence for detection:
 
 ### Malware Samples (for development)
 
-Malware samples are in a separate private repository ([trailofbits/vsix-zoo](https://github.com/trailofbits/vsix-zoo)) to avoid Dependabot alerts and AV triggers.
+Malware samples are kept in [vsix-zoo](https://github.com/trailofbits/vsix-zoo).
+The CI workflow pins the specimen revision and installs a checksum-verified YARA-X build.
 
 ```bash
-# Clone the samples repo (requires access)
-git clone git@github.com:trailofbits/vsix-zoo.git ../vsix-zoo
+# Clone the pinned sample revision used by CI
+git clone https://github.com/trailofbits/vsix-zoo.git ../vsix-zoo
+git -C ../vsix-zoo checkout 9216b078c2ec939a3ebb36dbd2c402d0f739b282
 
-# Run tests with samples
-VSIX_ZOO_PATH=../vsix-zoo/samples npm test
+# Provision the benign corpus and run the required corpus tests (requires yr)
+npm run corpus:download
+VSIX_ZOO_PATH=../vsix-zoo/samples npm run test:corpus
 ```
 
 ### Benign False-Positive Corpus
@@ -453,7 +487,7 @@ vsix-audit scan test-corpus/clean --recursive
 # Generate a false-positive report
 npm run corpus:report
 
-# Fail if any never-in-clean findings appear
+# Fail on never-in-clean findings or unexpected coverage gaps
 npm run corpus:check
 ```
 
@@ -465,7 +499,13 @@ cd vsix-audit
 npm install
 prek install   # pre-commit hooks
 npm run check  # typecheck + type-aware lint + formatting + tests
+npm run test:mutations  # verify behavior acceptance tests catch deliberate defects
 ```
+
+Fast tests use deterministic fixtures without registry downloads. CLI tests compare
+directory, VSIX, and installed scans, including an independently produced golden
+archive. Corpus tests require every pinned artifact and analyzer; missing inputs
+fail the run. The clean manifest records expected compiled-file coverage limits.
 
 ## License
 

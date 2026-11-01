@@ -46,12 +46,15 @@ describe("machine reports", () => {
     expect(JSON.parse(output)).toEqual(value);
   });
 
-  it("round-trips arbitrary JSON values without losing report data", () => {
+  it("preserves JSON semantics and escapes controls for arbitrary reports", () => {
     fc.assert(
       fc.property(fc.jsonValue(), (value) => {
         const output = reportJson({ value });
-        expect(JSON.parse(output)).toEqual({ value });
+        const expected: unknown = JSON.parse(JSON.stringify({ value }));
+        expect(JSON.parse(output) as unknown).toEqual(expected);
+        expect(output).not.toMatch(/[\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/);
       }),
+      { examples: [[-0], [[[-0]]]] },
     );
   });
 });

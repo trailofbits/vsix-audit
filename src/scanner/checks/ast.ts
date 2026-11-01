@@ -1,8 +1,16 @@
 import { parseSync, Visitor } from "oxc-parser";
 import type { Argument, CallExpression, NewExpression, Node, OxcError, Span } from "oxc-parser";
+import { SourceBindings } from "#internal/scanner/source-bindings.js";
+import { ObservationCollector } from "#internal/scanner/observations.js";
 import { hasGenuineObfuscation } from "#internal/scanner/bundler.js";
 import { isScannable, JS_EXTENSIONS } from "#internal/scanner/constants.js";
-import type { CheckResult, Finding, Severity, VsixContents } from "#internal/scanner/types.js";
+import type {
+  CheckResult,
+  Finding,
+  Observation,
+  Severity,
+  VsixContents,
+} from "#internal/scanner/types.js";
 import {
   computeLineStarts,
   getStringContent,
@@ -32,6 +40,7 @@ interface ASTContext {
   content: string;
   hasObfuscationIndicators: boolean;
   lineStarts: number[];
+  bindings: SourceBindings;
 }
 
 /**
@@ -45,11 +54,9 @@ function getCodeSnippet(
   maxLen = 100,
 ): string {
   const lineNum = offsetToLine(start, lineStarts);
-  const lines = content.split("\n");
-  const line = lines[lineNum - 1];
-  if (line === undefined || line === "") return "(no line)";
-
   const lineStart = lineStarts[lineNum - 1] ?? 0;
+  const nextLine = content.indexOf("\n", lineStart);
+  const line = content.slice(lineStart, nextLine === -1 ? undefined : nextLine);
   const colStart = start - lineStart;
   const colEnd = end - lineStart;
 
@@ -63,65 +70,19 @@ function getCodeSnippet(
   return snippet.slice(0, maxLen);
 }
 
-/**
- * Check if a node is an Identifier with a specific name.
- */
-function isIdentifier(node: Node | undefined, name?: string): boolean {
-  if (node?.type !== "Identifier") return false;
-  if (name !== undefined) {
-    return (node as { name: string }).name === name;
-  }
-  return true;
-}
-
-/**
- * Get the name of an identifier node.
- */
-function getIdentifierName(node: Node): string | null {
-  if (node.type === "Identifier") {
-    return (node as { name: string }).name;
-  }
-  return null;
-}
-
-/**
- * Check if a node is a call to a specific function name.
- */
-function isCallTo(node: Node, name: string | string[]): node is CallExpression {
+function isCallTo(node: Node, apis: string[], context: ASTContext): node is CallExpression {
   if (node.type !== "CallExpression") return false;
-
-  const names = Array.isArray(name) ? name : [name];
-  const callee = node.callee;
-
-  // Direct call: eval()
-  if (isIdentifier(callee)) {
-    const calleeName = getIdentifierName(callee);
-    if (calleeName !== null && calleeName !== "" && names.includes(calleeName)) {
-      return true;
-    }
-  }
-
-  // Member call: require("child_process").exec()
-  if (callee.type === "MemberExpression") {
-    const memberExpr = callee;
-    if (isIdentifier(memberExpr.property)) {
-      const propName = getIdentifierName(memberExpr.property);
-      if (propName !== null && propName !== "" && names.includes(propName)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
+  const api = context.bindings.resolve(node.callee);
+  return api !== null && apis.includes(api);
 }
 
 /**
  * Check if node is a new expression with specific constructor.
  */
-function isNewExpression(node: Node, name: string): node is NewExpression {
+function isNewExpression(node: Node, name: string, context: ASTContext): node is NewExpression {
   if (node.type !== "NewExpression") return false;
   const newExpr = node;
-  return isIdentifier(newExpr.callee, name);
+  return context.bindings.resolve(newExpr.callee) === `global.${name}`;
 }
 
 /**
@@ -155,10 +116,11 @@ const AST_PATTERNS: ASTPattern[] = [
     id: "AST_EVAL_DYNAMIC",
     title: "eval() with dynamic argument",
     description:
-      "eval() is called with a non-literal argument (variable or expression). This executes arbitrary code at runtime, making static analysis impossible.",
+      "eval() is called with a non-literal argument. " +
+      "Review where the argument comes from and what code it can execute.",
     severity: "high",
     detect: (node, context) => {
-      if (!isCallTo(node, "eval")) return null;
+      if (!isCallTo(node, ["global.eval"], context)) return null;
 
       const arg = node.arguments[0];
       if (!arg || isLiteral(arg)) return null;
@@ -183,7 +145,7 @@ const AST_PATTERNS: ASTPattern[] = [
       "new Function() creates executable code from strings, similar to eval(). This can execute arbitrary code and bypass static analysis.",
     severity: "high",
     detect: (node, context) => {
-      if (!isNewExpression(node, "Function")) return null;
+      if (!isNewExpression(node, "Function", context)) return null;
 
       // An empty literal body is commonly used as a code-generation feature probe.
       if (node.arguments.length === 1 && node.arguments[0]?.type === "Literal") {
@@ -211,11 +173,8 @@ const AST_PATTERNS: ASTPattern[] = [
       "require() is called with a variable or expression instead of a string literal. This can load arbitrary modules at runtime.",
     severity: "medium",
     detect: (node, context) => {
-      if (node.type !== "CallExpression") return null;
+      if (!isCallTo(node, ["global.require"], context)) return null;
       const callExpr = node;
-      if (!isIdentifier(callExpr.callee, "require")) {
-        return null;
-      }
 
       const arg = callExpr.arguments[0];
       if (!arg || isLiteral(arg)) return null;
@@ -293,14 +252,7 @@ const AST_PATTERNS: ASTPattern[] = [
       "Code accesses process.binding() or process._linkedBinding() which provide access to Node.js internals and can bypass security restrictions.",
     severity: "high",
     detect: (node, context) => {
-      if (!isCallTo(node, ["binding", "_linkedBinding"])) return null;
-
-      // Check if it's on process object
-      const callExpr = node;
-      if (callExpr.callee.type !== "MemberExpression") return null;
-
-      const memberExpr = callExpr.callee;
-      if (!isIdentifier(memberExpr.object, "process")) return null;
+      if (!isCallTo(node, ["process.binding", "process._linkedBinding"], context)) return null;
 
       const span = node as Span;
       return {
@@ -321,46 +273,13 @@ const AST_PATTERNS: ASTPattern[] = [
     detect: (node, context) => {
       if (node.type !== "MemberExpression") return null;
 
-      const memberExpr = node;
-      const obj = memberExpr.object;
-      if (!isIdentifier(obj)) return null;
-
-      const objName = getIdentifierName(obj);
-      if (
-        objName === null ||
-        objName === "" ||
-        !["globalThis", "window", "global", "self"].includes(objName)
-      ) {
-        return null;
-      }
-
-      const prop = memberExpr.property;
-      if (isIdentifier(prop, "eval")) {
-        const span = node as Span;
-        return {
-          start: span.start,
-          end: span.end,
-          codeSnippet: getCodeSnippet(context.content, span.start, span.end, context.lineStarts),
-          additionalInfo: null,
-        };
-      }
-
-      // Check string literal property: globalThis["eval"]
-      // OXC uses "Literal" type for string literals (ESTree spec)
-      if (prop.type === "Literal") {
-        const strLiteral = prop as { value: unknown };
-        if (strLiteral.value === "eval") {
-          const span = node as Span;
-          return {
-            start: span.start,
-            end: span.end,
-            codeSnippet: getCodeSnippet(context.content, span.start, span.end, context.lineStarts),
-            additionalInfo: null,
-          };
-        }
-      }
-
-      return null;
+      if (context.bindings.resolve(node) !== "global.eval") return null;
+      return {
+        start: node.start,
+        end: node.end,
+        codeSnippet: getCodeSnippet(context.content, node.start, node.end, context.lineStarts),
+        additionalInfo: null,
+      };
     },
     redFlags: ["Evasion of eval detection"],
   },
@@ -393,7 +312,12 @@ function recordParseRecovery(
 /**
  * Parse and analyze a JavaScript/TypeScript file for suspicious patterns.
  */
-function analyzeFile(filename: string, content: string, findings: Finding[]): boolean {
+function analyzeFile(
+  filename: string,
+  content: string,
+  findings: Finding[],
+  observations: Observation[],
+): boolean {
   const result = parseSync(filename.toLowerCase(), content, {
     sourceType: "unambiguous",
   });
@@ -407,13 +331,14 @@ function analyzeFile(filename: string, content: string, findings: Finding[]): bo
     content,
     hasObfuscationIndicators: hasObfuscationIndicators(content) || hasGenuineObfuscation(content),
     lineStarts,
+    bindings: new SourceBindings(result.program),
   };
 
   const seenFindings = new Set<string>();
 
   const addFinding = (pattern: ASTPattern, match: ASTMatch): void => {
     const line = offsetToLine(match.start, lineStarts);
-    const key = `${pattern.id}:${filename}:${line}`;
+    const key = `${pattern.id}:${filename}:${match.start}`;
     if (seenFindings.has(key)) return;
     seenFindings.add(key);
 
@@ -444,8 +369,9 @@ function analyzeFile(filename: string, content: string, findings: Finding[]): bo
     findings.push(finding);
   };
 
-  // Process patterns for each node type using typed visitors
+  const collector = new ObservationCollector(filename, content);
   const processNode = (node: Node): void => {
+    collector.visit(node, context.bindings);
     for (const pattern of AST_PATTERNS) {
       const match = pattern.detect(node, context);
       if (match) addFinding(pattern, match);
@@ -453,6 +379,9 @@ function analyzeFile(filename: string, content: string, findings: Finding[]): bo
   };
 
   const visitor = new Visitor({
+    ImportDeclaration(node): void {
+      collector.visit(node, context.bindings);
+    },
     CallExpression(node): void {
       processNode(node);
     },
@@ -467,7 +396,12 @@ function analyzeFile(filename: string, content: string, findings: Finding[]): bo
     },
   });
 
-  visitor.visit(result.program);
+  try {
+    visitor.visit(result.program);
+  } finally {
+    for (const observation of collector.observations) observations.push(observation);
+  }
+  if (context.bindings.failure !== undefined) throw context.bindings.failure;
   return result.errors.length === 0;
 }
 
@@ -504,6 +438,7 @@ function recordASTFailure(findings: Finding[], filename: string, error: unknown)
 export function checkAST(contents: VsixContents): CheckResult {
   const findings: Finding[] = [];
   const warnings: string[] = [];
+  const observations: Observation[] = [];
 
   for (const [filename, buffer] of contents.files) {
     // Only analyze JS/TS files
@@ -513,7 +448,7 @@ export function checkAST(contents: VsixContents): CheckResult {
     const content = getStringContent(contents, filename, buffer);
 
     try {
-      if (!analyzeFile(filename, content, findings)) {
+      if (!analyzeFile(filename, content, findings, observations)) {
         warnings.push(
           `AST analysis incomplete for ${JSON.stringify(filename)}; inspect it manually.`,
         );
@@ -526,5 +461,5 @@ export function checkAST(contents: VsixContents): CheckResult {
     }
   }
 
-  return { findings, warnings };
+  return { findings, warnings, observations };
 }

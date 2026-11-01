@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deflateRawSync } from "node:zlib";
+import { crc32, deflateRawSync } from "node:zlib";
+import { createTestZip } from "#internal/test-support/zip.js";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { scanExtension } from "#internal/scanner/index.js";
 import {
@@ -135,141 +136,12 @@ describe("archive and directory coverage", () => {
   });
 });
 
-/**
- * Create a minimal ZIP file buffer for testing.
- * Supports data descriptors (bit 3) which cause local header sizes to be 0,
- * and STORED (method 0) entries alongside the default deflate.
- */
-function createTestZip(
-  files: Array<{
-    name: string;
-    content: string;
-    rawName?: Buffer;
-    extraFields?: Buffer;
-    utf8Name?: boolean;
-    stored?: boolean;
-  }>,
-  options: { useDataDescriptor?: boolean } = {},
-): Buffer {
-  const { useDataDescriptor = false } = options;
-  const chunks: Buffer[] = [];
-  const centralDirEntries: Buffer[] = [];
-
-  for (const file of files) {
-    const localHeaderOffset = chunks.reduce((sum, buf) => sum + buf.length, 0);
-    const content = Buffer.from(file.content, "utf8");
-    const compressionMethod = file.stored === true ? 0 : 8;
-    const compressed = file.stored === true ? content : deflateRawSync(content);
-    const fileName = file.rawName ?? Buffer.from(file.name, "utf8");
-    const extraFields = file.extraFields ?? Buffer.alloc(0);
-
-    // General purpose bit flag: bit 3 = data descriptor, bit 11 = UTF-8 names.
-    const gpBitFlag =
-      (useDataDescriptor ? 0x0008 : 0x0000) | (file.utf8Name === false ? 0 : 0x0800);
-
-    // Local file header (30 bytes + filename)
-    const localHeader = Buffer.alloc(30 + fileName.length + extraFields.length);
-    localHeader.writeUInt32LE(0x04034b50, 0); // signature
-    localHeader.writeUInt16LE(20, 4); // version needed
-    localHeader.writeUInt16LE(gpBitFlag, 6); // general purpose bit flag
-    localHeader.writeUInt16LE(compressionMethod, 8); // compression method
-    localHeader.writeUInt16LE(0, 10); // mod time
-    localHeader.writeUInt16LE(0, 12); // mod date
-    // CRC and sizes: 0 if data descriptor, actual values otherwise
-    if (useDataDescriptor) {
-      localHeader.writeUInt32LE(0, 14); // crc32 = 0
-      localHeader.writeUInt32LE(0, 18); // compressed size = 0
-      localHeader.writeUInt32LE(0, 22); // uncompressed size = 0
-    } else {
-      localHeader.writeUInt32LE(crc32(content), 14);
-      localHeader.writeUInt32LE(compressed.length, 18);
-      localHeader.writeUInt32LE(content.length, 22);
-    }
-    localHeader.writeUInt16LE(fileName.length, 26);
-    localHeader.writeUInt16LE(extraFields.length, 28);
-    fileName.copy(localHeader, 30);
-    extraFields.copy(localHeader, 30 + fileName.length);
-    chunks.push(localHeader);
-
-    // Compressed data
-    chunks.push(compressed);
-
-    // Data descriptor (if bit 3 set) - 16 bytes with signature
-    if (useDataDescriptor) {
-      const dataDesc = Buffer.alloc(16);
-      dataDesc.writeUInt32LE(0x08074b50, 0); // signature (optional but common)
-      dataDesc.writeUInt32LE(crc32(content), 4);
-      dataDesc.writeUInt32LE(compressed.length, 8);
-      dataDesc.writeUInt32LE(content.length, 12);
-      chunks.push(dataDesc);
-    }
-
-    // Central directory entry (46 bytes + filename)
-    const cdEntry = Buffer.alloc(46 + fileName.length + extraFields.length);
-    cdEntry.writeUInt32LE(0x02014b50, 0); // signature
-    cdEntry.writeUInt16LE(20, 4); // version made by
-    cdEntry.writeUInt16LE(20, 6); // version needed
-    cdEntry.writeUInt16LE(gpBitFlag, 8); // general purpose bit flag
-    cdEntry.writeUInt16LE(compressionMethod, 10); // compression method
-    cdEntry.writeUInt16LE(0, 12); // mod time
-    cdEntry.writeUInt16LE(0, 14); // mod date
-    cdEntry.writeUInt32LE(crc32(content), 16); // crc32 (always correct in CD)
-    cdEntry.writeUInt32LE(compressed.length, 20); // compressed size (always correct)
-    cdEntry.writeUInt32LE(content.length, 24); // uncompressed size (always correct)
-    cdEntry.writeUInt16LE(fileName.length, 28);
-    cdEntry.writeUInt16LE(extraFields.length, 30);
-    cdEntry.writeUInt16LE(0, 32); // comment length
-    cdEntry.writeUInt16LE(0, 34); // disk number start
-    cdEntry.writeUInt16LE(0, 36); // internal file attributes
-    cdEntry.writeUInt32LE(0, 38); // external file attributes
-    cdEntry.writeUInt32LE(localHeaderOffset, 42); // relative offset of local header
-    fileName.copy(cdEntry, 46);
-    extraFields.copy(cdEntry, 46 + fileName.length);
-    centralDirEntries.push(cdEntry);
-  }
-
-  const cdOffset = chunks.reduce((sum, buf) => sum + buf.length, 0);
-  const cdSize = centralDirEntries.reduce((sum, buf) => sum + buf.length, 0);
-
-  // Add central directory entries
-  chunks.push(...centralDirEntries);
-
-  // End of central directory (22 bytes)
-  const eocd = Buffer.alloc(22);
-  eocd.writeUInt32LE(0x06054b50, 0); // signature
-  eocd.writeUInt16LE(0, 4); // disk number
-  eocd.writeUInt16LE(0, 6); // disk with CD
-  eocd.writeUInt16LE(files.length, 8); // entries on this disk
-  eocd.writeUInt16LE(files.length, 10); // total entries
-  eocd.writeUInt32LE(cdSize, 12); // size of CD
-  eocd.writeUInt32LE(cdOffset, 16); // offset to CD
-  eocd.writeUInt16LE(0, 20); // comment length
-  chunks.push(eocd);
-
-  return Buffer.concat(chunks);
-}
-
-/**
- * Simple CRC32 implementation for test ZIP creation.
- */
-function crc32(data: Buffer): number {
-  let crc = 0xffffffff;
-  for (const byte of data) {
-    crc ^= byte;
-    for (let i = 0; i < 8; i++) {
-      crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
 function createUnicodePathExtraField(rawName: Buffer, unicodeName: string): Buffer {
-  const unicodeNameBuffer = Buffer.from(unicodeName, "utf8");
-  const data = Buffer.alloc(5 + unicodeNameBuffer.length);
+  const name = Buffer.from(unicodeName, "utf8");
+  const data = Buffer.alloc(5 + name.length);
   data.writeUInt8(1, 0);
   data.writeUInt32LE(crc32(rawName), 1);
-  unicodeNameBuffer.copy(data, 5);
-
+  name.copy(data, 5);
   const field = Buffer.alloc(4 + data.length);
   field.writeUInt16LE(0x7075, 0);
   field.writeUInt16LE(data.length, 2);

@@ -69,6 +69,46 @@ export const CAPABILITY_NAMES = [
 ] as const;
 export type Capability = (typeof CAPABILITY_NAMES)[number];
 
+export type ObservationKind =
+  | "network-request"
+  | "network-client"
+  | "file-read"
+  | "file-write"
+  | "process-execution"
+  | "code-execution"
+  | "module-load"
+  | "credential-access"
+  | "dynamic-call";
+
+/** Statically available argument values; unresolved expressions are never evaluated. */
+export type ObservedValue =
+  | { kind: "literal"; value: string | number | boolean | null }
+  | { kind: "array"; items: ObservedValue[] }
+  | { kind: "object"; properties: Record<string, ObservedValue> }
+  | { kind: "unresolved"; expression: string };
+
+/** A source observation describes syntax, without asserting reachability or maliciousness. */
+export interface Observation {
+  kind: ObservationKind;
+  capability: Capability;
+  api: string;
+  evidence: "call" | "import";
+  arguments: ObservedValue[];
+  /** Source excerpt, limited to 200 UTF-16 code units; the location retains the full span. */
+  snippet: string;
+  location: {
+    file: string;
+    /** One-based lines and UTF-16 columns, with an exclusive end. */
+    line: number;
+    column: number;
+    endLine: number;
+    endColumn: number;
+    /** Zero-based UTF-16 offsets into the original source, with an exclusive end. */
+    start: number;
+    end: number;
+  };
+}
+
 export interface Finding {
   readonly id: string;
   readonly title: string;
@@ -90,6 +130,7 @@ export interface Finding {
 export interface CheckResult {
   findings: Finding[];
   warnings: string[];
+  observations?: Observation[];
 }
 
 export interface CheckSummary {
@@ -109,6 +150,8 @@ export interface ScanResult {
     readonly publisher?: string;
   };
   readonly findings: Finding[];
+  /** Source facts retained independently of threat intelligence and severity filtering. */
+  readonly observations: Observation[];
   readonly inventory: CheckSummary[];
   metadata: {
     scannedAt: string;

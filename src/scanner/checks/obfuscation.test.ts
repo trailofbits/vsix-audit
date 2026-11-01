@@ -1,5 +1,5 @@
+import { makeContents } from "#internal/test-support/fixtures.js";
 import { describe, expect, it } from "vitest";
-import type { VsixContents, VsixManifest } from "#internal/scanner/types.js";
 import { checkObfuscation } from "#internal/scanner/checks/obfuscation.js";
 
 describe("source-independent Unicode detection", () => {
@@ -48,21 +48,6 @@ describe("source-independent Unicode detection", () => {
     },
   );
 });
-
-function makeContents(files: Record<string, string>): VsixContents {
-  const manifest: VsixManifest = {
-    name: "test-extension",
-    publisher: "test",
-    version: "1.0.0",
-  };
-
-  const fileMap = new Map<string, Buffer>();
-  for (const [name, content] of Object.entries(files)) {
-    fileMap.set(name, Buffer.from(content, "utf8"));
-  }
-
-  return { manifest, files: fileMap, basePath: "/test" };
-}
 
 describe("checkObfuscation", () => {
   // ============================================================================

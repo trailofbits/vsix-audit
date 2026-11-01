@@ -1,0 +1,9 @@
+{
+  "name": "behavior-fixture",
+  "version": "1.0.0",
+  "publisher": "review",
+  "main": "main.js",
+  "activationEvents": [
+    "onCommand:review.run"
+  ]
+}

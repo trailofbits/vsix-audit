@@ -1,47 +1,24 @@
+import { makeContents } from "#internal/test-support/fixtures.js";
 import { describe, expect, it, vi } from "vitest";
 import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { VsixContents, VsixManifest } from "#internal/scanner/types.js";
 import { checkYara, isYaraAvailable, listYaraRules } from "#internal/scanner/checks/yara.js";
 import { scanExtension } from "#internal/scanner/index.js";
+import { extractCapabilities } from "#internal/scanner/capabilities.js";
 
 const yaraAvailable = await isYaraAvailable();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ZOO_YARA_DIR = join(__dirname, "..", "..", "..", "zoo", "signatures", "yara");
 
-function makeContents(files: Record<string, string>): VsixContents {
-  const manifest: VsixManifest = {
-    name: "test-extension",
-    publisher: "test",
-    version: "1.0.0",
-  };
-
-  const fileMap = new Map<string, Buffer>();
-  for (const [name, content] of Object.entries(files)) {
-    fileMap.set(name, Buffer.from(content, "utf8"));
-  }
-
-  return { manifest, files: fileMap, basePath: "/test" };
-}
-
-describe("isYaraAvailable", () => {
-  it("returns boolean indicating YARA installation status", async () => {
-    const result = await isYaraAvailable();
-
-    // This will be true if yara is installed, false otherwise
-    expect(typeof result).toBe("boolean");
-  });
-});
-
 describe("listYaraRules", () => {
   it("lists YARA rule files in zoo directory", async () => {
     const rules = await listYaraRules(ZOO_YARA_DIR);
 
     // We should have some YARA rules in the zoo
-    expect(Array.isArray(rules)).toBe(true);
+    expect(rules).toContain("data_exfiltration.yar");
     // All files should have .yar or .yara extension
     expect(rules.every((r) => r.endsWith(".yar") || r.endsWith(".yara"))).toBe(true);
   });
@@ -66,6 +43,9 @@ describe("checkYara", () => {
         "readFile",
         "remoteCommand",
         "parseCommand",
+        "Firefox",
+        "IndexedDB",
+        "readFileSync",
       ]),
     });
     const result = await checkYara(contents);
@@ -77,6 +57,7 @@ describe("checkYara", () => {
       "LOADER_JS_Download_Write_Execute_Jan25",
       "STEALER_JS_Credential_File_Exfil_Jan25",
       "RAT_JS_GlassWorm_Remote_Exec_Jan25",
+      "STEALER_JS_Browser_Data_Theft_Jan25",
     ]) {
       expect(result.findings.find((finding) => finding.id === `YARA_${rule}`)).toMatchObject({
         severity: "medium",
@@ -84,6 +65,11 @@ describe("checkYara", () => {
       });
     }
     expect(result.findings.some((finding) => finding.severity === "critical")).toBe(false);
+    const capabilities = extractCapabilities({ findings: result.findings, observations: [] });
+    expect(capabilities.credentials.detected).toBe(false);
+    expect(capabilities.credentials.indicators.map((finding) => finding.id)).toContain(
+      "YARA_STEALER_JS_Browser_Data_Theft_Jan25",
+    );
   });
 
   it.skipIf(!yaraAvailable)(
@@ -207,49 +193,12 @@ describe("checkYara", () => {
     },
   );
 
-  it.skipIf(!yaraAvailable)("handles extension with potentially suspicious content", async () => {
-    // Create content that might match YARA rules
-    // This includes variation selectors (U+FE00-FE0F) and eval
-    const suspiciousContent = `
-      const payload = "test\uFE01\uFE02\uFE03";
-      eval(atob(payload));
-    `;
-
-    const contents = makeContents({
-      "extension.js": suspiciousContent,
-    });
-
-    const { findings } = await checkYara(contents);
-
-    // Should return array of findings (might match rules depending on rule content)
-    expect(Array.isArray(findings)).toBe(true);
-  });
-
-  it.skipIf(!yaraAvailable)("includes metadata when rules match", async () => {
-    const contents = makeContents({
-      "extension.js": `
-        const wallet = "metamask";
-        const key = ".ssh/id_rsa";
-        eval(Buffer.from("Y29kZQ==", "base64").toString());
-      `,
-    });
-
-    const { findings } = await checkYara(contents);
-
-    // If any YARA rules matched, finding ID should include rule name
-    for (const finding of findings.filter((item) => item.id !== "YARA_NOT_INSTALLED")) {
-      expect(finding.id).toMatch(/^YARA_/);
-      expect(finding.metadata?.["rule"]).toBeDefined();
-    }
-  });
-
   it.skipIf(!yaraAvailable)("handles empty extension gracefully", async () => {
     const contents = makeContents({});
 
     const { findings } = await checkYara(contents);
 
-    // Should not throw and should return array
-    expect(Array.isArray(findings)).toBe(true);
+    expect(findings).toEqual([]);
   });
 
   it.skipIf(!yaraAvailable)("detects PowerShell hidden window pattern", async () => {

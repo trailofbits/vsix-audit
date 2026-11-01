@@ -136,6 +136,7 @@ describe("streamed YARA records", () => {
         (value, sizes) => {
           const record = { payload: value };
           const bytes = Buffer.from(JSON.stringify(record));
+          const expected: unknown = JSON.parse(bytes.toString("utf8"));
           const chunks: Buffer[] = [];
           let offset = 0;
           let step = 0;
@@ -145,9 +146,10 @@ describe("streamed YARA records", () => {
             offset += size;
             step++;
           }
-          expect(read(chunks)).toEqual({ records: [record], errors: [] });
+          expect(read(chunks)).toEqual({ records: [expected], errors: [] });
         },
       ),
+      { examples: [[-0, [1]]] },
     );
   });
 });

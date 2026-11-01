@@ -1,5 +1,5 @@
+import { makeContents } from "#internal/test-support/fixtures.js";
 import { describe, expect, it } from "vitest";
-import type { VsixContents, VsixManifest } from "#internal/scanner/types.js";
 import { checkAST } from "#internal/scanner/checks/ast.js";
 
 describe("dynamic arguments", () => {
@@ -23,21 +23,6 @@ describe("dynamic arguments", () => {
     },
   );
 });
-
-function makeContents(files: Record<string, string>): VsixContents {
-  const manifest: VsixManifest = {
-    name: "test-extension",
-    publisher: "test",
-    version: "1.0.0",
-  };
-
-  const fileMap = new Map<string, Buffer>();
-  for (const [name, content] of Object.entries(files)) {
-    fileMap.set(name, Buffer.from(content, "utf8"));
-  }
-
-  return { manifest, files: fileMap, basePath: "/test" };
-}
 
 describe("checkAST", () => {
   it.each([
@@ -402,53 +387,18 @@ describe("checkAST", () => {
   // ============================================================================
 
   describe("file type filtering", () => {
-    it("scans .js files", () => {
-      const content = `eval(code);`;
-      const contents = makeContents({ "extension.js": content });
-
-      const findings = checkAST(contents).findings;
-      expect(findings.length).toBeGreaterThan(0);
-    });
-
-    it("scans .ts files", () => {
-      const content = `eval(code as string);`;
-      const contents = makeContents({ "extension.ts": content });
-
-      const findings = checkAST(contents).findings;
-      expect(findings.length).toBeGreaterThan(0);
-    });
-
-    it("scans .mjs files", () => {
-      const content = `eval(code);`;
-      const contents = makeContents({ "extension.mjs": content });
-
-      const findings = checkAST(contents).findings;
-      expect(findings.length).toBeGreaterThan(0);
-    });
-
-    it("scans .cjs files", () => {
-      const content = `eval(code);`;
-      const contents = makeContents({ "extension.cjs": content });
-
-      const findings = checkAST(contents).findings;
-      expect(findings.length).toBeGreaterThan(0);
-    });
-
-    it("scans .jsx files", () => {
-      const content = `eval(code);`;
-      const contents = makeContents({ "component.jsx": content });
-
-      const findings = checkAST(contents).findings;
-      expect(findings.length).toBeGreaterThan(0);
-    });
-
-    it("scans .tsx files", () => {
-      const content = `eval(code);`;
-      const contents = makeContents({ "component.tsx": content });
-
-      const findings = checkAST(contents).findings;
-      expect(findings.length).toBeGreaterThan(0);
-    });
+    it.each(["js", "ts", "mjs", "cjs", "jsx", "tsx"])(
+      "scans .%s source with exact evidence",
+      (extension) => {
+        const file = `main.${extension}`;
+        expect(checkAST(makeContents({ [file]: "eval(payload);" })).findings).toMatchObject([
+          {
+            id: "AST_EVAL_DYNAMIC",
+            location: { file, line: 1, column: 1 },
+          },
+        ]);
+      },
+    );
 
     it("ignores .json files", () => {
       const content = `{"eval": "code"}`;
@@ -471,80 +421,31 @@ describe("checkAST", () => {
   // METADATA AND LOCATION
   // ============================================================================
 
-  describe("metadata", () => {
-    it("includes code snippet in metadata", () => {
-      const content = `eval(maliciousCode);`;
-      const contents = makeContents({ "extension.js": content });
-
-      const findings = checkAST(contents).findings;
-      const finding = findings.find((f) => f.id === "AST_EVAL_DYNAMIC");
-
-      expect(finding?.metadata?.["codeSnippet"]).toContain("eval");
-    });
-
-    it("includes legitimate uses in metadata", () => {
-      const content = `eval(code);`;
-      const contents = makeContents({ "extension.js": content });
-
-      const findings = checkAST(contents).findings;
-      const finding = findings.find((f) => f.id === "AST_EVAL_DYNAMIC");
-
-      expect(finding?.metadata?.["legitimateUses"]).toBeDefined();
-    });
-
-    it("includes red flags in metadata", () => {
-      const content = `eval(code);`;
-      const contents = makeContents({ "extension.js": content });
-
-      const findings = checkAST(contents).findings;
-      const finding = findings.find((f) => f.id === "AST_EVAL_DYNAMIC");
-
-      expect(finding?.metadata?.["redFlags"]).toBeDefined();
-    });
-
-    it("includes line number in location", () => {
-      const content = `// line 1\n// line 2\neval(code);`;
-      const contents = makeContents({ "extension.js": content });
-
-      const findings = checkAST(contents).findings;
-      const finding = findings.find((f) => f.id === "AST_EVAL_DYNAMIC");
-
-      expect(finding?.location?.line).toBe(3);
-    });
-
-    it("includes file path in location", () => {
-      const content = `eval(code);`;
-      const contents = makeContents({ "src/dangerous.js": content });
-
-      const findings = checkAST(contents).findings;
-      const finding = findings.find((f) => f.id === "AST_EVAL_DYNAMIC");
-
-      expect(finding?.location?.file).toBe("src/dangerous.js");
-    });
+  it("preserves the complete evidence contract of an AST finding", () => {
+    const result = checkAST(
+      makeContents({ "src/dangerous.js": "// first\n// second\neval(payload);" }),
+    );
+    expect(result.findings).toMatchObject([
+      {
+        id: "AST_EVAL_DYNAMIC",
+        category: "ast",
+        severity: "high",
+        capabilities: ["execution"],
+        location: { file: "src/dangerous.js", line: 3, column: 1 },
+        metadata: {
+          codeSnippet: "eval(payload);",
+          legitimateUses: ["REPL implementations", "Dynamic expression evaluators"],
+          redFlags: ["Argument is decoded/decrypted value", "Combined with obfuscation"],
+        },
+      },
+    ]);
+    expect(result.observations).toMatchObject([
+      {
+        kind: "code-execution",
+        location: { file: "src/dangerous.js", line: 3, column: 1 },
+      },
+    ]);
   });
-
-  // ============================================================================
-  // CATEGORY ASSIGNMENT
-  // ============================================================================
-
-  describe("category assignment", () => {
-    it("assigns ast category to all findings", () => {
-      const content = `
-        eval(code);
-        new Function(body);
-        process.binding('fs');
-      `;
-      const contents = makeContents({ "extension.js": content });
-
-      const findings = checkAST(contents).findings;
-
-      expect(findings.every((f) => f.category === "ast")).toBe(true);
-    });
-  });
-
-  // ============================================================================
-  // PARSE ERROR HANDLING
-  // ============================================================================
 
   describe("parse error handling", () => {
     it("handles files with syntax errors gracefully", () => {

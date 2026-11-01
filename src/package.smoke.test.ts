@@ -19,6 +19,7 @@ describe("production package", () => {
     const files = packages.flatMap((entry) => entry.files.map((file) => file.path));
     expect(files).toContain("dist/index.js");
     expect(files.some((file) => /\.test\./.test(file))).toBe(false);
+    expect(files.some((file) => file.includes("test-support"))).toBe(false);
     const metadata = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
       dependencies: Record<string, string>;
       devDependencies: Record<string, string>;

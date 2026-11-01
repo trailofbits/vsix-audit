@@ -41,6 +41,8 @@
     "test": "vitest run",
     "test:cli": "npm run build && vitest run --config vitest.cli.config.ts",
     "test:docker": "node scripts/test-docker.mjs",
+    "test:corpus": "vitest run --config vitest.corpus.config.ts",
+    "test:mutations": "node scripts/test-observations-mutations.mjs",
     "test:watch": "vitest",
     "lint": "npm run build && oxlint --type-aware --max-warnings=0 .",
     "format": "oxfmt --write .",
