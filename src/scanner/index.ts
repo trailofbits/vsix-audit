@@ -1,5 +1,4 @@
 import { inspect } from "node:util";
-import { stat } from "node:fs/promises";
 import { checkAST } from "#internal/scanner/checks/ast.js";
 import { checkIocs } from "#internal/scanner/checks/ioc.js";
 import { checkObfuscation } from "#internal/scanner/checks/obfuscation.js";
@@ -10,14 +9,10 @@ import {
   checkPackageIntel,
 } from "#internal/scanner/checks/package.js";
 import { checkTelemetry } from "#internal/scanner/checks/telemetry.js";
-import {
-  checkYara,
-  getDefaultYaraRulesDir,
-  isYaraAvailable,
-  listYaraRules,
-} from "#internal/scanner/checks/yara.js";
+import { checkYara } from "#internal/scanner/checks/yara.js";
 import {
   isScannable,
+  JS_EXTENSIONS,
   SCANNABLE_EXTENSIONS_PATTERN,
   SCANNABLE_EXTENSIONS_UNICODE,
 } from "#internal/scanner/constants.js";
@@ -25,6 +20,7 @@ import { loadZooData } from "#internal/scanner/loaders/zoo.js";
 import type {
   BatchScanResult,
   CheckSummary,
+  CheckResult,
   CoverageMetadata,
   Finding,
   ModuleTimings,
@@ -34,15 +30,18 @@ import type {
   Severity,
   ZooData,
   VsixContents,
+  VsixManifest,
 } from "#internal/scanner/types.js";
 import { INTEL_MODES, MODULE_NAMES, OUTPUT_FORMATS, SEVERITIES } from "#internal/scanner/types.js";
 import type { ModuleName } from "#internal/scanner/types.js";
+import { extensionId } from "#internal/scanner/utils.js";
 import { loadExtension } from "#internal/scanner/vsix.js";
 
 export { MODULE_NAMES };
 export type {
   BatchScanResult,
   CheckSummary,
+  CheckResult,
   Finding,
   ModuleName,
   ModuleTimings,
@@ -71,6 +70,7 @@ const FINGERPRINT_METADATA_KEYS = [
   "ip",
   "wallet",
   "rule",
+  "ruleFile",
   "command",
   "repo",
   "ref",
@@ -145,18 +145,78 @@ function countScannableFiles(contents: VsixContents, extensions: Set<string>): n
 
 interface ScanModule {
   name: ModuleName;
-  run: () => Finding[] | Promise<Finding[]>;
-  inventory: CheckSummary;
+  run: (contents: VsixContents, data: ZooData) => CheckResult | Promise<CheckResult>;
+  inventory: Omit<CheckSummary, "enabled" | "filesExamined">;
+  extensions?: Set<string>;
 }
+
+const SCAN_MODULES: readonly ScanModule[] = [
+  {
+    name: "manifest",
+    run: (contents) => ({ findings: checkManifest(contents), warnings: [] }),
+    inventory: {
+      name: "Manifest",
+      description: "Activation events, contribution shape, extension permissions",
+    },
+  },
+  {
+    name: "execution",
+    run: (contents) => ({ findings: checkExecutionPatterns(contents), warnings: [] }),
+    extensions: SCANNABLE_EXTENSIONS_PATTERN,
+    inventory: {
+      name: "Execution",
+      description: "Runtime command, task, and startup execution patterns",
+    },
+  },
+  {
+    name: "deps",
+    run: (contents) => ({ findings: checkDependencyHeuristics(contents), warnings: [] }),
+    inventory: { name: "Deps", description: "Dependency typosquatting and npm lifecycle scripts" },
+  },
+  {
+    name: "intel",
+    run: (contents, data) => ({ findings: checkPackageIntel(contents, data), warnings: [] }),
+    inventory: {
+      name: "Intel",
+      description: "Blocklist and known malicious dependency intelligence",
+    },
+  },
+  {
+    name: "obfuscation",
+    run: (contents) => ({ findings: checkObfuscation(contents), warnings: [] }),
+    extensions: SCANNABLE_EXTENSIONS_UNICODE,
+    inventory: {
+      name: "Obfuscation",
+      description: "Entropy and Unicode analysis",
+      rulesApplied: 8,
+    },
+  },
+  {
+    name: "ast",
+    run: checkAST,
+    extensions: JS_EXTENSIONS,
+    inventory: { name: "AST", description: "Structural code analysis", rulesApplied: 7 },
+  },
+  {
+    name: "ioc",
+    run: (contents, data) => ({ findings: checkIocs(contents, data), warnings: [] }),
+    inventory: { name: "IOC", description: "Hashes, domains, IPs against threat intel" },
+  },
+  {
+    name: "yara",
+    run: (contents) => checkYara(contents),
+    inventory: { name: "YARA", description: "YARA-X signature matching" },
+  },
+  {
+    name: "telemetry",
+    run: (contents, data) => ({ findings: checkTelemetry(contents, data), warnings: [] }),
+    extensions: JS_EXTENSIONS,
+    inventory: { name: "Telemetry", description: "Analytics and data collection detection" },
+  },
+];
 
 function shouldRunModule(name: ModuleName, options: ScanOptions): boolean {
-  if (!options.modules || options.modules.length === 0) return true;
-  return options.modules.includes(name);
-}
-
-function shouldRunPackageSubmodule(name: ModuleName, options: ScanOptions): boolean {
-  if (!options.modules || options.modules.length === 0) return true;
-  return options.modules.includes("package") || options.modules.includes(name);
+  return !options.modules || options.modules.length === 0 || options.modules.includes(name);
 }
 
 function isOutputFormat(value: unknown): value is OutputFormat {
@@ -186,6 +246,16 @@ export function validateScanOptions(options: ScanOptions): void {
     );
   }
 
+  if (options.intel !== undefined && !isIntelMode(options.intel)) {
+    throw new Error(
+      `Invalid intel mode: ${String(options.intel)}. Valid modes: ${INTEL_MODES.join(", ")}`,
+    );
+  }
+
+  validateModuleOptions(options);
+}
+
+function validateModuleOptions(options: ScanOptions): void {
   if (options.modules) {
     const invalidModules = options.modules.filter(
       (moduleName) => !MODULE_NAMES.includes(moduleName),
@@ -196,14 +266,12 @@ export function validateScanOptions(options: ScanOptions): void {
       );
     }
   }
-
-  if (options.intel !== undefined && !isIntelMode(options.intel)) {
-    throw new Error(
-      `Invalid intel mode: ${String(options.intel)}. Valid modes: ${INTEL_MODES.join(", ")}`,
-    );
-  }
-
-  if (options.requireYara === true && options.modules && !options.modules.includes("yara")) {
+  if (
+    options.requireYara === true &&
+    options.modules &&
+    options.modules.length > 0 &&
+    !options.modules.includes("yara")
+  ) {
     throw new Error("--require-yara cannot be used when the module filter excludes yara");
   }
 }
@@ -241,40 +309,36 @@ function archiveWarningsToFindings(contents: VsixContents): Finding[] {
   }));
 }
 
-function makeCoverageMetadata(
-  warnings: string[],
-  unavailableModules: ModuleName[],
-  findings: Finding[],
-): CoverageMetadata {
-  for (const finding of findings) {
-    if (finding.id !== "PARSE_FAILURE_AST" || finding.metadata?.["analysisIncomplete"] !== true) {
-      continue;
-    }
-    warnings.push(
-      `AST analysis failed for ${JSON.stringify(finding.location?.file ?? "unknown file")}; ` +
-        "inspect it manually.",
-    );
-  }
-  const metadata: CoverageMetadata = {
-    degraded: warnings.length > 0 || unavailableModules.length > 0,
-    warnings,
+function moduleInventory(
+  module: ScanModule,
+  contents: VsixContents,
+  result: CheckResult,
+): CheckSummary {
+  return {
+    ...module.inventory,
+    enabled: result.warnings.length === 0,
+    ...(module.extensions === undefined
+      ? {}
+      : { filesExamined: countScannableFiles(contents, module.extensions) }),
+    ...(result.warnings.length === 0 ? {} : { skipReason: result.warnings.join("; ") }),
   };
-  if (unavailableModules.length > 0) {
-    metadata.unavailableModules = unavailableModules;
-  }
-  return metadata;
 }
 
+function extensionMetadata(manifest: VsixManifest): ScanResult["extension"] {
+  return {
+    id: extensionId(manifest),
+    name: manifest.displayName ?? manifest.name,
+    version: manifest.version,
+    ...(manifest.publisher === undefined ? {} : { publisher: manifest.publisher }),
+  };
+}
+
+/** Scan an archive or directory, retaining findings and explicit coverage failures. */
 export async function scanExtension(target: string, options: ScanOptions): Promise<ScanResult> {
   validateScanOptions(options);
 
   const startTime = performance.now();
   const timings: ModuleTimings = { load: 0, total: 0 };
-
-  const targetExists = await stat(target).catch(() => null);
-  if (!targetExists) {
-    throw new Error(`Target not found: ${target}`);
-  }
 
   const loadStart = performance.now();
   const [contents, loadedZooData] = await Promise.all([loadExtension(target), loadZooData()]);
@@ -282,22 +346,10 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
   const intelMode = options.intel ?? "local";
   const zooData = intelMode === "none" ? removeThreatIntel(loadedZooData) : loadedZooData;
 
-  const { manifest } = contents;
-  const extensionId = `${manifest.publisher}.${manifest.name}`;
-
   let findings: Finding[] = [];
   const inventory: CheckSummary[] = [];
   const coverageWarnings: string[] = [];
-  const unavailableModules: ModuleName[] = [];
-
-  const runYara = shouldRunModule("yara", options);
-  const yaraAvailable = runYara ? await isYaraAvailable() : false;
-  const yaraRulesDir = runYara && yaraAvailable ? await getDefaultYaraRulesDir() : "";
-  const yaraRules = runYara && yaraAvailable ? await listYaraRules(yaraRulesDir) : [];
-
-  // Initialize per-scan caches
-  contents.cache = new Map();
-  contents.stringContents = new Map();
+  const incompleteModules: ModuleName[] = [];
 
   const archiveFindings = archiveWarningsToFindings(contents);
   findings.push(...archiveFindings);
@@ -305,160 +357,22 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
     coverageWarnings.push(warning.message);
   }
 
-  // Count files by type for inventory
-  const codeFileCount = countScannableFiles(contents, SCANNABLE_EXTENSIONS_PATTERN);
-  const textFileCount = countScannableFiles(contents, SCANNABLE_EXTENSIONS_UNICODE);
-
-  // Build module registry
-  const modules: ScanModule[] = [];
-
-  if (shouldRunPackageSubmodule("manifest", options)) {
-    modules.push({
-      name: "manifest",
-      run: () => checkManifest(contents),
-      inventory: {
-        name: "Manifest",
-        enabled: true,
-        description: "Activation events, contribution shape, extension permissions",
-      },
-    });
-  }
-
-  if (shouldRunPackageSubmodule("execution", options)) {
-    modules.push({
-      name: "execution",
-      run: () => checkExecutionPatterns(contents),
-      inventory: {
-        name: "Execution",
-        enabled: true,
-        description: "Runtime command, task, and startup execution patterns",
-        filesExamined: codeFileCount,
-      },
-    });
-  }
-
-  if (shouldRunPackageSubmodule("deps", options)) {
-    modules.push({
-      name: "deps",
-      run: () => checkDependencyHeuristics(contents),
-      inventory: {
-        name: "Deps",
-        enabled: true,
-        description: "Dependency typosquatting and npm lifecycle scripts",
-      },
-    });
-  }
-
-  if (shouldRunPackageSubmodule("intel", options)) {
-    modules.push({
-      name: "intel",
-      run: () => checkPackageIntel(contents, zooData),
-      inventory: {
-        name: "Intel",
-        enabled: true,
-        description: "Blocklist and known malicious dependency intelligence",
-      },
-    });
-  }
-
-  if (shouldRunModule("obfuscation", options)) {
-    modules.push({
-      name: "obfuscation",
-      run: () => checkObfuscation(contents),
-      inventory: {
-        name: "Obfuscation",
-        enabled: true,
-        description: `Entropy and Unicode analysis ` + `across ${textFileCount} files`,
-        rulesApplied: 8,
-        filesExamined: textFileCount,
-      },
-    });
-  }
-
-  if (shouldRunModule("ast", options)) {
-    modules.push({
-      name: "ast",
-      run: () => checkAST(contents),
-      inventory: {
-        name: "AST",
-        enabled: true,
-        description: `Structural code analysis across ` + `${codeFileCount} code files`,
-        rulesApplied: 7,
-        filesExamined: codeFileCount,
-      },
-    });
-  }
-
-  if (shouldRunModule("ioc", options)) {
-    modules.push({
-      name: "ioc",
-      run: () => checkIocs(contents, zooData),
-      inventory: {
-        name: "IOC",
-        enabled: true,
-        description: "Hashes, domains, IPs against threat intel",
-      },
-    });
-  }
-
-  if (runYara) {
-    if (yaraAvailable) {
-      modules.push({
-        name: "yara",
-        run: () => checkYara(contents),
-        inventory: {
-          name: "YARA",
-          enabled: true,
-          description: `${yaraRules.length} rules against all files`,
-          rulesApplied: yaraRules.length,
-          filesExamined: contents.files.size,
-        },
-      });
-    } else {
-      coverageWarnings.push("YARA module requested but YARA-X executable 'yr' is not installed");
-      unavailableModules.push("yara");
-      findings.push({
-        id: "YARA_NOT_INSTALLED",
-        title: "YARA-X scanner not available",
-        description:
-          "YARA-X is not installed. Install with 'brew install yara-x' to enable advanced malware detection using signature rules.",
-        severity: "low",
-        category: "yara",
-        metadata: {
-          suggestion: "brew install yara-x",
-        },
-      });
-      inventory.push({
-        name: "YARA",
-        enabled: false,
-        description: "Signature-based malware detection",
-        skipReason: "yara not installed",
-      });
-    }
-  }
-
-  if (shouldRunModule("telemetry", options)) {
-    modules.push({
-      name: "telemetry",
-      run: () => checkTelemetry(contents, zooData),
-      inventory: {
-        name: "Telemetry",
-        enabled: true,
-        description: "Analytics and data collection detection",
-        filesExamined: codeFileCount,
-      },
-    });
-  }
-
   // Execute all modules
-  for (const mod of modules) {
+  for (const mod of SCAN_MODULES.filter((module) => shouldRunModule(module.name, options))) {
     const start = performance.now();
-    findings.push(...(await mod.run()));
+    const result = await mod.run(contents, zooData);
+    findings.push(...result.findings);
+    coverageWarnings.push(...result.warnings);
+    if (result.warnings.length > 0) incompleteModules.push(mod.name);
     timings[mod.name] = performance.now() - start;
-    inventory.push(mod.inventory);
+    inventory.push(moduleInventory(mod, contents, result));
   }
 
-  const coverage = makeCoverageMetadata(coverageWarnings, unavailableModules, findings);
+  const coverage: CoverageMetadata = {
+    degraded: coverageWarnings.length > 0,
+    warnings: coverageWarnings,
+    incompleteModules,
+  };
   findings = deduplicateFindings(findings);
   findings = filterBySeverity(findings, options.severity);
   findings = sortFindings(findings);
@@ -466,12 +380,7 @@ export async function scanExtension(target: string, options: ScanOptions): Promi
   timings.total = performance.now() - startTime;
 
   return {
-    extension: {
-      id: extensionId,
-      name: manifest.displayName ?? manifest.name,
-      version: manifest.version,
-      publisher: manifest.publisher,
-    },
+    extension: extensionMetadata(contents.manifest),
     findings,
     inventory,
     metadata: {

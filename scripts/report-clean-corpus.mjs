@@ -116,7 +116,7 @@ async function loadBuiltModules() {
   return {
     scanExtension: scanner.scanExtension,
     cleanCorpusFilename: cleanCorpus.cleanCorpusFilename,
-    isNeverCleanFindingId: cleanCorpus.isNeverCleanFindingId,
+    isNeverCleanFinding: cleanCorpus.isNeverCleanFinding,
     validateCleanCorpusManifest: cleanCorpus.validateCleanCorpusManifest,
   };
 }
@@ -169,7 +169,7 @@ function formatTextReport(report) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const { scanExtension, cleanCorpusFilename, isNeverCleanFindingId, validateCleanCorpusManifest } =
+  const { scanExtension, cleanCorpusFilename, isNeverCleanFinding, validateCleanCorpusManifest } =
     await loadBuiltModules();
 
   const manifest = validateCleanCorpusManifest(
@@ -210,11 +210,11 @@ async function main() {
       const result = await scanExtension(filePath, {
         output: "json",
         severity: "low",
-        network: false,
+
         intel: "local",
       });
       const findings = result.findings.map(compactFinding);
-      const neverFindings = findings.filter((finding) => isNeverCleanFindingId(finding.id));
+      const neverFindings = findings.filter((finding) => isNeverCleanFinding(finding));
 
       extensionReport.findings = summarizeFindings(findings);
       extensionReport.neverFindings = neverFindings;

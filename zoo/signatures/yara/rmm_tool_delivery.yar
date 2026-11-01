@@ -12,6 +12,7 @@
 
 rule LOADER_RMM_ScreenConnect_Delivery_Feb26 {
   meta:
+    capabilities = "network,execution"
     description = "Detects ScreenConnect (ConnectWise Control) delivery or silent installation patterns in extension code"
     severity    = "critical"
     score       = 95
@@ -44,6 +45,7 @@ rule LOADER_RMM_ScreenConnect_Delivery_Feb26 {
 
 rule LOADER_RMM_AnyDesk_Delivery_Feb26 {
   meta:
+    capabilities = "network,execution"
     description = "Detects AnyDesk silent installation or deployment patterns in extension code"
     severity    = "critical"
     score       = 90
@@ -78,6 +80,7 @@ rule LOADER_RMM_AnyDesk_Delivery_Feb26 {
 
 rule LOADER_RMM_TeamViewer_Delivery_Feb26 {
   meta:
+    capabilities = "network,execution"
     description = "Detects TeamViewer silent installation or deployment patterns in extension code"
     severity    = "critical"
     score       = 90

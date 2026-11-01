@@ -5,6 +5,7 @@
 
 rule C2_JS_WebSocket_Command_Exec_Jan25 {
   meta:
+    capabilities = "network,execution"
     description = "Detects WebSocket C2 pattern with message handler triggering child_process command execution"
     severity    = "high"
     score       = 80
@@ -51,6 +52,7 @@ rule C2_JS_WebSocket_Command_Exec_Jan25 {
 
 rule RAT_JS_WebSocket_Reverse_Shell_Jan25 {
   meta:
+    capabilities = "network,execution"
     description = "Detects WebSocket reverse shell with shell process stdin/stdout piped through socket"
     severity    = "critical"
     score       = 95

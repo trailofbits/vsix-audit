@@ -127,8 +127,13 @@ describe("findings collector", () => {
     if (npmCli === undefined) throw new Error("Run smoke tests with npm run test:cli");
     await cp(join(repoRoot, "src"), join(root, "src"), { recursive: true });
     await cp(join(repoRoot, "tsconfig.json"), join(root, "tsconfig.json"));
+    await cp(join(repoRoot, "tsconfig.build.json"), join(root, "tsconfig.build.json"));
     await cp(join(repoRoot, "package.json"), join(root, "package.json"));
     await mkdir(join(root, "scripts"));
+    await cp(
+      join(repoRoot, "scripts", "clean-build.mjs"),
+      join(root, "scripts", "clean-build.mjs"),
+    );
     await cp(
       join(repoRoot, "scripts", "collect-findings.ts"),
       join(root, "scripts", "collect-findings.ts"),

@@ -1,6 +1,53 @@
 import { describe, expect, it } from "vitest";
-import type { VsixContents, VsixManifest } from "../types.js";
-import { checkObfuscation } from "./obfuscation.js";
+import type { VsixContents, VsixManifest } from "#internal/scanner/types.js";
+import { checkObfuscation } from "#internal/scanner/checks/obfuscation.js";
+
+describe("source-independent Unicode detection", () => {
+  it.each(["1\ufe0f", "#\ufe0e", "*\ufe0f", "🇦\ufe0f", "🏻\ufe0f"])(
+    "retains selector payload evidence after emoji-property characters %j",
+    (sequence) => {
+      const source = `const payload = "${sequence.repeat(60)}"; eval(payload);`;
+      const findings = checkObfuscation(makeContents({ "main.js": source }));
+      expect(findings.map((finding) => finding.id)).toEqual(
+        expect.arrayContaining(["VARIATION_SELECTOR", "INVISIBLE_CODE_EXECUTION"]),
+      );
+    },
+  );
+
+  it.each(["0", "5", "#", "*"])("allows complete keycap emoji sequences for %s", (base) => {
+    const source = `const text = "${`${base}\ufe0f\u20e3`.repeat(60)}";`;
+    expect(checkObfuscation(makeContents({ "main.js": source }))).toEqual([]);
+  });
+
+  it("allows emoji presentation selectors and Arabic joining controls locally", () => {
+    const text = `${"☀\ufe0f".repeat(60)}${"ب\u200cب\u200dب".repeat(5)}`;
+    const findings = checkObfuscation(makeContents({ "main.js": `const text = "${text}";` }));
+    expect(findings).toEqual([]);
+  });
+
+  it("does not let emoji text conceal unrelated invisible characters", () => {
+    const text = `${"☀\ufe0f".repeat(60)}${"x\ufe0f".repeat(60)}`;
+    const findings = checkObfuscation(makeContents({ "main.js": `const text = "${text}";` }));
+    expect(findings).toContainEqual(expect.objectContaining({ id: "VARIATION_SELECTOR" }));
+  });
+
+  it.each(["main.js", "katex.js", "mathjax.js", "mermaid.js"])(
+    "retains directional-control evidence in %s",
+    (filename) => {
+      const findings = checkObfuscation(makeContents({ [filename]: 'const text = "\u202e";' }));
+      expect(findings).toContainEqual(expect.objectContaining({ id: "BIDI_OVERRIDE" }));
+    },
+  );
+
+  it.each(["", `//${"x".repeat(600)}\n`, "\n".repeat(20)])(
+    "uses the original match offset after a prefix",
+    (prefix) => {
+      const code = `${prefix}const text = "${"\u202e".repeat(5)}"; eval(payload);`;
+      const findings = checkObfuscation(makeContents({ "main.js": code }));
+      expect(findings).toContainEqual(expect.objectContaining({ id: "INVISIBLE_CODE_EXECUTION" }));
+    },
+  );
+});
 
 function makeContents(files: Record<string, string>): VsixContents {
   const manifest: VsixManifest = {
@@ -198,14 +245,14 @@ describe("checkObfuscation", () => {
       expect(findings.some((f) => f.id === "CYRILLIC_HOMOGLYPH")).toBe(true);
     });
 
-    it("ignores Cyrillic in markdown files", () => {
+    it("detects mixed-script tokens in markdown files", () => {
       const content = "# Hello \u0430nd welcome"; // Cyrillic а in markdown
       const contents = makeContents({ "README.md": content });
 
       const findings = checkObfuscation(contents);
       const cyrillicFinding = findings.find((f) => f.id === "CYRILLIC_HOMOGLYPH");
 
-      expect(cyrillicFinding).toBeUndefined();
+      expect(cyrillicFinding).toBeDefined();
     });
 
     it("ignores pure-Cyrillic localization strings in package.json", () => {
@@ -434,9 +481,9 @@ describe("checkObfuscation", () => {
   // FALSE POSITIVE EXCLUSIONS
   // ============================================================================
 
-  describe("false positive exclusions", () => {
-    describe("node_modules exclusions", () => {
-      it("skips high entropy detection in node_modules", () => {
+  describe("content and filename coverage", () => {
+    describe("dependency coverage", () => {
+      it("retains evidence for high entropy detection in node_modules", () => {
         const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         let highEntropy = "";
         for (let i = 0; i < 300; i++) {
@@ -449,25 +496,25 @@ describe("checkObfuscation", () => {
 
         const findings = checkObfuscation(contents);
 
-        expect(findings.some((f) => f.id === "OBFUSCATION_HIGH_ENTROPY")).toBe(false);
+        expect(findings.some((f) => f.id === "OBFUSCATION_HIGH_ENTROPY")).toBe(true);
       });
 
-      it("skips zero-width chars in node_modules", () => {
+      it("retains evidence for zero-width chars in node_modules", () => {
         const content = "const x\u200B = 'a\u200Bb\u200Bc';"; // 3 zero-width spaces
         const contents = makeContents({ "node_modules/moment/locale/ku.js": content });
 
         const findings = checkObfuscation(contents);
 
-        expect(findings.some((f) => f.id === "ZERO_WIDTH_CHARS")).toBe(false);
+        expect(findings.some((f) => f.id === "ZERO_WIDTH_CHARS")).toBe(true);
       });
 
-      it("skips Cyrillic homoglyphs in node_modules", () => {
+      it("retains evidence for Cyrillic homoglyphs in node_modules", () => {
         const content = "const \u0430dmin = true;"; // Cyrillic а
         const contents = makeContents({ "node_modules/iconv-lite/lib/extend-node.js": content });
 
         const findings = checkObfuscation(contents);
 
-        expect(findings.some((f) => f.id === "CYRILLIC_HOMOGLYPH")).toBe(false);
+        expect(findings.some((f) => f.id === "CYRILLIC_HOMOGLYPH")).toBe(true);
       });
 
       it("still detects BIDI_OVERRIDE in node_modules (critical)", () => {
@@ -480,8 +527,8 @@ describe("checkObfuscation", () => {
       });
     });
 
-    describe("emoji and entity file exclusions", () => {
-      it("skips variation selectors in emoji.json", () => {
+    describe("variation-selector coverage", () => {
+      it("retains evidence for variation selectors in emoji.json", () => {
         // 50+ variation selectors would normally trigger
         const variations = "\uFE0F".repeat(60);
         const content = `{"emoji": "👍${variations}"}`;
@@ -489,27 +536,27 @@ describe("checkObfuscation", () => {
 
         const findings = checkObfuscation(contents);
 
-        expect(findings.some((f) => f.id === "VARIATION_SELECTOR")).toBe(false);
+        expect(findings.some((f) => f.id === "VARIATION_SELECTOR")).toBe(true);
       });
 
-      it("skips variation selectors in entities.json", () => {
+      it("retains evidence for variation selectors in entities.json", () => {
         const variations = "\uFE0F".repeat(60);
         const content = `{"entity": "test${variations}"}`;
         const contents = makeContents({ "extension/out/entities.json": content });
 
         const findings = checkObfuscation(contents);
 
-        expect(findings.some((f) => f.id === "VARIATION_SELECTOR")).toBe(false);
+        expect(findings.some((f) => f.id === "VARIATION_SELECTOR")).toBe(true);
       });
 
-      it("skips variation selectors in README.md", () => {
+      it("retains evidence for variation selectors in README.md", () => {
         const variations = "\uFE0F".repeat(60);
         const content = `# README\nEmoji test: ${variations}`;
         const contents = makeContents({ "extension/README.md": content });
 
         const findings = checkObfuscation(contents);
 
-        expect(findings.some((f) => f.id === "VARIATION_SELECTOR")).toBe(false);
+        expect(findings.some((f) => f.id === "VARIATION_SELECTOR")).toBe(true);
       });
 
       it("still detects variation selectors in suspicious JS files", () => {
@@ -524,32 +571,32 @@ describe("checkObfuscation", () => {
       });
     });
 
-    describe("RTL file exclusions", () => {
-      it("skips BIDI_OVERRIDE in katex files", () => {
+    describe("directional-control coverage", () => {
+      it("retains evidence for BIDI_OVERRIDE in katex files", () => {
         const content = "const rtl\u202E = true;";
         const contents = makeContents({ "node_modules/katex/dist/katex.js": content });
 
         const findings = checkObfuscation(contents);
 
-        expect(findings.some((f) => f.id === "BIDI_OVERRIDE")).toBe(false);
+        expect(findings.some((f) => f.id === "BIDI_OVERRIDE")).toBe(true);
       });
 
-      it("skips BIDI_OVERRIDE in mermaid files", () => {
+      it("retains evidence for BIDI_OVERRIDE in mermaid files", () => {
         const content = "const rtl\u202E = true;";
         const contents = makeContents({ "node_modules/mermaid/dist/mermaid.js": content });
 
         const findings = checkObfuscation(contents);
 
-        expect(findings.some((f) => f.id === "BIDI_OVERRIDE")).toBe(false);
+        expect(findings.some((f) => f.id === "BIDI_OVERRIDE")).toBe(true);
       });
 
-      it("skips BIDI_OVERRIDE in Hebrew language files", () => {
+      it("retains evidence for BIDI_OVERRIDE in Hebrew language files", () => {
         const content = "Hebrew text\u202Ehere";
         const contents = makeContents({ "extension/resources/dia_he.txt": content });
 
         const findings = checkObfuscation(contents);
 
-        expect(findings.some((f) => f.id === "BIDI_OVERRIDE")).toBe(false);
+        expect(findings.some((f) => f.id === "BIDI_OVERRIDE")).toBe(true);
       });
 
       it("still detects BIDI_OVERRIDE in regular JS files", () => {
@@ -562,14 +609,14 @@ describe("checkObfuscation", () => {
       });
     });
 
-    describe("i18n file exclusions", () => {
-      it("skips Cyrillic in moment locale files", () => {
+    describe("localization content coverage", () => {
+      it("retains evidence for Cyrillic in moment locale files", () => {
         const content = "const \u0430dmin = '\u0435xample';"; // Cyrillic а and е
         const contents = makeContents({ "moment/locale/ru.js": content });
 
         const findings = checkObfuscation(contents);
 
-        expect(findings.some((f) => f.id === "CYRILLIC_HOMOGLYPH")).toBe(false);
+        expect(findings.some((f) => f.id === "CYRILLIC_HOMOGLYPH")).toBe(true);
       });
 
       it("skips Cyrillic in encoding table files", () => {

@@ -25,11 +25,10 @@ describe("AST traversal failures", () => {
         const result = await scanExtension(directory, {
           output: "json",
           severity,
-          network: false,
           modules: ["ast"],
         });
-        expect(result.metadata.coverage?.degraded).toBe(true);
-        expect(result.metadata.coverage?.warnings).toEqual([expect.stringContaining('"main.js"')]);
+        expect(result.metadata.coverage.degraded).toBe(true);
+        expect(result.metadata.coverage.warnings).toEqual([expect.stringContaining('"main.js"')]);
         expect(result.findings.map((finding) => finding.id)).toEqual(ids);
         expect(result.findings.map((finding) => finding.metadata?.["analysisIncomplete"])).toEqual(
           incomplete,
@@ -48,7 +47,6 @@ describe("AST traversal failures", () => {
       const result = await scanExtension(directory, {
         output: "json",
         severity: "low",
-        network: false,
         modules: ["ast"],
       });
       const failures = result.findings.filter((finding) => finding.id === "PARSE_FAILURE_AST");
@@ -58,7 +56,7 @@ describe("AST traversal failures", () => {
       expect(failures[0]?.metadata?.["recoveryError"]).toEqual(
         expect.stringContaining("initializer"),
       );
-      expect(result.metadata.coverage?.degraded).toBe(true);
+      expect(result.metadata.coverage.degraded).toBe(true);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -73,7 +71,7 @@ describe("AST traversal failures", () => {
       ]),
       basePath: "/fixture",
     };
-    const findings = checkAST(contents);
+    const findings = checkAST(contents).findings;
     const failure = findings.find((finding) => finding.id === "PARSE_FAILURE_AST");
     expect(failure?.location?.file).toBe("main.js");
     expect(failure?.metadata?.["analysisIncomplete"]).toBe(true);
@@ -99,13 +97,12 @@ describe("AST traversal failures", () => {
         const result = await scanExtension(directory, {
           output: "json",
           severity,
-          network: false,
           modules: ["obfuscation", "ast"],
         });
         expect(result.findings.map((finding) => finding.id)).toEqual(
           expect.arrayContaining(Array.from(expected)),
         );
-        expect(result.metadata.coverage?.degraded).toBe(true);
+        expect(result.metadata.coverage.degraded).toBe(true);
         expect(warning).toHaveBeenCalled();
       } finally {
         warning.mockRestore();

@@ -5,8 +5,10 @@
 
 rule SUSP_JS_Eval_Base64_Jan25 {
   meta:
-    description = "Detects eval() used with base64 decoding to execute hidden or obfuscated code"
-    severity    = "critical"
+    evidence = "co-occurring references"
+    capabilities = "execution,obfuscation"
+    description = "Eval and Base64 references co-occur. Their data flow is unverified."
+    severity = "medium"
     score       = 90
     author      = "vsix-audit"
     date        = "2025-01-29"
@@ -24,6 +26,7 @@ rule SUSP_JS_Eval_Base64_Jan25 {
 
 rule SUSP_JS_Function_Constructor_Jan25 {
   meta:
+    capabilities = "execution"
     description = "Detects new Function() constructor that creates executable code from strings, equivalent to eval"
     severity    = "high"
     score       = 75
@@ -40,8 +43,10 @@ rule SUSP_JS_Function_Constructor_Jan25 {
 
 rule SUSP_JS_Eval_Charcode_Jan25 {
   meta:
-    description = "Detects eval() combined with String.fromCharCode or hex escapes to hide malicious code"
-    severity    = "critical"
+    evidence = "co-occurring references"
+    capabilities = "execution,obfuscation"
+    description = "Eval and charcode references co-occur. Their data flow is unverified."
+    severity = "medium"
     score       = 90
     author      = "vsix-audit"
     date        = "2025-01-29"
@@ -59,6 +64,7 @@ rule SUSP_JS_Eval_Charcode_Jan25 {
 
 rule SUSP_JS_Indirect_Eval_Jan25 {
   meta:
+    capabilities = "execution"
     description = "Detects indirect eval access through global object like globalThis['eval'] to evade detection"
     severity    = "high"
     score       = 80
@@ -83,6 +89,7 @@ rule SUSP_JS_Indirect_Eval_Jan25 {
 
 rule SUSP_JS_Child_Process_Variable_Jan25 {
   meta:
+    capabilities = "execution"
     description = "Detects child_process execution with variable command input instead of static string literal"
     severity    = "medium"
     score       = 60
@@ -106,6 +113,7 @@ rule SUSP_JS_Child_Process_Variable_Jan25 {
 
 rule SUSP_JS_Process_Binding_Jan25 {
   meta:
+    capabilities = "execution"
     description = "Detects access to Node.js internal process bindings that can bypass security restrictions"
     severity    = "high"
     score       = 85
@@ -123,6 +131,7 @@ rule SUSP_JS_Process_Binding_Jan25 {
 
 rule SUSP_JS_VM_Module_Jan25 {
   meta:
+    capabilities = "execution"
     description = "Detects Node.js vm module usage for code execution in sandboxes that can potentially be escaped"
     severity    = "medium"
     score       = 55
@@ -142,6 +151,7 @@ rule SUSP_JS_VM_Module_Jan25 {
 
 rule SUSP_JS_WebAssembly_Remote_Jan25 {
   meta:
+    capabilities = "network,execution"
     description = "Detects WebAssembly instantiation with remote or base64 source that could execute arbitrary code"
     severity    = "low"
     score       = 40

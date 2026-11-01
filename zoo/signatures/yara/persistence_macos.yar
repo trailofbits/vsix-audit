@@ -12,6 +12,7 @@
 
 rule SUSP_Mac_LaunchAgent_Feb26 {
   meta:
+    capabilities = "fileAccess,execution"
     description = "Detects LaunchAgent plist creation for macOS persistence, used by GlassWorm Rust implants"
     severity    = "high"
     score       = 85
@@ -49,6 +50,7 @@ rule SUSP_Mac_LaunchAgent_Feb26 {
 
 rule SUSP_Mac_AppleDisguise_Feb26 {
   meta:
+    capabilities = "fileAccess,execution"
     description = "Detects use of com.apple.* naming for non-Apple LaunchAgent persistence (masquerading)"
     severity    = "critical"
     score       = 90
@@ -78,6 +80,7 @@ rule SUSP_Mac_AppleDisguise_Feb26 {
 
 rule SUSP_Mac_LoginItem_Feb26 {
   meta:
+    capabilities = "fileAccess,execution"
     description = "Detects programmatic addition of macOS Login Items for persistence"
     severity    = "medium"
     score       = 75

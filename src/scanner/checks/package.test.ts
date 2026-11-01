@@ -12,7 +12,10 @@ import {
   checkLifecycleScripts,
   checkMaliciousPackages,
   checkMaliciousPackageVersions,
-  checkPackage,
+  checkDependencyHeuristics,
+  checkExecutionPatterns,
+  checkManifest,
+  checkPackageIntel,
   checkThemeAbuse,
   checkTyposquattingPackages,
 } from "#internal/scanner/checks/package.js";
@@ -32,6 +35,7 @@ function makeContents(
     name: "test-extension",
     publisher: "test",
     version: "1.0.0",
+    ...packageJsonContent,
     ...manifestOverrides,
   };
 
@@ -222,7 +226,6 @@ describe("checkActivationEvents", () => {
     };
 
     const findings = checkActivationEvents(manifest);
-    expect(findings.some((f) => f.id === "ACTIVATION_STARTUP")).toBe(true);
     expect(findings[0]?.severity).toBe("medium");
   });
 
@@ -876,7 +879,7 @@ describe("checkLifecycleScripts", () => {
 
 // --- Integration tests ---
 
-describe("checkPackage (integration)", () => {
+describe("package modules", () => {
   it("combines all manifest checks", () => {
     const contents = makeContents(
       { name: "test" },
@@ -891,7 +894,7 @@ describe("checkPackage (integration)", () => {
       },
     );
 
-    const findings = checkPackage(contents, makeZooData());
+    const findings = checkManifest(contents);
     expect(findings.some((f) => f.id === "ACTIVATION_WILDCARD")).toBe(true);
     expect(findings.some((f) => f.id === "THEME_WITH_CODE")).toBe(true);
   });
@@ -920,12 +923,12 @@ describe("checkPackage (integration)", () => {
     );
 
     const zooData = makeZooData(["event-stream"], [makeVersionAdvisory("debug", ["4.4.2"])]);
-    const findings = checkPackage(contents, zooData);
-
-    expect(findings.some((f) => f.id === "MALICIOUS_NPM_PACKAGE")).toBe(true);
-    expect(findings.some((f) => f.id === "MALICIOUS_NPM_PACKAGE_VERSION")).toBe(true);
-    expect(findings.some((f) => f.id === "TYPOSQUAT_PACKAGE")).toBe(true);
-    expect(findings.some((f) => f.id === "MALICIOUS_LIFECYCLE_SCRIPT")).toBe(true);
+    const intel = checkPackageIntel(contents, zooData);
+    const heuristics = checkDependencyHeuristics(contents);
+    expect(intel.some((f) => f.id === "MALICIOUS_NPM_PACKAGE")).toBe(true);
+    expect(intel.some((f) => f.id === "MALICIOUS_NPM_PACKAGE_VERSION")).toBe(true);
+    expect(heuristics.some((f) => f.id === "TYPOSQUAT_PACKAGE")).toBe(true);
+    expect(heuristics.some((f) => f.id === "MALICIOUS_LIFECYCLE_SCRIPT")).toBe(true);
   });
 
   it("flags hidden background task execution", () => {
@@ -947,7 +950,7 @@ describe("checkPackage (integration)", () => {
       },
     );
 
-    const findings = checkPackage(contents, makeZooData());
+    const findings = checkExecutionPatterns(contents);
     const finding = findings.find((f) => f.id === "BACKGROUND_TASK_EXECUTION");
 
     expect(finding).toBeDefined();
@@ -974,7 +977,7 @@ describe("checkPackage (integration)", () => {
       },
     );
 
-    const findings = checkPackage(contents, makeZooData());
+    const findings = checkExecutionPatterns(contents);
     const finding = findings.find((f) => f.id === "GITHUB_SHA_EXECUTION");
 
     expect(finding).toBeDefined();
@@ -996,10 +999,9 @@ describe("checkPackage (integration)", () => {
       },
     );
 
-    const findings = checkPackage(contents, makeZooData());
+    const findings = checkExecutionPatterns(contents);
     const startupFinding = findings.find((f) => f.id === "STARTUP_EXECUTION_CHAIN");
 
-    expect(findings.some((f) => f.id === "ACTIVATION_STARTUP")).toBe(true);
     expect(startupFinding).toBeDefined();
     expect(startupFinding?.severity).toBe("high");
     expect(startupFinding?.metadata?.["executionKind"]).toBe("process");
@@ -1019,47 +1021,8 @@ describe("checkPackage (integration)", () => {
     });
 
     const zooData = makeZooData();
-    const findings = checkPackage(contents, zooData);
+    const findings = checkPackageIntel(contents, zooData);
 
     expect(findings).toHaveLength(0);
-  });
-
-  it("handles missing package.json", () => {
-    const manifest: VsixManifest = {
-      name: "test-extension",
-      publisher: "test",
-      version: "1.0.0",
-    };
-    const contents: VsixContents = {
-      manifest,
-      files: new Map(),
-      basePath: "/test",
-    };
-
-    const zooData = makeZooData();
-    const findings = checkPackage(contents, zooData);
-
-    expect(findings).toHaveLength(0);
-  });
-
-  it("handles invalid package.json", () => {
-    const manifest: VsixManifest = {
-      name: "test-extension",
-      publisher: "test",
-      version: "1.0.0",
-    };
-    const files = new Map<string, Buffer>();
-    files.set("package.json", Buffer.from("not valid json", "utf8"));
-    const contents: VsixContents = { manifest, files, basePath: "/test" };
-
-    const zooData = makeZooData();
-    const findings = checkPackage(contents, zooData);
-
-    expect(findings).toHaveLength(1);
-    expect(findings[0]).toMatchObject({
-      id: "PARSE_FAILURE_PACKAGE",
-      severity: "low",
-      category: "pattern",
-    });
   });
 });

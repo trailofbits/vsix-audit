@@ -24,7 +24,8 @@ FROM base AS build
 WORKDIR /opt/vsix-audit
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
-COPY tsconfig.json ./
+COPY tsconfig.json tsconfig.build.json ./
+COPY scripts/clean-build.mjs ./scripts/clean-build.mjs
 COPY src ./src
 RUN npm run build && npm prune --omit=dev --ignore-scripts
 COPY --from=yara /yara-x.tar.gz /tmp/yara-x.tar.gz

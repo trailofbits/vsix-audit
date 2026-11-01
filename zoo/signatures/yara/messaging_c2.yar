@@ -5,6 +5,7 @@
 
 rule C2_JS_Telegram_Bot_Jan25 {
   meta:
+    capabilities = "network"
     description = "Detects Telegram bot API used for C2 communication with command execution or system info gathering"
     severity    = "high"
     score       = 85
@@ -39,6 +40,7 @@ rule C2_JS_Telegram_Bot_Jan25 {
 
 rule STEALER_JS_Telegram_Exfil_Jan25 {
   meta:
+    capabilities = "network,credentials"
     description = "Detects Telegram API used for file exfiltration targeting sensitive credential paths like .ssh"
     severity    = "high"
     score       = 80
@@ -74,6 +76,7 @@ rule STEALER_JS_Telegram_Exfil_Jan25 {
 
 rule C2_JS_Slack_Webhook_Jan25 {
   meta:
+    capabilities = "network"
     description = "Detects Slack webhook URL used for data exfiltration with system info or file access patterns"
     severity    = "high"
     score       = 75

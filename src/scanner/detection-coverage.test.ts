@@ -85,7 +85,16 @@ const MALWARE_SAMPLES: ExpectedDetection[] = [
     path: TEAMPCP_NX_CONSOLE,
     description: "Compromised TeamPCP Nx Console 18.95.0 extension",
     scanOptions: {
-      modules: ["package", "obfuscation", "ast", "yara", "telemetry"],
+      modules: [
+        "manifest",
+        "execution",
+        "deps",
+        "intel",
+        "obfuscation",
+        "ast",
+        "yara",
+        "telemetry",
+      ],
     },
     expectedFindings: [
       { id: "GITHUB_SHA_EXECUTION", severity: "critical" },
@@ -160,7 +169,6 @@ const NEVER_IN_CLEAN_FINDINGS = new Set([
 const defaultOptions: ScanOptions = {
   output: "text",
   severity: "low",
-  network: false,
 };
 
 describe.skipIf(!hasMalwareSamples)("Malware Sample Detection Coverage", () => {
@@ -354,7 +362,16 @@ describe.skipIf(!hasTeamPcpNxConsole)("TeamPCP Nx Console regression coverage", 
     const samplePath = join(SAMPLES_DIR, TEAMPCP_NX_CONSOLE);
     const result = await scanExtension(samplePath, {
       ...defaultOptions,
-      modules: ["package", "obfuscation", "ast", "yara", "telemetry"],
+      modules: [
+        "manifest",
+        "execution",
+        "deps",
+        "intel",
+        "obfuscation",
+        "ast",
+        "yara",
+        "telemetry",
+      ],
     });
 
     const findingIds = new Set(result.findings.map((f) => f.id));

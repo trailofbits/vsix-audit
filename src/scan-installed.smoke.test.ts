@@ -8,7 +8,7 @@ import type { BatchScanResult } from "#internal/scanner/types.js";
 import type { toSarifCombined } from "#internal/formatters.js";
 
 const CLI_PATH = fileURLToPath(new URL("../dist/index.js", import.meta.url));
-const COMMON = ["--output", "json", "--module", "manifest", "--no-network"];
+const COMMON = ["--output", "json", "--module", "manifest"];
 let home = "";
 
 beforeEach(async () => {
@@ -231,7 +231,7 @@ describe("installed scan failures", () => {
     const result = await runCli(["--module", "yara", "--output", "json", flag], { PATH: "" });
     const batch = JSON.parse(result.stdout) as BatchScanResult;
     expect(result.status).toBe(2);
-    expect(batch.results[0]?.metadata.coverage?.unavailableModules).toContain("yara");
+    expect(batch.results[0]?.metadata.coverage.incompleteModules).toContain("yara");
   });
 });
 

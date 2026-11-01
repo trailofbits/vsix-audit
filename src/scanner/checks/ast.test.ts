@@ -2,6 +2,28 @@ import { describe, expect, it } from "vitest";
 import type { VsixContents, VsixManifest } from "#internal/scanner/types.js";
 import { checkAST } from "#internal/scanner/checks/ast.js";
 
+describe("dynamic arguments", () => {
+  it.each([
+    ["eval", "AST_EVAL_DYNAMIC"],
+    ["require", "AST_DYNAMIC_REQUIRE"],
+    ["import", "AST_DYNAMIC_IMPORT"],
+  ])("distinguishes static and interpolated templates for %s", (callee, id) => {
+    const constant = makeContents({ "main.js": `${callee}(\`fixed\`);` });
+    const dynamic = makeContents({ "main.js": `${callee}(\`prefix\${remote}\`);` });
+    expect(checkAST(constant).findings.map((finding) => finding.id)).not.toContain(id);
+    expect(checkAST(dynamic).findings.map((finding) => finding.id)).toContain(id);
+  });
+
+  it.each(["main.js", "main.min.js", "vendor/main.js", "node_modules/fixture/main.js"])(
+    "retains dynamic execution evidence in %s",
+    (filename) => {
+      expect(checkAST(makeContents({ [filename]: "eval(payload);" })).findings).toContainEqual(
+        expect.objectContaining({ id: "AST_EVAL_DYNAMIC" }),
+      );
+    },
+  );
+});
+
 function makeContents(files: Record<string, string>): VsixContents {
   const manifest: VsixManifest = {
     name: "test-extension",
@@ -18,6 +40,31 @@ function makeContents(files: Record<string, string>): VsixContents {
 }
 
 describe("checkAST", () => {
+  it.each([
+    ["main.ts", "const code: string = payload; eval(code);"],
+    ["MAIN.TS", "const code: string = payload; eval(code);"],
+    ["main.tsx", "const code: string = payload; eval(code);"],
+    ["MAIN.TSX", "const code: string = payload; eval(code);"],
+    ["main.jsx", "const node = <div>{eval(payload)}</div>;"],
+    ["MAIN.JSX", "const node = <div>{eval(payload)}</div>;"],
+  ])("recognizes language modes regardless of extension case in %s", (filename, source) => {
+    const result = checkAST(makeContents({ [filename]: source }));
+    expect(result.warnings).toEqual([]);
+    const finding = result.findings.find((entry) => entry.id === "AST_EVAL_DYNAMIC");
+    expect(finding?.location).toMatchObject({ file: filename, line: 1 });
+  });
+
+  it("parses bundled TypeScript declarations in declaration mode", () => {
+    const result = checkAST(
+      makeContents({
+        "node_modules/example/index.d.ts": "export const version: string;",
+        "node_modules/example/index.ts": "export const version = '1.0.0';",
+      }),
+    );
+    expect(result.warnings).toEqual([]);
+    expect(result.findings).toEqual([]);
+  });
+
   // ============================================================================
   // EVAL DETECTION
   // ============================================================================
@@ -30,7 +77,7 @@ describe("checkAST", () => {
       `;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.some((f) => f.id === "AST_EVAL_DYNAMIC")).toBe(true);
     });
@@ -39,7 +86,7 @@ describe("checkAST", () => {
       const content = `eval("console.log('hello')");`;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.some((f) => f.id === "AST_EVAL_DYNAMIC")).toBe(false);
     });
@@ -48,7 +95,7 @@ describe("checkAST", () => {
       const content = `globalThis.eval(code);`;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.some((f) => f.id === "AST_GLOBAL_THIS_EVAL")).toBe(true);
     });
@@ -57,7 +104,7 @@ describe("checkAST", () => {
       const content = `window["eval"](code);`;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.some((f) => f.id === "AST_GLOBAL_THIS_EVAL")).toBe(true);
     });
@@ -75,7 +122,7 @@ describe("checkAST", () => {
       `;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.some((f) => f.id === "AST_FUNCTION_CONSTRUCTOR")).toBe(true);
     });
@@ -86,7 +133,7 @@ describe("checkAST", () => {
       const content = `const fn = new Function('return 1');`;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.some((f) => f.id === "AST_FUNCTION_CONSTRUCTOR")).toBe(true);
     });
@@ -104,7 +151,7 @@ describe("checkAST", () => {
       `;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.some((f) => f.id === "AST_DYNAMIC_REQUIRE")).toBe(true);
     });
@@ -113,7 +160,7 @@ describe("checkAST", () => {
       const content = `require("fs");`;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.some((f) => f.id === "AST_DYNAMIC_REQUIRE")).toBe(false);
     });
@@ -127,7 +174,7 @@ describe("checkAST", () => {
       `;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.some((f) => f.id === "AST_DYNAMIC_IMPORT")).toBe(true);
     });
@@ -136,7 +183,7 @@ describe("checkAST", () => {
       const content = `import("./module.js");`;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.some((f) => f.id === "AST_DYNAMIC_IMPORT")).toBe(false);
     });
@@ -151,7 +198,7 @@ describe("checkAST", () => {
       const content = `process.binding('fs');`;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.some((f) => f.id === "AST_PROCESS_BINDING")).toBe(true);
     });
@@ -160,7 +207,7 @@ describe("checkAST", () => {
       const content = `process._linkedBinding('config');`;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.some((f) => f.id === "AST_PROCESS_BINDING")).toBe(true);
     });
@@ -170,53 +217,53 @@ describe("checkAST", () => {
   // NODE_MODULES EXCLUSIONS
   // ============================================================================
 
-  describe("node_modules exclusions", () => {
-    it("skips eval detection in node_modules", () => {
+  describe("dependency coverage", () => {
+    it("retains evidence for eval detection in node_modules", () => {
       const content = `
         const code = getUserInput();
         eval(code);
       `;
       const contents = makeContents({ "node_modules/protobufjs/src/parse.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
-      expect(findings.some((f) => f.id === "AST_EVAL_DYNAMIC")).toBe(false);
+      expect(findings.some((f) => f.id === "AST_EVAL_DYNAMIC")).toBe(true);
     });
 
-    it("skips Function constructor detection in node_modules", () => {
+    it("retains evidence for Function constructor detection in node_modules", () => {
       const content = `const fn = new Function('arg', body);`;
       const contents = makeContents({ "node_modules/@babel/core/lib/transform.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
-      expect(findings.some((f) => f.id === "AST_FUNCTION_CONSTRUCTOR")).toBe(false);
+      expect(findings.some((f) => f.id === "AST_FUNCTION_CONSTRUCTOR")).toBe(true);
     });
 
-    it("skips process.binding detection in node_modules", () => {
+    it("retains evidence for process.binding detection in node_modules", () => {
       const content = `process.binding('fs');`;
       const contents = makeContents({ "node_modules/graceful-fs/polyfills.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
-      expect(findings.some((f) => f.id === "AST_PROCESS_BINDING")).toBe(false);
+      expect(findings.some((f) => f.id === "AST_PROCESS_BINDING")).toBe(true);
     });
 
-    it("skips dynamic require in node_modules", () => {
+    it("retains evidence for dynamic require in node_modules", () => {
       const content = `require(modulePath);`;
       const contents = makeContents({ "node_modules/pino/lib/logger.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
-      expect(findings.some((f) => f.id === "AST_DYNAMIC_REQUIRE")).toBe(false);
+      expect(findings.some((f) => f.id === "AST_DYNAMIC_REQUIRE")).toBe(true);
     });
 
-    it("skips vendor directory", () => {
+    it("retains evidence for vendor directory", () => {
       const content = `eval(code);`;
       const contents = makeContents({ "vendor/third-party/lib.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
-      expect(findings.some((f) => f.id === "AST_EVAL_DYNAMIC")).toBe(false);
+      expect(findings.some((f) => f.id === "AST_EVAL_DYNAMIC")).toBe(true);
     });
   });
 
@@ -224,8 +271,8 @@ describe("checkAST", () => {
   // BUNDLED CODE EXCLUSIONS
   // ============================================================================
 
-  describe("bundled code exclusions", () => {
-    it("skips eval in webpack bundled code", () => {
+  describe("bundled code coverage", () => {
+    it("retains evidence for eval in webpack bundled code", () => {
       // Webpack bundles have characteristic patterns
       const content = `
         /******/ (function(modules) { // webpackBootstrap
@@ -236,12 +283,12 @@ describe("checkAST", () => {
       `;
       const contents = makeContents({ "dist/bundle.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
-      expect(findings.some((f) => f.id === "AST_EVAL_DYNAMIC")).toBe(false);
+      expect(findings.some((f) => f.id === "AST_EVAL_DYNAMIC")).toBe(true);
     });
 
-    it("skips Function constructor in rollup bundled code", () => {
+    it("retains evidence for Function constructor in rollup bundled code", () => {
       // Rollup detection requires (function (exports AND Object.defineProperty(exports,
       const content = `
         (function (exports) {
@@ -253,9 +300,9 @@ describe("checkAST", () => {
       `;
       const contents = makeContents({ "dist/bundle.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
-      expect(findings.some((f) => f.id === "AST_FUNCTION_CONSTRUCTOR")).toBe(false);
+      expect(findings.some((f) => f.id === "AST_FUNCTION_CONSTRUCTOR")).toBe(true);
     });
 
     it("still detects eval in bundled code WITH obfuscation", () => {
@@ -268,7 +315,7 @@ describe("checkAST", () => {
       `;
       const contents = makeContents({ "dist/bundle.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       // Should be flagged because of obfuscation indicators
       expect(findings.some((f) => f.id === "AST_EVAL_DYNAMIC")).toBe(true);
@@ -282,7 +329,7 @@ describe("checkAST", () => {
       `;
       const contents = makeContents({ "dist/bundle.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.some((f) => f.id === "AST_FUNCTION_CONSTRUCTOR")).toBe(true);
     });
@@ -301,7 +348,7 @@ describe("checkAST", () => {
       `;
       const contents = makeContents({ "src/extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.some((f) => f.id === "AST_EVAL_DYNAMIC")).toBe(true);
     });
@@ -314,7 +361,7 @@ describe("checkAST", () => {
       `;
       const contents = makeContents({ "out/extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.some((f) => f.id === "AST_EVAL_DYNAMIC")).toBe(true);
     });
@@ -323,7 +370,7 @@ describe("checkAST", () => {
       const content = `const fn = new Function('arg', body);`;
       const contents = makeContents({ "lib/compiler.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.some((f) => f.id === "AST_FUNCTION_CONSTRUCTOR")).toBe(true);
     });
@@ -338,7 +385,7 @@ describe("checkAST", () => {
       const content = `eval(code);`;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
       expect(findings.length).toBeGreaterThan(0);
     });
 
@@ -346,7 +393,7 @@ describe("checkAST", () => {
       const content = `eval(code as string);`;
       const contents = makeContents({ "extension.ts": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
       expect(findings.length).toBeGreaterThan(0);
     });
 
@@ -354,7 +401,7 @@ describe("checkAST", () => {
       const content = `eval(code);`;
       const contents = makeContents({ "extension.mjs": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
       expect(findings.length).toBeGreaterThan(0);
     });
 
@@ -362,7 +409,7 @@ describe("checkAST", () => {
       const content = `eval(code);`;
       const contents = makeContents({ "extension.cjs": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
       expect(findings.length).toBeGreaterThan(0);
     });
 
@@ -370,7 +417,7 @@ describe("checkAST", () => {
       const content = `eval(code);`;
       const contents = makeContents({ "component.jsx": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
       expect(findings.length).toBeGreaterThan(0);
     });
 
@@ -378,7 +425,7 @@ describe("checkAST", () => {
       const content = `eval(code);`;
       const contents = makeContents({ "component.tsx": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
       expect(findings.length).toBeGreaterThan(0);
     });
 
@@ -386,7 +433,7 @@ describe("checkAST", () => {
       const content = `{"eval": "code"}`;
       const contents = makeContents({ "config.json": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
       expect(findings).toHaveLength(0);
     });
 
@@ -394,7 +441,7 @@ describe("checkAST", () => {
       const content = `eval(code) is dangerous`;
       const contents = makeContents({ "README.md": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
       expect(findings).toHaveLength(0);
     });
   });
@@ -408,7 +455,7 @@ describe("checkAST", () => {
       const content = `eval(maliciousCode);`;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
       const finding = findings.find((f) => f.id === "AST_EVAL_DYNAMIC");
 
       expect(finding?.metadata?.["codeSnippet"]).toContain("eval");
@@ -418,7 +465,7 @@ describe("checkAST", () => {
       const content = `eval(code);`;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
       const finding = findings.find((f) => f.id === "AST_EVAL_DYNAMIC");
 
       expect(finding?.metadata?.["legitimateUses"]).toBeDefined();
@@ -428,7 +475,7 @@ describe("checkAST", () => {
       const content = `eval(code);`;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
       const finding = findings.find((f) => f.id === "AST_EVAL_DYNAMIC");
 
       expect(finding?.metadata?.["redFlags"]).toBeDefined();
@@ -438,7 +485,7 @@ describe("checkAST", () => {
       const content = `// line 1\n// line 2\neval(code);`;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
       const finding = findings.find((f) => f.id === "AST_EVAL_DYNAMIC");
 
       expect(finding?.location?.line).toBe(3);
@@ -448,7 +495,7 @@ describe("checkAST", () => {
       const content = `eval(code);`;
       const contents = makeContents({ "src/dangerous.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
       const finding = findings.find((f) => f.id === "AST_EVAL_DYNAMIC");
 
       expect(finding?.location?.file).toBe("src/dangerous.js");
@@ -468,7 +515,7 @@ describe("checkAST", () => {
       `;
       const contents = makeContents({ "extension.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
 
       expect(findings.every((f) => f.category === "ast")).toBe(true);
     });
@@ -483,7 +530,7 @@ describe("checkAST", () => {
       const content = `function broken( { eval(code) }`;
       const contents = makeContents({ "broken.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
       expect(Array.isArray(findings)).toBe(true);
       const failure = findings.find((finding) => finding.id === "PARSE_FAILURE_AST");
       expect(failure).toBeDefined();
@@ -495,7 +542,7 @@ describe("checkAST", () => {
     it("handles empty files", () => {
       const contents = makeContents({ "empty.js": "" });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
       expect(findings).toHaveLength(0);
     });
   });
@@ -512,7 +559,7 @@ describe("checkAST", () => {
       `;
       const contents = makeContents({ "obfuscated.js": content });
 
-      const findings = checkAST(contents);
+      const findings = checkAST(contents).findings;
       const finding = findings.find((f) => f.id === "AST_EVAL_DYNAMIC");
 
       expect(finding?.metadata?.["additionalInfo"]).toContain("obfuscation");

@@ -2,6 +2,7 @@ import { isScannable, SCANNABLE_EXTENSIONS_PATTERN } from "#internal/scanner/con
 import type {
   BlocklistEntry,
   Finding,
+  PackageMetadata,
   MaliciousNpmVersionAdvisory,
   VsixContents,
   VsixManifest,
@@ -9,17 +10,10 @@ import type {
 } from "#internal/scanner/types.js";
 import {
   computeLineStarts,
+  extensionId,
   findLineNumberByIndex,
   getStringContent,
 } from "#internal/scanner/utils.js";
-
-interface PackageJson {
-  name?: string;
-  version?: string;
-  dependencies?: Record<string, string>;
-  devDependencies?: Record<string, string>;
-  scripts?: Record<string, string>;
-}
 
 type PackageVersionEvidenceSource =
   | "package-lock"
@@ -225,14 +219,14 @@ function matchesWildcard(extensionId: string, pattern: string): boolean {
 
 export function checkBlocklist(manifest: VsixManifest, blocklist: BlocklistEntry[]): Finding[] {
   const findings: Finding[] = [];
-  const extensionId = `${manifest.publisher}.${manifest.name}`;
+  const id = extensionId(manifest);
 
   for (const entry of blocklist) {
-    if (matchesWildcard(extensionId, entry.id)) {
+    if (matchesWildcard(id, entry.id)) {
       findings.push({
         id: "BLOCKLIST_MATCH",
         title: "Extension on malware blocklist",
-        description: `Extension "${extensionId}" matches blocklisted pattern "${entry.id}": ${entry.reason}`,
+        description: `Extension "${id}" matches blocklisted pattern "${entry.id}": ${entry.reason}`,
         severity: "critical",
         category: "blocklist",
         location: {
@@ -348,7 +342,7 @@ export function checkThemeAbuse(manifest: VsixManifest): Finding[] {
 export function checkSuspiciousPermissions(manifest: VsixManifest): Finding[] {
   const findings: Finding[] = [];
 
-  const extensionDependencies = manifest["extensionDependencies"] as string[] | undefined;
+  const extensionDependencies = manifest.extensionDependencies;
   if (extensionDependencies) {
     for (const dep of extensionDependencies) {
       if (dep.includes("remote-ssh") || dep.includes("remote-wsl")) {
@@ -384,7 +378,7 @@ export function checkSuspiciousPermissions(manifest: VsixManifest): Finding[] {
 // --- Dependency checks ---
 
 export function checkMaliciousPackages(
-  packageJson: PackageJson,
+  packageJson: PackageMetadata,
   maliciousPackages: Set<string>,
 ): Finding[] {
   const findings: Finding[] = [];
@@ -642,7 +636,7 @@ export function checkMaliciousPackageVersions(
   return findings;
 }
 
-export function checkTyposquattingPackages(packageJson: PackageJson): Finding[] {
+export function checkTyposquattingPackages(packageJson: PackageMetadata): Finding[] {
   const findings: Finding[] = [];
   const allDeps = {
     ...packageJson.dependencies,
@@ -673,7 +667,7 @@ export function checkTyposquattingPackages(packageJson: PackageJson): Finding[] 
   return findings;
 }
 
-export function checkLifecycleScripts(packageJson: PackageJson): Finding[] {
+export function checkLifecycleScripts(packageJson: PackageMetadata): Finding[] {
   const findings: Finding[] = [];
   const scripts = packageJson.scripts ?? {};
 
@@ -686,6 +680,7 @@ export function checkLifecycleScripts(packageJson: PackageJson): Finding[] {
       if (pattern.test(scriptContent)) {
         findings.push({
           id: "MALICIOUS_LIFECYCLE_SCRIPT",
+          capabilities: ["execution"],
           title: `Suspicious ${scriptName} script`,
           description: `The ${scriptName} script contains suspicious content: ${desc}. Lifecycle scripts run automatically during npm install and can execute arbitrary code.`,
           severity: "critical",
@@ -712,6 +707,7 @@ export function checkLifecycleScripts(packageJson: PackageJson): Finding[] {
     ) {
       findings.push({
         id: "LIFECYCLE_SCRIPT",
+        capabilities: ["execution"],
         title: `Has ${scriptName} script`,
         description: `The extension has a ${scriptName} script that runs during installation. While not always malicious, lifecycle scripts are a common attack vector. Review the script content carefully.`,
         severity: "medium",
@@ -730,195 +726,157 @@ export function checkLifecycleScripts(packageJson: PackageJson): Finding[] {
   return findings;
 }
 
+interface ExecutionFile {
+  filename: string;
+  content: string;
+  lineStarts: number[];
+  task: RegExpExecArray | null;
+  shell: RegExpExecArray | null;
+  launchesTask: boolean;
+}
+
+function hiddenTaskFindings(file: ExecutionFile): Finding[] {
+  if (!file.launchesTask || file.task === null || !HIDDEN_TASK_PATTERN.test(file.content))
+    return [];
+  return [
+    {
+      id: "BACKGROUND_TASK_EXECUTION",
+      capabilities: ["execution"],
+      title: "Hidden VS Code task execution",
+      description:
+        `File "${file.filename}" creates and executes a VS Code task while suppressing task UI. ` +
+        "This is a strong indicator of background command execution.",
+      severity: "high",
+      category: "pattern",
+      location: {
+        file: file.filename,
+        line: findLineNumberByIndex(file.content, file.task.index, file.lineStarts),
+      },
+      metadata: { hiddenTask: true },
+    },
+  ];
+}
+
+function githubExecutionFindings(file: ExecutionFile): Finding[] {
+  if (!NPX_EXECUTION_PATTERN.test(file.content)) return [];
+  const match = GITHUB_SHA_REF_PATTERN.exec(file.content);
+  if (match === null) return [];
+  const [, repo, ref] = match;
+  if (repo === undefined || ref === undefined) return [];
+  const interpolated = ref.startsWith("${");
+  if (interpolated && !COMMIT_SHA_PATTERN.test(file.content)) return [];
+  const reference = interpolated
+    ? { display: "…", evidence: "interpolated" }
+    : { display: ref, evidence: ref };
+  return [
+    {
+      id: "GITHUB_SHA_EXECUTION",
+      capabilities: ["execution"],
+      title: "Executes npx/npm command from GitHub commit",
+      description:
+        `File "${file.filename}" executes an npx/npm command against ` +
+        `github:${repo}#${reference.display}. Running code directly from ` +
+        "a GitHub commit inside extension runtime is highly suspicious.",
+      severity: "critical",
+      category: "pattern",
+      location: {
+        file: file.filename,
+        line: findLineNumberByIndex(file.content, match.index, file.lineStarts),
+      },
+      metadata: { repo, ref: reference.evidence, command: match[0] },
+    },
+  ];
+}
+
+interface StartupExecution {
+  filename: string;
+  line?: number;
+  kind: "task" | "process";
+}
+
+function startupExecution(file: ExecutionFile): StartupExecution | undefined {
+  if (!file.launchesTask && !PROCESS_LAUNCH_PATTERN.test(file.content)) return undefined;
+  const anchor = file.task ?? file.shell;
+  return {
+    filename: file.filename,
+    kind: file.launchesTask ? "task" : "process",
+    ...(anchor === null
+      ? {}
+      : { line: findLineNumberByIndex(file.content, anchor.index, file.lineStarts) }),
+  };
+}
+
+function startupFinding(execution: StartupExecution): Finding {
+  return {
+    id: "STARTUP_EXECUTION_CHAIN",
+    capabilities: ["execution"],
+    title: "Startup activation triggers command execution",
+    description:
+      `Extension activates on "onStartupFinished" and ${execution.kind}-launches ` +
+      `from "${execution.filename}". This combination materially raises the risk ` +
+      "of unattended code execution at editor startup.",
+    severity: "high",
+    category: "manifest",
+    location: {
+      file: execution.filename,
+      ...(execution.line === undefined ? {} : { line: execution.line }),
+    },
+    metadata: { activationEvent: "onStartupFinished", executionKind: execution.kind },
+  };
+}
+
+function executionFile(filename: string, content: string): ExecutionFile {
+  const task = TASK_EXECUTION_PATTERN.exec(content);
+  const shell = SHELL_EXECUTION_PATTERN.exec(content);
+  return {
+    filename,
+    content,
+    task,
+    shell,
+    lineStarts: computeLineStarts(content),
+    launchesTask: task !== null && (TASK_CONSTRUCTION_PATTERN.test(content) || shell !== null),
+  };
+}
+
+/** Detect runtime task and package execution, preserving the evidence for each behavior. */
 export function checkExecutionPatterns(contents: VsixContents): Finding[] {
   const findings: Finding[] = [];
-  const startupExecutionFiles: Array<{ filename: string; line?: number; kind: string }> = [];
+  const startupFiles: StartupExecution[] = [];
   const startsOnStartup =
-    contents.manifest.activationEvents?.includes("onStartupFinished") ?? false;
-
+    contents.manifest.activationEvents?.includes("onStartupFinished") === true;
   for (const [filename, buffer] of contents.files) {
     if (!isScannable(filename, SCANNABLE_EXTENSIONS_PATTERN)) continue;
-
-    const content = getStringContent(contents, filename, buffer);
-    const lineStarts = computeLineStarts(content);
-
-    const taskExecutionMatch = TASK_EXECUTION_PATTERN.exec(content);
-    const taskConstructionMatch = TASK_CONSTRUCTION_PATTERN.exec(content);
-    const shellExecutionMatch = SHELL_EXECUTION_PATTERN.exec(content);
-    const githubRefMatch = GITHUB_SHA_REF_PATTERN.exec(content);
-    const launchesTask =
-      taskExecutionMatch !== null &&
-      (taskConstructionMatch !== null || shellExecutionMatch !== null);
-    const launchesProcess = launchesTask || PROCESS_LAUNCH_PATTERN.test(content);
-
-    if (launchesTask && HIDDEN_TASK_PATTERN.test(content)) {
-      const line = findLineNumberByIndex(content, taskExecutionMatch.index, lineStarts);
-      findings.push({
-        id: "BACKGROUND_TASK_EXECUTION",
-        title: "Hidden VS Code task execution",
-        description:
-          `File "${filename}" creates and executes a VS Code task while suppressing task UI. ` +
-          "This is a strong indicator of background command execution.",
-        severity: "high",
-        category: "pattern",
-        location: { file: filename, line },
-        metadata: {
-          hiddenTask: true,
-        },
-      });
-    }
-
-    if (NPX_EXECUTION_PATTERN.test(content) && githubRefMatch?.index !== undefined) {
-      const repo = githubRefMatch[1];
-      const ref = githubRefMatch[2];
-      const isInterpolatedRef = ref?.startsWith("${") ?? false;
-      const hasCommitSha = !isInterpolatedRef || COMMIT_SHA_PATTERN.test(content);
-
-      if (repo !== undefined && repo !== "" && ref !== undefined && ref !== "" && hasCommitSha) {
-        const line = findLineNumberByIndex(content, githubRefMatch.index, lineStarts);
-        findings.push({
-          id: "GITHUB_SHA_EXECUTION",
-          title: "Executes npx/npm command from GitHub commit",
-          description:
-            `File "${filename}" executes an npx/npm command against ` +
-            `github:${repo}#${isInterpolatedRef ? "…" : ref}. Running code directly from ` +
-            "a GitHub commit inside extension runtime is highly suspicious.",
-          severity: "critical",
-          category: "pattern",
-          location: { file: filename, line },
-          metadata: {
-            repo,
-            ref: isInterpolatedRef ? "interpolated" : ref,
-            command: githubRefMatch[0],
-          },
-        });
-      }
-    }
-
-    if (startsOnStartup && launchesProcess) {
-      const anchor = taskExecutionMatch ?? shellExecutionMatch;
-      const line =
-        anchor?.index !== undefined
-          ? findLineNumberByIndex(content, anchor.index, lineStarts)
-          : undefined;
-      startupExecutionFiles.push(
-        line !== undefined
-          ? {
-              filename,
-              line,
-              kind: launchesTask ? "task" : "process",
-            }
-          : {
-              filename,
-              kind: launchesTask ? "task" : "process",
-            },
-      );
-    }
+    const file = executionFile(filename, getStringContent(contents, filename, buffer));
+    findings.push(...hiddenTaskFindings(file), ...githubExecutionFindings(file));
+    const execution = startsOnStartup ? startupExecution(file) : undefined;
+    if (execution !== undefined) startupFiles.push(execution);
   }
-
-  const startupExecution =
-    startupExecutionFiles.find((entry) => entry.kind === "task") ?? startupExecutionFiles[0];
-  if (startsOnStartup && startupExecution) {
-    findings.push({
-      id: "STARTUP_EXECUTION_CHAIN",
-      title: "Startup activation triggers command execution",
-      description:
-        `Extension activates on "onStartupFinished" and ${startupExecution.kind}-launches ` +
-        `from "${startupExecution.filename}". This combination materially raises the risk ` +
-        "of unattended code execution at editor startup.",
-      severity: "high",
-      category: "manifest",
-      location:
-        startupExecution.line !== undefined
-          ? { file: startupExecution.filename, line: startupExecution.line }
-          : { file: startupExecution.filename },
-      metadata: {
-        activationEvent: "onStartupFinished",
-        executionKind: startupExecution.kind,
-      },
-    });
-  }
-
+  const startup = startupFiles.find((file) => file.kind === "task") ?? startupFiles[0];
+  if (startup !== undefined) findings.push(startupFinding(startup));
   return findings;
 }
 
 // --- Main export ---
 
-function parsePackageJson(contents: VsixContents): PackageJson | Finding | null {
-  const packageJsonBuffer = contents.files.get("package.json");
-  if (!packageJsonBuffer) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(getStringContent(contents, "package.json", packageJsonBuffer)) as PackageJson;
-  } catch (error) {
-    return {
-      id: "PARSE_FAILURE_PACKAGE",
-      title: "Malformed package.json",
-      description:
-        "package.json could not be parsed. " +
-        "Dependency and package intelligence checks are skipped " +
-        "for this extension.",
-      severity: "low",
-      category: "pattern",
-      location: { file: "package.json" },
-      metadata: {
-        error: error instanceof Error ? error.message : String(error),
-      },
-    };
-  }
-}
-
 export function checkManifest(contents: VsixContents): Finding[] {
-  const { manifest } = contents;
-  const findings: Finding[] = [];
-
-  findings.push(...checkActivationEvents(manifest));
-  findings.push(...checkThemeAbuse(manifest));
-  findings.push(...checkSuspiciousPermissions(manifest));
-
-  return findings;
+  return [
+    ...checkActivationEvents(contents.manifest),
+    ...checkThemeAbuse(contents.manifest),
+    ...checkSuspiciousPermissions(contents.manifest),
+  ];
 }
 
 export function checkDependencyHeuristics(contents: VsixContents): Finding[] {
-  const parsed = parsePackageJson(contents);
-  if (!parsed) return [];
-  if ("id" in parsed) return [parsed];
-
-  return [...checkTyposquattingPackages(parsed), ...checkLifecycleScripts(parsed)];
+  return [
+    ...checkTyposquattingPackages(contents.manifest),
+    ...checkLifecycleScripts(contents.manifest),
+  ];
 }
 
 export function checkPackageIntel(contents: VsixContents, zooData: ZooData): Finding[] {
-  const findings: Finding[] = [];
-
-  findings.push(...checkBlocklist(contents.manifest, zooData.blocklist));
-  findings.push(...checkMaliciousPackageVersions(contents, zooData.maliciousNpmVersions));
-
-  const parsed = parsePackageJson(contents);
-  if (!parsed) return findings;
-  if ("id" in parsed) return [...findings, parsed];
-
-  findings.push(...checkMaliciousPackages(parsed, zooData.maliciousNpmPackages));
-
-  return findings;
-}
-
-export function checkPackage(contents: VsixContents, zooData: ZooData): Finding[] {
-  const findings: Finding[] = [];
-
-  findings.push(...checkManifest(contents));
-  findings.push(...checkExecutionPatterns(contents));
-  findings.push(...checkBlocklist(contents.manifest, zooData.blocklist));
-  findings.push(...checkMaliciousPackageVersions(contents, zooData.maliciousNpmVersions));
-
-  const parsed = parsePackageJson(contents);
-  if (!parsed) return findings;
-  if ("id" in parsed) return [...findings, parsed];
-
-  findings.push(...checkMaliciousPackages(parsed, zooData.maliciousNpmPackages));
-  findings.push(...checkTyposquattingPackages(parsed));
-  findings.push(...checkLifecycleScripts(parsed));
-
-  return findings;
+  return [
+    ...checkBlocklist(contents.manifest, zooData.blocklist),
+    ...checkMaliciousPackageVersions(contents, zooData.maliciousNpmVersions),
+    ...checkMaliciousPackages(contents.manifest, zooData.maliciousNpmPackages),
+  ];
 }

@@ -40,6 +40,8 @@ async function runWithConcurrency<T>(
   await Promise.all(running);
 }
 
+type ScanOutcome = { result: ScanResult } | { error: string };
+
 interface VsixFile {
   path: string;
   size: number;
@@ -116,23 +118,23 @@ export async function scanPaths(
   const errorsByIndex = new Map<number, { path: string; error: string }>();
 
   await runWithConcurrency(paths, concurrency, async (filePath, index) => {
-    try {
-      const result = await scanExtension(filePath, options);
-      resultsByIndex.set(index, result);
-      handlers.onResult?.(filePath, result);
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      errorsByIndex.set(index, { path: filePath, error: errorMsg });
-      handlers.onError?.(filePath, errorMsg);
-    } finally {
-      // Call progress AFTER completion with accurate count
-      handlers.onProgress?.(++completed, paths.length, filePath);
+    const outcome = await scanExtension(filePath, options).then<ScanOutcome, ScanOutcome>(
+      (result) => ({ result }),
+      (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }),
+    );
+    if ("result" in outcome) {
+      resultsByIndex.set(index, outcome.result);
+      handlers.onResult?.(filePath, outcome.result);
+    } else {
+      errorsByIndex.set(index, { path: filePath, error: outcome.error });
+      handlers.onError?.(filePath, outcome.error);
     }
+    handlers.onProgress?.(++completed, paths.length, filePath);
   });
-  return summarizeBatch(paths, resultsByIndex, errorsByIndex, startTime);
+  return collectBatch(paths, resultsByIndex, errorsByIndex, startTime);
 }
 
-function summarizeBatch(
+function collectBatch(
   paths: string[],
   resultsByIndex: Map<number, ScanResult>,
   errorsByIndex: Map<number, { path: string; error: string }>,
@@ -148,6 +150,16 @@ function summarizeBatch(
     if (error) errors.push(error);
   }
 
+  return summarizeBatch(results, errors, paths.length, startTime);
+}
+
+/** Summarize completed targets and failures using the common batch output contract. */
+export function summarizeBatch(
+  results: ScanResult[],
+  errors: BatchScanResult["errors"],
+  totalFiles: number,
+  startTime: number,
+): BatchScanResult {
   const findingsBySeverity: Record<Severity, number> = {
     low: 0,
     medium: 0,
@@ -167,7 +179,7 @@ function summarizeBatch(
     results,
     errors,
     summary: {
-      totalFiles: paths.length,
+      totalFiles,
       scannedFiles: results.length,
       failedFiles: errors.length,
       totalFindings,

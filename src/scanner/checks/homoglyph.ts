@@ -1,6 +1,7 @@
 import { computeLineStarts, offsetToColumn, offsetToLine } from "#internal/scanner/utils.js";
 
 export interface UnicodeMatch {
+  index: number;
   line: number;
   column: number;
   matched: string;
@@ -219,6 +220,7 @@ export function detectCyrillicHomoglyphs(content: string): UnicodeMatch[] {
   return scanCyrillicHomoglyphRuns(content).map((match) => {
     const { line, column } = findLineAndColumn(match.firstHomoglyph.sourceStart, starts);
     return {
+      index: match.firstHomoglyph.sourceStart,
       line,
       column,
       matched: match.firstHomoglyph.decoded,

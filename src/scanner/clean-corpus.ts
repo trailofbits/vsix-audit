@@ -39,13 +39,7 @@ export const CLEAN_CORPUS_NEVER_FINDINGS = new Set([
   "BIDI_OVERRIDE",
   "INVISIBLE_CODE_EXECUTION",
   "VARIATION_SELECTOR",
-  "YARA_LOADER_JS_Download_Write_Execute_Jan25",
-  "YARA_RAT_JS_GlassWorm_Remote_Exec_Jan25",
-  "YARA_STEALER_JS_Credential_File_Exfil_Jan25",
   "YARA_STEALER_JS_Env_Token_Exfil_Jan25",
-  "YARA_SUSP_JS_Eval_Base64_Jan25",
-  "YARA_SUSP_JS_Eval_Charcode_Jan25",
-  "YARA_SUSP_JS_Obfuscation_Eval_Jan25",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -141,6 +135,7 @@ export function cleanCorpusFilename(extension: CleanCorpusEntry): string {
   return `${extension.publisher}.${extension.name}-${extension.version}.vsix`;
 }
 
-export function isNeverCleanFindingId(findingId: string): boolean {
-  return CLEAN_CORPUS_NEVER_FINDINGS.has(findingId);
+/** Reject every critical finding and known high-confidence signals in verified clean inputs. */
+export function isNeverCleanFinding(finding: { id: string; severity: string }): boolean {
+  return finding.severity === "critical" || CLEAN_CORPUS_NEVER_FINDINGS.has(finding.id);
 }

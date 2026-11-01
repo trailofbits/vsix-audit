@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   cleanCorpusKey,
-  isNeverCleanFindingId,
+  isNeverCleanFinding,
   validateCleanCorpusManifest,
 } from "#internal/scanner/clean-corpus.js";
 
@@ -21,6 +21,15 @@ async function loadManifest(): Promise<unknown> {
 }
 
 describe("clean corpus manifest", () => {
+  it("rejects critical findings from rules that are not in a fixed identifier list", () => {
+    expect(isNeverCleanFinding({ id: "NEW_RULE", severity: "critical" })).toBe(true);
+    expect(
+      isNeverCleanFinding({ id: "YARA_SUSP_JS_Eval_Base64_Jan25", severity: "critical" }),
+    ).toBe(true);
+    expect(isNeverCleanFinding({ id: "YARA_SUSP_JS_Eval_Base64_Jan25", severity: "medium" })).toBe(
+      false,
+    );
+  });
   it("pins valid benign extension artifacts", async () => {
     const manifest = validateCleanCorpusManifest(await loadManifest());
     const seen = new Set<string>();
@@ -40,19 +49,30 @@ describe("clean corpus manifest", () => {
   });
 
   it("keeps generic heuristic noise out of the never-in-clean gate", () => {
-    expect(isNeverCleanFindingId("KNOWN_MALWARE_HASH")).toBe(true);
-    expect(isNeverCleanFindingId("KNOWN_GITHUB_C2")).toBe(true);
-    expect(isNeverCleanFindingId("BIDI_OVERRIDE")).toBe(true);
-    expect(isNeverCleanFindingId("ARCHIVE_PORTABLE_PATH_COLLISION")).toBe(true);
-    expect(isNeverCleanFindingId("ARCHIVE_DUPLICATE_PATH")).toBe(true);
-    expect(isNeverCleanFindingId("ARCHIVE_REFERENCED_FILE_MISSING")).toBe(true);
-    expect(isNeverCleanFindingId("YARA_STEALER_JS_Credential_File_Exfil_Jan25")).toBe(true);
+    expect(isNeverCleanFinding({ id: "KNOWN_MALWARE_HASH", severity: "high" })).toBe(true);
+    expect(isNeverCleanFinding({ id: "KNOWN_GITHUB_C2", severity: "high" })).toBe(true);
+    expect(isNeverCleanFinding({ id: "BIDI_OVERRIDE", severity: "high" })).toBe(true);
+    expect(isNeverCleanFinding({ id: "ARCHIVE_PORTABLE_PATH_COLLISION", severity: "high" })).toBe(
+      true,
+    );
+    expect(isNeverCleanFinding({ id: "ARCHIVE_DUPLICATE_PATH", severity: "high" })).toBe(true);
+    expect(isNeverCleanFinding({ id: "ARCHIVE_REFERENCED_FILE_MISSING", severity: "high" })).toBe(
+      true,
+    );
+    expect(
+      isNeverCleanFinding({
+        id: "YARA_STEALER_JS_Credential_File_Exfil_Jan25",
+        severity: "medium",
+      }),
+    ).toBe(false);
 
-    expect(isNeverCleanFindingId("ARCHIVE_PATH_COLLISION")).toBe(false);
-    expect(isNeverCleanFindingId("ARCHIVE_DUPLICATE_ENTRY")).toBe(false);
-    expect(isNeverCleanFindingId("STARTUP_EXECUTION_CHAIN")).toBe(false);
-    expect(isNeverCleanFindingId("ACTIVATION_STARTUP")).toBe(false);
-    expect(isNeverCleanFindingId("AST_DYNAMIC_IMPORT")).toBe(false);
-    expect(isNeverCleanFindingId("YARA_SUSP_JS_Child_Process_Variable_Jan25")).toBe(false);
+    expect(isNeverCleanFinding({ id: "ARCHIVE_PATH_COLLISION", severity: "high" })).toBe(false);
+    expect(isNeverCleanFinding({ id: "ARCHIVE_DUPLICATE_ENTRY", severity: "high" })).toBe(false);
+    expect(isNeverCleanFinding({ id: "STARTUP_EXECUTION_CHAIN", severity: "high" })).toBe(false);
+    expect(isNeverCleanFinding({ id: "ACTIVATION_STARTUP", severity: "high" })).toBe(false);
+    expect(isNeverCleanFinding({ id: "AST_DYNAMIC_IMPORT", severity: "high" })).toBe(false);
+    expect(
+      isNeverCleanFinding({ id: "YARA_SUSP_JS_Child_Process_Variable_Jan25", severity: "high" }),
+    ).toBe(false);
   });
 });

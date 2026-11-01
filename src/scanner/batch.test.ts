@@ -8,7 +8,7 @@ import type { ScanOptions } from "#internal/scanner/types.js";
 const options: ScanOptions = {
   output: "json",
   severity: "low",
-  network: false,
+
   modules: ["manifest"],
   intel: "none",
 };
@@ -56,6 +56,19 @@ async function extension(name: string): Promise<string> {
 }
 
 describe("scanPaths", () => {
+  it("propagates an observer error without calling it a scan failure", async () => {
+    const path = await extension("observer");
+    const onError = vi.fn<(path: string, error: string) => void>();
+    await expect(
+      scanPaths([path], options, {
+        onResult: () => {
+          throw new Error("Observer failed");
+        },
+        onError,
+      }),
+    ).rejects.toThrow("Observer failed");
+    expect(onError).not.toHaveBeenCalled();
+  });
   it("scans extracted extensions and preserves input order with concurrent workers", async () => {
     const paths = [await extension("second"), await extension("first")];
     const completed: number[] = [];
@@ -102,12 +115,11 @@ describe("scanPaths", () => {
 
   it("reports non-Error rejections from a filesystem boundary", async () => {
     const path = await extension("broken");
-    timing.beforeStat = vi
-      .fn<() => Promise<void>>()
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce("blocked");
+    timing.beforeStat = vi.fn<() => Promise<void>>().mockRejectedValueOnce("blocked");
     const batch = await scanPaths([path], options);
-    expect(batch.errors).toEqual([{ path, error: "blocked" }]);
+    expect(batch.errors).toHaveLength(1);
+    expect(batch.errors[0]?.path).toBe(path);
+    expect(batch.errors[0]?.error).toContain("blocked");
   });
 
   it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(

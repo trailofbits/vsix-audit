@@ -9,6 +9,7 @@
 
 rule MAL_JS_GlassWorm_NPM_Token_Theft_Jan25 {
   meta:
+    capabilities = "credentials,fileAccess"
     description = "Detects GlassWorm-style NPM token theft that reads .npmrc file and exfiltrates credentials"
     severity    = "high"
     score       = "85"
@@ -36,6 +37,7 @@ rule MAL_JS_GlassWorm_NPM_Token_Theft_Jan25 {
 
 rule MAL_JS_GlassWorm_SSH_Key_Theft_Jan25 {
   meta:
+    capabilities = "credentials,fileAccess"
     description = "Detects GlassWorm-style SSH private key theft that reads id_rsa/ed25519 and exfiltrates"
     severity    = "critical"
     score       = "90"
@@ -73,6 +75,7 @@ rule MAL_JS_GlassWorm_SSH_Key_Theft_Jan25 {
 
 rule MAL_JS_GlassWorm_Browser_Credential_Theft_Jan25 {
   meta:
+    capabilities = "credentials,fileAccess"
     description = "Detects GlassWorm-style browser credential theft targeting Chrome/Firefox Login Data files"
     severity    = "critical"
     score       = "95"

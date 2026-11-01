@@ -8,6 +8,7 @@
 
 rule C2_JS_GlassWorm_Solana_Jan25 {
   meta:
+    capabilities = "network"
     description = "Detects GlassWorm-style Solana blockchain C2 using transaction memos to receive and execute commands"
     severity    = "critical"
     score       = "90"

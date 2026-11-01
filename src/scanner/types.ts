@@ -9,7 +9,6 @@ export const OUTPUT_FORMATS = ["text", "json", "sarif"] as const;
 export type Registry = "marketplace" | "openvsx" | "cursor";
 
 export const MODULE_NAMES = [
-  "package",
   "manifest",
   "execution",
   "deps",
@@ -35,7 +34,6 @@ export interface ModuleTimings {
 export interface ScanOptions {
   output: OutputFormat;
   severity: Severity;
-  network: boolean;
   modules?: ModuleName[];
   profile?: boolean;
   strict?: boolean;
@@ -50,18 +48,33 @@ export interface FindingMetadata {
   [key: string]: unknown;
 }
 
+export const CAPABILITY_NAMES = [
+  "network",
+  "execution",
+  "fileAccess",
+  "credentials",
+  "obfuscation",
+] as const;
+export type Capability = (typeof CAPABILITY_NAMES)[number];
+
 export interface Finding {
   readonly id: string;
   readonly title: string;
   readonly description: string;
   readonly severity: Severity;
   readonly category: string;
+  readonly capabilities?: readonly Capability[];
   readonly location?: {
     readonly file: string;
     readonly line?: number;
     readonly column?: number;
   };
   readonly metadata?: FindingMetadata;
+}
+
+export interface CheckResult {
+  findings: Finding[];
+  warnings: string[];
 }
 
 export interface CheckSummary {
@@ -78,7 +91,7 @@ export interface ScanResult {
     readonly id: string;
     readonly name: string;
     readonly version: string;
-    readonly publisher: string;
+    readonly publisher?: string;
   };
   readonly findings: Finding[];
   readonly inventory: CheckSummary[];
@@ -90,14 +103,14 @@ export interface ScanResult {
     registry?: Registry;
     intel?: IntelMode;
     timings?: ModuleTimings;
-    coverage?: CoverageMetadata;
+    coverage: CoverageMetadata;
   };
 }
 
 export interface CoverageMetadata {
   degraded: boolean;
   warnings: string[];
-  unavailableModules?: ModuleName[];
+  incompleteModules: ModuleName[];
 }
 
 export interface ArchiveWarning {
@@ -121,15 +134,22 @@ export interface ArtifactEntry {
   skipReason?: string;
 }
 
-export interface VsixManifest {
+export interface PackageMetadata {
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+  scripts?: Record<string, string>;
+}
+
+export interface VsixManifest extends PackageMetadata {
   name: string;
   displayName?: string;
-  publisher: string;
+  publisher?: string;
   version: string;
   description?: string;
   main?: string;
   browser?: string;
   activationEvents?: string[];
+  extensionDependencies?: string[];
   contributes?: {
     themes?: Array<{
       id?: string;
@@ -150,13 +170,10 @@ export interface VsixContents {
   manifest: VsixManifest;
   files: Map<string, Buffer>;
   basePath: string;
-  warnings?: string[];
   archiveWarnings?: ArchiveWarning[];
   artifacts?: ArtifactEntry[];
   /** Pre-computed UTF-8 string contents, keyed by filename */
   stringContents?: Map<string, string>;
-  /** Shared cache for memoized per-file computations */
-  cache?: Map<string, unknown>;
 }
 
 export interface BlocklistEntry {
