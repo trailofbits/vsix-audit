@@ -3,6 +3,7 @@ import { isScannable, SCANNABLE_EXTENSIONS_IOC } from "#internal/scanner/constan
 import type { Finding, VsixContents, ZooData } from "#internal/scanner/types.js";
 import {
   computeLineStarts,
+  extensionId,
   findLineNumberByIndex,
   findLineNumberByString,
   getStringContent,
@@ -185,6 +186,7 @@ export function checkDomains(contents: VsixContents, knownDomains: Set<string>):
         const line = findLineNumberByString(content, domain, lineStarts);
         findings.push({
           id: "KNOWN_C2_DOMAIN",
+          capabilities: ["network"],
           title: "Known C2 domain detected",
           description: `File "${filename}" contains known C2 domain: ${domain}`,
           severity: "critical",
@@ -219,6 +221,7 @@ export function checkIps(contents: VsixContents, knownIps: Set<string>): Finding
         const line = findLineNumberByString(content, ip, lineStarts);
         findings.push({
           id: "KNOWN_C2_IP",
+          capabilities: ["network"],
           title: "Known C2 IP address detected",
           description: `File "${filename}" contains known C2 IP: ${ip}`,
           severity: "critical",
@@ -393,7 +396,8 @@ function certificateBodyRanges(content: string): Array<{ start: number; end: num
     if (body === undefined) continue;
     try {
       // A marker alone must not let an attacker hide a wallet from generic checks.
-      new X509Certificate(match[0]);
+      const certificate = new X509Certificate(match[0]);
+      if (!certificate.raw.equals(Buffer.from(body, "base64"))) continue;
     } catch {
       continue;
     }
@@ -436,6 +440,18 @@ function isGenericWalletAddress(currency: string, wallet: string): boolean {
   return true;
 }
 
+function isEncodedWalletData(
+  content: string,
+  start: number,
+  end: number,
+  certificates: Array<{ start: number; end: number }>,
+): boolean {
+  return (
+    isInsideLongBase64Run(content, start, end) ||
+    certificates.some((body) => start >= body.start && end <= body.end)
+  );
+}
+
 function checkWalletsInFile(
   filename: string,
   content: string,
@@ -460,16 +476,8 @@ function checkWalletsInFile(
       if (!isKnownMalicious) {
         if (!isGenericWalletAddress(name, wallet)) continue;
 
-        if (isInsideLongBase64Run(content, start, start + wallet.length)) {
-          // A later occurrence outside the blob must remain eligible.
-          seenWallets.delete(wallet);
-          continue;
-        }
-
-        if (
-          certificateBodies.some((body) => start >= body.start && start + wallet.length <= body.end)
-        ) {
-          // Preserve known-wallet matches, and allow a later use outside the certificate.
+        if (isEncodedWalletData(content, start, start + wallet.length, certificateBodies)) {
+          // A later occurrence outside encoded data must remain eligible.
           seenWallets.delete(wallet);
           continue;
         }
@@ -514,8 +522,8 @@ export function checkWallets(
   knownWallets: Set<string>,
   blockchainAllowlist?: Set<string>,
 ): Finding[] {
-  const extensionId = `${contents.manifest.publisher}.${contents.manifest.name}`;
-  if (blockchainAllowlist?.has(extensionId) === true) return [];
+  const id = extensionId(contents.manifest);
+  if (blockchainAllowlist?.has(id) === true) return [];
 
   const findings: Finding[] = [];
   for (const [filename, buffer] of contents.files) {
@@ -551,6 +559,7 @@ export function checkGithubC2(contents: VsixContents, githubC2Accounts: Set<stri
         const line = findLineNumberByString(content, pattern, lineStarts);
         findings.push({
           id: "KNOWN_GITHUB_C2",
+          capabilities: ["network"],
           title: "Known GitHub C2 account reference",
           description:
             `File "${filename}" references GitHub account ` +

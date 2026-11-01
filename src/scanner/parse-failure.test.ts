@@ -12,6 +12,33 @@ const DEEP_SOURCE =
 const MANIFEST = { name: "parser-fixture", publisher: "test", version: "1.0.0", main: "main.js" };
 
 describe("AST traversal failures", () => {
+  it.each([
+    { severity: "low", ids: ["PARSE_FAILURE_AST"], incomplete: [true] },
+    { severity: "critical", ids: [], incomplete: [] },
+  ] as const)(
+    "degrades coverage for recoverable errors at $severity severity",
+    async ({ severity, ids, incomplete }) => {
+      const directory = await mkdtemp(join(tmpdir(), "vsix-parser-recovery-"));
+      try {
+        await writeFile(join(directory, "package.json"), JSON.stringify(MANIFEST));
+        await writeFile(join(directory, "main.js"), "const missing;");
+        const result = await scanExtension(directory, {
+          output: "json",
+          severity,
+          modules: ["ast"],
+        });
+        expect(result.metadata.coverage.degraded).toBe(true);
+        expect(result.metadata.coverage.warnings).toEqual([expect.stringContaining('"main.js"')]);
+        expect(result.findings.map((finding) => finding.id)).toEqual(ids);
+        expect(result.findings.map((finding) => finding.metadata?.["analysisIncomplete"])).toEqual(
+          incomplete,
+        );
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("preserves a fatal diagnostic after the parser has recovered", async () => {
     const directory = await mkdtemp(join(tmpdir(), "vsix-parser-recovery-"));
     try {
@@ -20,7 +47,6 @@ describe("AST traversal failures", () => {
       const result = await scanExtension(directory, {
         output: "json",
         severity: "low",
-        network: false,
         modules: ["ast"],
       });
       const failures = result.findings.filter((finding) => finding.id === "PARSE_FAILURE_AST");
@@ -30,7 +56,7 @@ describe("AST traversal failures", () => {
       expect(failures[0]?.metadata?.["recoveryError"]).toEqual(
         expect.stringContaining("initializer"),
       );
-      expect(result.metadata.coverage?.degraded).toBe(true);
+      expect(result.metadata.coverage.degraded).toBe(true);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -45,7 +71,7 @@ describe("AST traversal failures", () => {
       ]),
       basePath: "/fixture",
     };
-    const findings = checkAST(contents);
+    const findings = checkAST(contents).findings;
     const failure = findings.find((finding) => finding.id === "PARSE_FAILURE_AST");
     expect(failure?.location?.file).toBe("main.js");
     expect(failure?.metadata?.["analysisIncomplete"]).toBe(true);
@@ -71,13 +97,12 @@ describe("AST traversal failures", () => {
         const result = await scanExtension(directory, {
           output: "json",
           severity,
-          network: false,
           modules: ["obfuscation", "ast"],
         });
         expect(result.findings.map((finding) => finding.id)).toEqual(
           expect.arrayContaining(Array.from(expected)),
         );
-        expect(result.metadata.coverage?.degraded).toBe(true);
+        expect(result.metadata.coverage.degraded).toBe(true);
         expect(warning).toHaveBeenCalled();
       } finally {
         warning.mockRestore();

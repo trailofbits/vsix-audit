@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { performance } from "node:perf_hooks";
 import type { VsixContents, VsixManifest, ZooData } from "#internal/scanner/types.js";
@@ -361,12 +361,37 @@ describe("checkWallets", () => {
     expect(findings[0]?.metadata?.["currency"]).toBe("SOL");
   });
 
-  it("ignores wallet-shaped Base64 fragments inside PEM certificates", () => {
+  it.each(["\n", "\r\n"])("ignores certificate Base64 fragments with newline %j", (newline) => {
     const contents = makeContents({
-      "extension.js": `const pem = \`${TEST_CERTIFICATE}\`;`,
+      "extension.js": `const pem = \`${TEST_CERTIFICATE.replaceAll("\n", newline)}\`;`,
     });
 
     expect(checkWallets(contents, new Set())).toEqual([]);
+  });
+
+  it("reports a wallet in auxiliary data appended to an accepted certificate", () => {
+    const wallet = "BjVeAjPrSKFiingBn4vZvghsGj9KCE8AJVtbc9S8o8SC";
+    const certificate = new X509Certificate(TEST_CERTIFICATE);
+    // Alias and key-ID auxiliary fields are accepted outside the certificate's DER bytes.
+    const auxiliary = Buffer.concat([
+      Buffer.from([0x30, 78, 0x0c, 41]),
+      Buffer.from("A".repeat(41)),
+      Buffer.from([0x04, 33]),
+      Buffer.from(wallet, "base64"),
+    ]);
+    const encoded = Buffer.concat([certificate.raw, auxiliary]).toString("base64");
+    const body = (encoded.match(/.{1,64}/g) ?? []).join("\n");
+    const pem = `-----BEGIN CERTIFICATE-----\n${body}\n-----END CERTIFICATE-----`;
+    expect(new X509Certificate(pem).raw.equals(certificate.raw)).toBe(true);
+    expect(pem).toContain(`\n${wallet}\n`);
+    const findings = checkWallets(
+      makeContents({ "extension.js": `const pem = \`${pem}\`;` }),
+      new Set(),
+    );
+    expect(findings.find((finding) => finding.metadata?.["wallet"] === wallet)).toMatchObject({
+      id: "CRYPTO_WALLET_DETECTED",
+      severity: "high",
+    });
   });
 
   it("detects a wallet used outside a PEM certificate after the same fragment inside it", () => {

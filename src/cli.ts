@@ -7,6 +7,7 @@ import { Command } from "commander";
 import pc from "picocolors";
 import { registerInstalledCommand } from "#internal/scan-installed.js";
 import {
+  batchExitCode,
   configureScanOptions,
   hasCoverageExitFailure,
   parseJobs,
@@ -18,19 +19,26 @@ import {
   formatFindingSummary,
   outputBatchResult,
   outputResult,
-  outputResults,
 } from "#internal/formatters.js";
 import { clearCache, getCacheDir, getCachedVersions, listCached } from "#internal/scanner/cache.js";
 import { extractCapabilities, type Capabilities } from "#internal/scanner/capabilities.js";
 import {
   downloadExtension,
+  ExtensionNotFoundError,
   parseExtensionId,
   type ParsedExtensionId,
 } from "#internal/scanner/download.js";
 import { scanDirectory, scanExtension } from "#internal/scanner/index.js";
-import type { BatchScanCallbacks } from "#internal/scanner/batch.js";
-import type { Registry, ScanOptions, ScanResult } from "#internal/scanner/types.js";
+import { summarizeBatch, type BatchScanCallbacks } from "#internal/scanner/batch.js";
+import type {
+  BatchScanResult,
+  Registry,
+  ScanOptions,
+  ScanResult,
+  VsixContents,
+} from "#internal/scanner/types.js";
 import { loadExtension } from "#internal/scanner/vsix.js";
+import { isScannable, JS_EXTENSIONS } from "#internal/scanner/constants.js";
 
 const require = createRequire(import.meta.url);
 const { version: VERSION } = require("../package.json") as {
@@ -159,24 +167,27 @@ async function scanAllRegistries(
   target: Extract<CliTarget, { kind: "extension-id" }>,
   context: ScanContext,
 ): Promise<number> {
+  const startTime = Date.now();
   const results: ScanResult[] = [];
+  const errors: BatchScanResult["errors"] = [];
   const baseId = target.unprefixedExtensionId;
   for (const registry of REGISTRIES) {
+    const extensionId = `${registry}:${baseId}`;
     try {
       context.statusLog(pc.cyan(`Downloading from ${registry}:`), baseId);
-      const result = await scanDownloadedExtension(`${registry}:${baseId}`, context);
-      result.metadata = { ...result.metadata, registry };
+      const result = await scanDownloadedExtension(extensionId, context);
+      result.metadata.registry = registry;
       results.push(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      context.statusLog(pc.dim(`  Not found in ${registry}: ${message}`));
+      const label = error instanceof ExtensionNotFoundError ? "Not found" : "Failed";
+      context.statusLog(pc.dim(`  ${label} in ${registry}: ${message}`));
+      errors.push({ path: extensionId, error: message });
     }
   }
-  context.statusLog();
-  if (results.length === 0) throw new Error(`Extension not found in any registry: ${baseId}`);
-  outputResults(results, context.options.output, VERSION);
-  if (results.some((result) => hasCoverageExitFailure(result, context.options))) return 2;
-  return results.some((result) => result.findings.length > 0) ? 1 : 0;
+  const batch = summarizeBatch(results, errors, REGISTRIES.length, startTime);
+  outputBatchResult(batch, context.options.output, VERSION);
+  return batchExitCode(batch, context.options);
 }
 
 function recursiveCallbacks(concurrency: number, context: ScanContext): BatchScanCallbacks {
@@ -227,10 +238,7 @@ async function scanRecursive(
     { concurrency },
   );
   outputBatchResult(batch, context.options.output, VERSION);
-  if (batch.summary.failedFiles > 0) return 2;
-  if (batch.results.some((result) => hasCoverageExitFailure(result, context.options))) return 2;
-  if (batch.summary.totalFindings > 0) return 1;
-  return 0;
+  return batchExitCode(batch, context.options);
 }
 
 async function scanSingle(target: CliTarget, context: ScanContext): Promise<number> {
@@ -266,7 +274,8 @@ async function runScan(target: string, options: CliScanOptions): Promise<number>
 export const cli = new Command()
   .name("vsix-audit")
   .description("Security scanner for VS Code extensions")
-  .version(VERSION);
+  .version(VERSION)
+  .exitOverride((error) => process.exit(error.exitCode === 0 ? 0 : 2));
 
 configureScanOptions(
   cli
@@ -374,86 +383,91 @@ cli
       }
 
       const contents = await loadExtension(infoTarget);
-      const manifest = contents.manifest;
-
       // Run scanner to get findings for capability extraction
       const scanResult = await scanExtension(infoTarget, {
         output: "text",
         severity: "low",
-        network: true,
       });
       const capabilities = extractCapabilities(scanResult.findings);
 
-      console.log();
-      console.log(
-        pc.bold(`Extension: ${manifest.displayName ?? manifest.name} v${manifest.version}`),
-      );
-      console.log(`${pc.cyan("Publisher:")} ${manifest.publisher}`);
-      if (manifest.description !== undefined && manifest.description !== "") {
-        console.log(`${pc.dim(manifest.description)}`);
-      }
-
-      // Capabilities section
-      console.log();
-      console.log(pc.dim("── Capabilities ") + pc.dim("─".repeat(34)));
-      printCapabilities(capabilities, options.verbose ?? false);
-
-      // Manifest section
-      console.log();
-      console.log(pc.dim("── Manifest ") + pc.dim("─".repeat(38)));
-
-      // Activation events
-      const events = manifest.activationEvents ?? [];
-      console.log(
-        `${pc.cyan("Activation:".padEnd(16))}${events.length > 0 ? events.join(", ") : pc.dim("(none)")}`,
-      );
-
-      // Entry points
-      const entryPoints: string[] = [];
-      if (manifest.main !== undefined && manifest.main !== "")
-        entryPoints.push(`main: ${manifest.main}`);
-      if (manifest.browser !== undefined && manifest.browser !== "")
-        entryPoints.push(`browser: ${manifest.browser}`);
-      if (entryPoints.length > 0) {
-        console.log(`${pc.cyan("Entry Points:".padEnd(16))}${entryPoints.join(", ")}`);
-      }
-
-      // Contributions summary
-      const contributes = manifest.contributes ?? {};
-      const contributionSummary = Object.entries(contributes)
-        .filter(([, val]) => (Array.isArray(val) ? val.length > 0 : val !== undefined))
-        .map(([key, val]) => {
-          const count = Array.isArray(val) ? val.length : 1;
-          return `${key} (${count})`;
-        });
-      if (contributionSummary.length > 0) {
-        console.log(`${pc.cyan("Contributes:".padEnd(16))}${contributionSummary.join(", ")}`);
-      }
-
-      // Dependencies
-      const deps = manifest["extensionDependencies"] as string[] | undefined;
-      if (deps && deps.length > 0) {
-        console.log(`${pc.cyan("Dependencies:".padEnd(16))}${deps.join(", ")}`);
-      }
-
-      // Stats section
-      console.log();
-      console.log(pc.dim("── Stats ") + pc.dim("─".repeat(41)));
-
-      const codeExtensions = [".js", ".ts", ".mjs", ".cjs"];
-      const codeFileCount = [...contents.files.keys()].filter((f) =>
-        codeExtensions.some((ext) => f.endsWith(ext)),
-      ).length;
-      console.log(`${pc.cyan("Files:".padEnd(16))}${contents.files.size} (${codeFileCount} code)`);
-
-      const totalSize = [...contents.files.values()].reduce((sum, buf) => sum + buf.length, 0);
-      console.log(`${pc.cyan("Size:".padEnd(16))}${formatBytes(totalSize)}`);
-      console.log();
+      printExtensionInfo(contents, capabilities, options.verbose ?? false);
     } catch (error) {
       console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
       process.exit(2);
     }
   });
+
+function printManifestInfo(manifest: VsixContents["manifest"]): void {
+  // Manifest section
+  console.log();
+  console.log(pc.dim("── Manifest ") + pc.dim("─".repeat(38)));
+
+  // Activation events
+  const events = manifest.activationEvents ?? [];
+  const activation = events.length > 0 ? events.join(", ") : pc.dim("(none)");
+  console.log(`${pc.cyan("Activation:".padEnd(16))}${activation}`);
+
+  // Entry points
+  const entryPoints = (["main", "browser"] as const).flatMap((field) => {
+    const value = manifest[field];
+    return value === undefined || value === "" ? [] : [`${field}: ${value}`];
+  });
+  if (entryPoints.length > 0) {
+    console.log(`${pc.cyan("Entry Points:".padEnd(16))}${entryPoints.join(", ")}`);
+  }
+
+  // Contributions summary
+  const contributes = manifest.contributes ?? {};
+  const contributionSummary = Object.entries(contributes)
+    .filter(([, val]) => (Array.isArray(val) ? val.length > 0 : val !== undefined))
+    .map(([key, val]) => {
+      const count = Array.isArray(val) ? val.length : 1;
+      return `${key} (${count})`;
+    });
+  if (contributionSummary.length > 0) {
+    console.log(`${pc.cyan("Contributes:".padEnd(16))}${contributionSummary.join(", ")}`);
+  }
+
+  // Dependencies
+  const deps = manifest.extensionDependencies;
+  if (deps && deps.length > 0) {
+    console.log(`${pc.cyan("Dependencies:".padEnd(16))}${deps.join(", ")}`);
+  }
+}
+
+function printExtensionInfo(
+  contents: VsixContents,
+  capabilities: Capabilities,
+  verbose: boolean,
+): void {
+  const { manifest } = contents;
+  console.log();
+  console.log(pc.bold(`Extension: ${manifest.displayName ?? manifest.name} v${manifest.version}`));
+  console.log(`${pc.cyan("Publisher:")} ${manifest.publisher ?? "(unknown)"}`);
+  if (manifest.description !== undefined && manifest.description !== "") {
+    console.log(`${pc.dim(manifest.description)}`);
+  }
+
+  // Capabilities section
+  console.log();
+  console.log(pc.dim("── Capabilities ") + pc.dim("─".repeat(34)));
+  printCapabilities(capabilities, verbose);
+
+  printManifestInfo(manifest);
+
+  // Stats section
+  console.log();
+  console.log(pc.dim("── Stats ") + pc.dim("─".repeat(41)));
+
+  const codeFileCount = [...contents.files.keys()].filter((filename) =>
+    isScannable(filename, JS_EXTENSIONS),
+  ).length;
+  console.log(`${pc.cyan("Files:".padEnd(16))}${contents.files.size} (${codeFileCount} code)`);
+
+  const totalSize = [...contents.files.values()].reduce((sum, buf) => sum + buf.length, 0);
+  console.log(`${pc.cyan("Size:".padEnd(16))}${formatBytes(totalSize)}`);
+  console.log();
+}
 
 function printCapabilities(capabilities: Capabilities, verbose: boolean): void {
   const capEntries: [string, keyof Capabilities][] = [

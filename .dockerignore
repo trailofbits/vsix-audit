@@ -3,6 +3,9 @@
 !package.json
 !package-lock.json
 !tsconfig.json
+!tsconfig.build.json
+!scripts/
+!scripts/clean-build.mjs
 !LICENSE
 !licenses/
 !licenses/YARA-X

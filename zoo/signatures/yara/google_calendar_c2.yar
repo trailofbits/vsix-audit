@@ -6,6 +6,7 @@
 
 rule C2_JS_GlassWorm_Google_Calendar_Jan25 {
   meta:
+    capabilities = "network"
     description = "Detects GlassWorm-style Google Calendar API usage for command and control fallback channel"
     severity    = "high"
     score       = "80"
@@ -53,6 +54,7 @@ rule C2_JS_GlassWorm_Google_Calendar_Jan25 {
 
 rule C2_JS_GlassWorm_Calendar_Commands_Jan25 {
   meta:
+    capabilities = "network,execution"
     description = "Detects GlassWorm-style calendar event parsing used to receive and execute C2 commands"
     severity    = "high"
     score       = "85"
@@ -100,6 +102,7 @@ rule C2_JS_GlassWorm_Calendar_Commands_Jan25 {
 
 rule C2_JS_GlassWorm_Calendar_Backup_Jan25 {
   meta:
+    capabilities = "network"
     description = "Detects GlassWorm-style calendar-based backup C2 mechanism with redundancy and failover patterns"
     severity    = "medium"
     score       = "70"
@@ -147,6 +150,7 @@ rule C2_JS_GlassWorm_Calendar_Backup_Jan25 {
 
 rule C2_JS_GlassWorm_Calendar_Exfil_Jan25 {
   meta:
+    capabilities = "network"
     description = "Detects GlassWorm-style data exfiltration using calendar events with encoded payloads"
     severity    = "medium"
     score       = "75"

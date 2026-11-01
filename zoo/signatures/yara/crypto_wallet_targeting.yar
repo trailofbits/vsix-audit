@@ -8,6 +8,7 @@
 
 rule MAL_JS_GlassWorm_Wallet_Seed_Extraction_Jan25 {
   meta:
+    capabilities = "credentials"
     description = "Detects GlassWorm-style wallet seed phrase extraction from storage combined with network exfil"
     severity    = "critical"
     score       = "95"
@@ -40,6 +41,7 @@ rule MAL_JS_GlassWorm_Wallet_Seed_Extraction_Jan25 {
 
 rule MAL_JS_GlassWorm_Multi_Wallet_Enum_Jan25 {
   meta:
+    capabilities = "credentials"
     description = "Detects GlassWorm-style enumeration of 3+ crypto wallet browser extension IDs for targeting"
     severity    = "high"
     score       = "85"

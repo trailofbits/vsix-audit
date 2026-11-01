@@ -18,7 +18,11 @@ const result: ScanResult = {
     },
   ],
   inventory: [],
-  metadata: { scannedAt: "2026-10-31T00:00:00Z", scanDuration: 1 },
+  metadata: {
+    scannedAt: "2026-10-31T00:00:00Z",
+    scanDuration: 1,
+    coverage: { degraded: false, warnings: [], incompleteModules: [] },
+  },
 };
 
 function failedBatch(): BatchScanResult {
@@ -37,6 +41,39 @@ function failedBatch(): BatchScanResult {
 }
 
 afterEach(() => vi.restoreAllMocks());
+
+describe("registry batch reports", () => {
+  it.each([0, 1])("attributes each registry with %s findings per scan", (count) => {
+    const registries = ["marketplace", "openvsx", "cursor"] as const;
+    const results = registries.map((registry, index): ScanResult => ({
+      ...result,
+      extension: { ...result.extension, version: `1.${index}.0` },
+      findings: result.findings.slice(0, count),
+      metadata: { ...result.metadata, registry },
+    }));
+    const sarif = toSarifCombined(results, "0.3.0");
+    expect(sarif.runs.map((run) => run.properties)).toEqual(
+      registries.map((registry) => ({ registry })),
+    );
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    printBatchSummary({
+      results,
+      errors: [],
+      summary: {
+        totalFiles: 3,
+        scannedFiles: 3,
+        failedFiles: 0,
+        totalFindings: 3 * count,
+        findingsBySeverity: { low: 0, medium: 0, high: 3 * count, critical: 0 },
+        scanDuration: 1,
+      },
+    });
+    const text = log.mock.calls.flat().join("\n");
+    for (const [index, registry] of registries.entries()) {
+      expect(text).toContain(`${registry}: test.extension@1.${index}.0`);
+    }
+  });
+});
 
 describe("installed scan reports", () => {
   it("uses absolute file URIs and records each installed source in SARIF", () => {
@@ -138,7 +175,7 @@ describe("batch diagnostics", () => {
           coverage: {
             degraded: true,
             warnings: ["YARA unavailable"],
-            unavailableModules: ["yara"],
+            incompleteModules: ["yara"],
           },
         },
       },

@@ -1,6 +1,12 @@
 import { InvalidArgumentError, type Command } from "commander";
 import { MODULE_NAMES, validateScanOptions } from "#internal/scanner/index.js";
-import type { IntelMode, ModuleName, ScanOptions, ScanResult } from "#internal/scanner/types.js";
+import type {
+  BatchScanResult,
+  IntelMode,
+  ModuleName,
+  ScanOptions,
+  ScanResult,
+} from "#internal/scanner/types.js";
 
 export interface CliScanOptions extends Omit<ScanOptions, "intel"> {
   module?: string;
@@ -12,7 +18,6 @@ export function configureScanOptions(command: Command): Command {
   return command
     .option("-o, --output <format>", "Output format (text, json, sarif)", "text")
     .option("-s, --severity <level>", "Minimum severity (low, medium, high, critical)", "low")
-    .option("--no-network", "Disable network-based checks")
     .option(
       "-m, --module <names>",
       "Run specific modules (comma-separated: " + MODULE_NAMES.join(",") + ")",
@@ -39,7 +44,7 @@ export function parseScanOptions(options: CliScanOptions): ScanOptions {
   const scanOptions: ScanOptions = {
     output: options.output,
     severity: options.severity,
-    network: options.network,
+
     intel: intel as IntelMode,
     profile: options.profile === true,
     strict: options.strict === true,
@@ -62,7 +67,16 @@ export function parseJobs(value: string): number {
 /** Determine whether requested coverage guarantees failed for a completed scan. */
 export function hasCoverageExitFailure(result: ScanResult, options: ScanOptions): boolean {
   const coverage = result.metadata.coverage;
-  if (!coverage) return false;
   if (options.strict === true && coverage.degraded) return true;
-  return options.requireYara === true && coverage.unavailableModules?.includes("yara") === true;
+  return options.requireYara === true && coverage.incompleteModules.includes("yara");
+}
+
+/** Apply the same failure, coverage, and finding exit policy to all batch commands. */
+export function batchExitCode(batch: BatchScanResult, options: ScanOptions): number {
+  if (
+    batch.errors.length > 0 ||
+    batch.results.some((result) => hasCoverageExitFailure(result, options))
+  )
+    return 2;
+  return batch.summary.totalFindings > 0 ? 1 : 0;
 }

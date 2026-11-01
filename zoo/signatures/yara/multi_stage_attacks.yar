@@ -5,8 +5,10 @@
 
 rule LOADER_JS_Download_Write_Execute_Jan25 {
   meta:
-    description = "Detects dropper pattern that downloads content, writes to temp directory, and executes"
-    severity    = "critical"
+    evidence = "co-occurring references"
+    capabilities = "network,execution,fileAccess"
+    description = "Download, write and execution references co-occur. Data flow is unverified."
+    severity = "medium"
     score       = 90
     author      = "vsix-audit"
     date        = "2025-01-29"
@@ -64,6 +66,7 @@ rule LOADER_JS_Download_Write_Execute_Jan25 {
 
 rule RAT_JS_Reverse_Shell_Jan25 {
   meta:
+    capabilities = "network,execution"
     description = "Detects reverse shell pattern where network socket is piped to shell for remote command execution"
     severity    = "high"
     score       = 85
@@ -103,6 +106,7 @@ rule RAT_JS_Reverse_Shell_Jan25 {
 
 rule STEALER_JS_Keylogger_Jan25 {
   meta:
+    capabilities = "credentials"
     description = "Detects keylogger pattern that captures keyboard or clipboard input and exfiltrates data"
     severity    = "high"
     score       = 85
@@ -148,6 +152,7 @@ rule STEALER_JS_Keylogger_Jan25 {
 
 rule RAT_JS_Persistence_Startup_Jan25 {
   meta:
+    capabilities = "execution,fileAccess"
     description = "Detects persistence mechanism that modifies startup files, registry keys, or scheduled tasks"
     severity    = "high"
     score       = 80
@@ -160,8 +165,6 @@ rule RAT_JS_Persistence_Startup_Jan25 {
     $unix_path2 = /\$HOME\/\.zshrc/ ascii wide
     $unix_path3 = /\$HOME\/\.profile/ ascii wide
     $unix_path4 = /\$HOME\/\.bash_profile/ ascii wide
-    $unix_path5 = "process.env.HOME" ascii wide
-    $unix_path6 = "os.homedir()" ascii wide
 
     // macOS Launch services (specific paths)
     $mac1 = "/Library/LaunchAgents" ascii wide
@@ -186,8 +189,8 @@ rule RAT_JS_Persistence_Startup_Jan25 {
     $write_shell = /write(File|FileSync)\s*\([^)]*\.(bashrc|zshrc|profile|bash_profile)/ ascii wide
 
   condition:
-    // Unix: home path + shell config reference
-    ((any of ($unix_path*)) and any of ($unix_path1, $unix_path2, $unix_path3, $unix_path4)) or
+    // Unix: explicit home-relative shell configuration path
+    any of ($unix_path*) or
     // macOS Launch services
     any of ($mac*) or
     // Crontab commands
@@ -202,6 +205,7 @@ rule RAT_JS_Persistence_Startup_Jan25 {
 
 rule MAL_JS_Self_Propagation_Publish_Jan25 {
   meta:
+    capabilities = "execution"
     description = "Detects self-propagation worm pattern that accesses publish tokens and runs publish commands"
     severity    = "critical"
     score       = 95
@@ -228,6 +232,7 @@ rule MAL_JS_Self_Propagation_Publish_Jan25 {
 
 rule MAL_JS_Supply_Chain_Install_Jan25 {
   meta:
+    capabilities = "execution"
     description = "Detects supply chain attack that runs malicious commands during npm package lifecycle hooks"
     severity    = "high"
     score       = 85
@@ -258,6 +263,7 @@ rule MAL_JS_Supply_Chain_Install_Jan25 {
 
 rule STEALER_JS_Crypto_Wallet_Jan25 {
   meta:
+    capabilities = "credentials,fileAccess"
     description = "Detects cryptocurrency stealer that accesses wallet directories, keys, or seed phrases and exfiltrates"
     severity    = "high"
     score       = 85
@@ -303,6 +309,7 @@ rule STEALER_JS_Crypto_Wallet_Jan25 {
 
 rule MAL_JS_GlassWorm_Extension_Modification_Jan25 {
   meta:
+    capabilities = "fileAccess"
     description = "Detects GlassWorm-style attack that modifies other VS Code extensions to inject malicious code"
     severity    = "critical"
     score       = 95

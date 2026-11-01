@@ -1,4 +1,4 @@
-import type { ScanResult } from "#internal/scanner/types.js";
+import type { BatchScanResult, ScanResult } from "#internal/scanner/types.js";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -126,6 +126,17 @@ async function runCli(
   });
 }
 
+describe("retired CLI options", () => {
+  it.each([["--no-network"], ["--module=package"]])(
+    "rejects %j with a usage error",
+    async (option) => {
+      const result = await runCli(["scan", "fixture.vsix", option]);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toMatch(/unknown (?:option|module)/i);
+    },
+  );
+});
+
 describe("CLI cache options", () => {
   let testDir: string;
   let cacheDir: string;
@@ -164,6 +175,12 @@ describe("CLI cache options", () => {
       `import { readFileSync } from "node:fs";
 globalThis.fetch = async (input) => {
   const url = new URL(input);
+  if (url.hostname === "open-vsx.org") {
+    const failure = process.env["VSIX_AUDIT_TEST_REGISTRY_FAILURE"];
+    if (failure === "outage") throw new Error("Simulated registry outage");
+    if (failure === "missing") return new Response("Not found", { status: 404 });
+    if (failure === "scan" && url.pathname.endsWith(".vsix")) return new Response("Invalid VSIX");
+  }
   if (url.pathname.endsWith("/extensionquery")) {
     return Response.json({ results: [{ extensions: [{
       publisher: { publisherName: "test" }, extensionName: "extension",
@@ -295,7 +312,7 @@ globalThis.fetch = async (input) => {
 
     expect(result.status).toBe(0);
     expect(
-      (JSON.parse(result.stdout) as ScanResult[]).map((scan) => scan.metadata.registry),
+      (JSON.parse(result.stdout) as BatchScanResult).results.map((scan) => scan.metadata.registry),
     ).toEqual(registries);
     expect(result.stderr).toContain("Downloading from marketplace:");
     expect(result.stderr).toContain("Downloading from openvsx:");
@@ -303,6 +320,62 @@ globalThis.fetch = async (input) => {
     expect(result.stderr).not.toContain("Using cached");
     expect(await readdir(scanTempDir)).toEqual([]);
     await expectCacheUnchanged();
+  });
+
+  it.each(["outage", "missing", "scan"])(
+    "retains partial registry failure %s in JSON and returns an error",
+    async (failure) => {
+      const result = await runCli(
+        [
+          "scan",
+          "test.extension",
+          "--all-registries",
+          "--no-cache",
+          "--output",
+          "json",
+          "--module",
+          "manifest",
+        ],
+        { env: { ...env, VSIX_AUDIT_TEST_REGISTRY_FAILURE: failure } },
+      );
+      const batch = JSON.parse(result.stdout) as BatchScanResult;
+      expect(result.status).toBe(2);
+      expect(batch.summary).toMatchObject({ totalFiles: 3, scannedFiles: 2, failedFiles: 1 });
+      expect(batch.errors[0]?.path).toBe("openvsx:test/extension");
+      expect(result.stderr).toContain(
+        failure === "missing" ? "Not found in openvsx" : "Failed in openvsx",
+      );
+      expect(await readdir(scanTempDir)).toEqual([]);
+      await expectCacheUnchanged();
+    },
+  );
+
+  it("retains registry failures as SARIF execution notifications", async () => {
+    const result = await runCli(
+      [
+        "scan",
+        "test.extension",
+        "--all-registries",
+        "--no-cache",
+        "--output",
+        "sarif",
+        "--module",
+        "manifest",
+      ],
+      { env: { ...env, VSIX_AUDIT_TEST_REGISTRY_FAILURE: "outage" } },
+    );
+    const report = JSON.parse(result.stdout) as { runs: Array<{ invocations?: unknown }> };
+    expect(result.status).toBe(2);
+    expect(report.runs).toContainEqual(
+      expect.objectContaining({
+        invocations: [
+          expect.objectContaining({
+            executionSuccessful: false,
+            toolExecutionNotifications: [expect.objectContaining({ level: "error" })],
+          }),
+        ],
+      }),
+    );
   });
 
   it.each([false, true])(
@@ -460,7 +533,7 @@ describe("built CLI smoke tests", () => {
       "--output",
       "json",
       "--module",
-      "package",
+      "manifest,execution,deps,intel",
     ]);
     const parsed = JSON.parse(result.stdout) as { findings: unknown[] };
 
@@ -476,7 +549,7 @@ describe("built CLI smoke tests", () => {
       "--output",
       "json",
       "--module",
-      "package",
+      "manifest,execution,deps,intel",
     ]);
     const parsed = JSON.parse(result.stdout) as { findings: Array<{ id: string }> };
 
@@ -491,7 +564,7 @@ describe("built CLI smoke tests", () => {
       "--output",
       "sarif",
       "--module",
-      "package",
+      "manifest,execution,deps,intel",
     ]);
     const parsed = JSON.parse(result.stdout) as {
       version: string;
@@ -527,7 +600,7 @@ describe("built CLI smoke tests", () => {
       "--output",
       "json",
       "--module",
-      "package",
+      "manifest,execution,deps,intel",
       "--jobs",
       "2",
     ]);
@@ -546,7 +619,7 @@ describe("built CLI smoke tests", () => {
       "--output",
       "json",
       "--module",
-      "package",
+      "manifest,execution,deps,intel",
       "--no-threat-intel",
     ]);
     const parsed = JSON.parse(result.stdout) as {
@@ -561,6 +634,31 @@ describe("built CLI smoke tests", () => {
     expect(ids).not.toContain("MALICIOUS_NPM_PACKAGE");
   });
 
+  it.each(["low", "critical"])(
+    "returns strict exit code 2 for recovered parsing at %s severity",
+    async (severity) => {
+      const directory = join(tempRoot, `recoverable-${severity}`);
+      await mkdir(directory);
+      await writeFile(
+        join(directory, "package.json"),
+        JSON.stringify({ name: "recovery", publisher: "test", version: "1.0.0", main: "main.js" }),
+      );
+      await writeFile(join(directory, "main.js"), "const missing;");
+      const result = await runCli([
+        "scan",
+        directory,
+        "--output=json",
+        "--module=ast",
+        `--severity=${severity}`,
+        "--strict",
+      ]);
+      const parsed = JSON.parse(result.stdout) as ScanResult;
+      expect(result.status).toBe(2);
+      expect(parsed.metadata.coverage.degraded).toBe(true);
+      expect(parsed.metadata.coverage.warnings).toEqual([expect.stringContaining('"main.js"')]);
+    },
+  );
+
   it("returns exit code 2 for strict coverage degradation", async () => {
     const result = await runCli([
       "scan",
@@ -568,23 +666,29 @@ describe("built CLI smoke tests", () => {
       "--output",
       "json",
       "--module",
-      "package",
+      "manifest,execution,deps,intel",
       "--strict",
     ]);
     const parsed = JSON.parse(result.stdout) as {
       findings: Array<{ id: string }>;
-      metadata: { coverage?: { degraded?: boolean } };
+      metadata: { coverage: { degraded: boolean } };
     };
 
     expect(result.status).toBe(2);
-    expect(parsed.metadata.coverage?.degraded).toBe(true);
+    expect(parsed.metadata.coverage.degraded).toBe(true);
     expect(parsed.findings.map((finding) => finding.id)).toContain(
       "ARCHIVE_REFERENCED_FILE_MISSING",
     );
   });
 
   it("returns exit code 2 when --require-yara excludes the yara module", async () => {
-    const result = await runCli(["scan", cleanExtension, "--module", "package", "--require-yara"]);
+    const result = await runCli([
+      "scan",
+      cleanExtension,
+      "--module",
+      "manifest,execution,deps,intel",
+      "--require-yara",
+    ]);
 
     expect(result.status).toBe(2);
     expect(result.stderr).toContain(
@@ -602,7 +706,7 @@ describe("built CLI smoke tests", () => {
       "--output",
       "json",
       "--module",
-      "package",
+      "manifest,execution,deps,intel",
     ]);
     const parsed = JSON.parse(result.stdout) as {
       summary: { scannedFiles: number; totalFindings: number };
@@ -629,7 +733,7 @@ describe("built CLI smoke tests", () => {
       "--output",
       "sarif",
       "--module",
-      "package",
+      "manifest,execution,deps,intel",
     ]);
     const parsed = JSON.parse(result.stdout) as {
       version: string;

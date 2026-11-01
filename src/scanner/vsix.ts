@@ -1,11 +1,12 @@
+import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
-import { readFile, readdir, stat } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { readdir, stat } from "node:fs/promises";
+import { join, relative, sep } from "node:path";
 import * as yauzl from "yauzl";
+import { parseManifest } from "#internal/scanner/manifest.js";
 import type {
   ArchiveWarning,
   ArtifactEntry,
-  Severity,
   VsixContents,
   VsixManifest,
 } from "#internal/scanner/types.js";
@@ -21,56 +22,15 @@ export const MAX_TOTAL_SIZE = 1024 * 1024 * 1024;
 /** Maximum compression ratio before flagging as suspicious. */
 export const MAX_COMPRESSION_RATIO = 100;
 
-const ZIP_UTF8_FLAG = 0x0800;
-const INFO_ZIP_UNICODE_PATH_EXTRA_FIELD = 0x7075;
-
-const CP437_CODE_POINTS = [
-  0x0000, 0x263a, 0x263b, 0x2665, 0x2666, 0x2663, 0x2660, 0x2022, 0x25d8, 0x25cb, 0x25d9, 0x2642,
-  0x2640, 0x266a, 0x266b, 0x263c, 0x25ba, 0x25c4, 0x2195, 0x203c, 0x00b6, 0x00a7, 0x25ac, 0x21a8,
-  0x2191, 0x2193, 0x2192, 0x2190, 0x221f, 0x2194, 0x25b2, 0x25bc, 0x0020, 0x0021, 0x0022, 0x0023,
-  0x0024, 0x0025, 0x0026, 0x0027, 0x0028, 0x0029, 0x002a, 0x002b, 0x002c, 0x002d, 0x002e, 0x002f,
-  0x0030, 0x0031, 0x0032, 0x0033, 0x0034, 0x0035, 0x0036, 0x0037, 0x0038, 0x0039, 0x003a, 0x003b,
-  0x003c, 0x003d, 0x003e, 0x003f, 0x0040, 0x0041, 0x0042, 0x0043, 0x0044, 0x0045, 0x0046, 0x0047,
-  0x0048, 0x0049, 0x004a, 0x004b, 0x004c, 0x004d, 0x004e, 0x004f, 0x0050, 0x0051, 0x0052, 0x0053,
-  0x0054, 0x0055, 0x0056, 0x0057, 0x0058, 0x0059, 0x005a, 0x005b, 0x005c, 0x005d, 0x005e, 0x005f,
-  0x0060, 0x0061, 0x0062, 0x0063, 0x0064, 0x0065, 0x0066, 0x0067, 0x0068, 0x0069, 0x006a, 0x006b,
-  0x006c, 0x006d, 0x006e, 0x006f, 0x0070, 0x0071, 0x0072, 0x0073, 0x0074, 0x0075, 0x0076, 0x0077,
-  0x0078, 0x0079, 0x007a, 0x007b, 0x007c, 0x007d, 0x007e, 0x2302, 0x00c7, 0x00fc, 0x00e9, 0x00e2,
-  0x00e4, 0x00e0, 0x00e5, 0x00e7, 0x00ea, 0x00eb, 0x00e8, 0x00ef, 0x00ee, 0x00ec, 0x00c4, 0x00c5,
-  0x00c9, 0x00e6, 0x00c6, 0x00f4, 0x00f6, 0x00f2, 0x00fb, 0x00f9, 0x00ff, 0x00d6, 0x00dc, 0x00a2,
-  0x00a3, 0x00a5, 0x20a7, 0x0192, 0x00e1, 0x00ed, 0x00f3, 0x00fa, 0x00f1, 0x00d1, 0x00aa, 0x00ba,
-  0x00bf, 0x2310, 0x00ac, 0x00bd, 0x00bc, 0x00a1, 0x00ab, 0x00bb, 0x2591, 0x2592, 0x2593, 0x2502,
-  0x2524, 0x2561, 0x2562, 0x2556, 0x2555, 0x2563, 0x2551, 0x2557, 0x255d, 0x255c, 0x255b, 0x2510,
-  0x2514, 0x2534, 0x252c, 0x251c, 0x2500, 0x253c, 0x255e, 0x255f, 0x255a, 0x2554, 0x2569, 0x2566,
-  0x2560, 0x2550, 0x256c, 0x2567, 0x2568, 0x2564, 0x2565, 0x2559, 0x2558, 0x2552, 0x2553, 0x256b,
-  0x256a, 0x2518, 0x250c, 0x2588, 0x2584, 0x258c, 0x2590, 0x2580, 0x03b1, 0x00df, 0x0393, 0x03c0,
-  0x03a3, 0x03c3, 0x00b5, 0x03c4, 0x03a6, 0x0398, 0x03a9, 0x03b4, 0x221e, 0x03c6, 0x03b5, 0x2229,
-  0x2261, 0x00b1, 0x2265, 0x2264, 0x2320, 0x2321, 0x00f7, 0x2248, 0x00b0, 0x2219, 0x00b7, 0x221a,
-  0x207f, 0x00b2, 0x25a0, 0x00a0,
-] as const;
-
-function makeArchiveWarning(
-  id: string,
-  title: string,
-  entryName: string,
-  reason: string,
-  severity: Severity,
-  normalizedPath?: string,
-): ArchiveWarning {
-  const pathText =
-    normalizedPath !== undefined && normalizedPath !== "" ? ` (${normalizedPath})` : "";
-  const warning: ArchiveWarning = {
-    id,
-    title,
-    entryName,
-    reason,
-    severity,
-    message: `${title}: ${entryName}${pathText}: ${reason}`,
+function makeArchiveWarning(warning: Omit<ArchiveWarning, "message">): ArchiveWarning {
+  const path =
+    warning.normalizedPath !== undefined && warning.normalizedPath !== ""
+      ? ` (${warning.normalizedPath})`
+      : "";
+  return {
+    ...warning,
+    message: `${warning.title}: ${warning.entryName}${path}: ${warning.reason}`,
   };
-  if (normalizedPath !== undefined) {
-    warning.normalizedPath = normalizedPath;
-  }
-  return warning;
 }
 
 function normalizeZipEntryPath(entryName: string): { path: string } | { reason: string } {
@@ -133,51 +93,13 @@ function openZipFile(vsixPath: string): Promise<yauzl.ZipFile> {
   });
 }
 
-function crc32Unsigned(data: Buffer): number {
-  let crc = 0xffffffff;
-  for (const byte of data) {
-    crc ^= byte;
-    for (let i = 0; i < 8; i++) {
-      crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-function decodeCp437(buffer: Buffer): string {
-  let result = "";
-  for (const byte of buffer) {
-    result += String.fromCodePoint(CP437_CODE_POINTS[byte] ?? 0xfffd);
-  }
-  return result;
-}
-
-function getUnicodePathExtraFieldName(entry: yauzl.Entry, rawFileName: Buffer): string | undefined {
-  for (const extraField of entry.extraFields) {
-    if (extraField.id !== INFO_ZIP_UNICODE_PATH_EXTRA_FIELD) {
-      continue;
-    }
-    if (extraField.data.length < 6 || extraField.data.readUInt8(0) !== 1) {
-      continue;
-    }
-    if (extraField.data.readUInt32LE(1) !== crc32Unsigned(rawFileName)) {
-      continue;
-    }
-    return extraField.data.subarray(5).toString("utf8");
-  }
-  return undefined;
-}
-
 function getZipEntryName(entry: yauzl.Entry): string {
-  const rawFileName = entry.fileNameRaw;
-  const unicodeName = getUnicodePathExtraFieldName(entry, rawFileName);
-  if (unicodeName !== undefined) {
-    return unicodeName;
-  }
-  if ((entry.generalPurposeBitFlag & ZIP_UTF8_FLAG) !== 0) {
-    return rawFileName.toString("utf8");
-  }
-  return decodeCp437(rawFileName);
+  return yauzl.getFileNameLowLevel(
+    entry.generalPurposeBitFlag,
+    entry.fileNameRaw,
+    entry.extraFields,
+    true,
+  );
 }
 
 function collectZipEntries(zipFile: yauzl.ZipFile): Promise<yauzl.Entry[]> {
@@ -211,242 +133,188 @@ function openZipEntryStream(
   });
 }
 
-async function readZipEntry(entry: yauzl.Entry, zipFile: yauzl.ZipFile): Promise<Buffer> {
-  const stream = await openZipEntryStream(zipFile, entry);
+async function readStream(
+  stream: NodeJS.ReadableStream,
+  limit: number,
+  input: string,
+): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let actualSize = 0;
-
   for await (const chunk of stream) {
     const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     actualSize += data.length;
-    if (actualSize > MAX_ENTRY_SIZE) {
-      throw new Error(`ZIP entry "${getZipEntryName(entry)}" exceeds ${MAX_ENTRY_SIZE} byte limit`);
-    }
+    if (actualSize > limit)
+      throw new Error(
+        `Cannot read ${input}: exceeds ${limit} byte limit. Inspect the input manually.`,
+      );
     chunks.push(data);
   }
-
   return Buffer.concat(chunks);
 }
 
-export async function extractVsix(vsixPath: string): Promise<VsixContents> {
-  const zipFile = await openZipFile(vsixPath);
-  const files = new Map<string, Buffer>();
-  const archiveWarnings: ArchiveWarning[] = [];
-  const artifacts: ArtifactEntry[] = [];
+interface ArchiveContents {
+  files: Map<string, Buffer>;
+  artifacts: ArtifactEntry[];
+  warnings: ArchiveWarning[];
+  paths: Map<string, string>;
+  totalSize: number;
+}
 
-  let manifest: VsixManifest | undefined;
-  let totalExtractedSize = 0;
-  const portablePathKeys = new Map<string, string>();
+function skipArchiveEntry(
+  state: ArchiveContents,
+  entry: yauzl.Entry,
+  warning: ArchiveWarning,
+): void {
+  state.artifacts.push({
+    originalPath: warning.entryName,
+    size: 0,
+    ...(warning.normalizedPath === undefined ? {} : { path: warning.normalizedPath }),
+    compressedSize: entry.compressedSize,
+    uncompressedSize: entry.uncompressedSize,
+    skipped: true,
+    skipReason: warning.reason,
+  });
+  state.warnings.push(warning);
+}
 
+function archiveSizeError(entry: yauzl.Entry, totalSize: number): string | undefined {
+  const sizeError = directorySkipReason(true, entry.uncompressedSize, totalSize);
+  if (entry.uncompressedSize > MAX_ENTRY_SIZE) return sizeError;
+  if (
+    entry.compressedSize > 0 &&
+    entry.uncompressedSize / entry.compressedSize > MAX_COMPRESSION_RATIO
+  ) {
+    const ratio = Math.round(entry.uncompressedSize / entry.compressedSize);
+    return `compression ratio ${ratio}:1 exceeds ${MAX_COMPRESSION_RATIO}:1 limit`;
+  }
+  return sizeError;
+}
+
+function recordPathCollisions(state: ArchiveContents, name: string, path: string): void {
+  const key = portablePathCollisionKey(path);
+  const previous = state.paths.get(key);
+  if (previous !== undefined && previous !== path) {
+    state.warnings.push(
+      makeArchiveWarning({
+        id: "ARCHIVE_PORTABLE_PATH_COLLISION",
+        title: "Portable filesystem path collision",
+        entryName: name,
+        normalizedPath: path,
+        reason: `entry collides with "${previous}" after Unicode/case normalization`,
+        severity: "high",
+      }),
+    );
+  } else state.paths.set(key, path);
+  if (state.files.has(path)) {
+    state.warnings.push(
+      makeArchiveWarning({
+        id: "ARCHIVE_DUPLICATE_PATH",
+        title: "Duplicate normalized ZIP path",
+        entryName: name,
+        normalizedPath: path,
+        reason: "multiple ZIP entries normalize to the same extension path; the last entry is used",
+        severity: "high",
+      }),
+    );
+  }
+}
+
+async function readArchiveEntry(
+  entry: yauzl.Entry,
+  zip: yauzl.ZipFile,
+  state: ArchiveContents,
+): Promise<void> {
+  const name = getZipEntryName(entry);
+  if (name.endsWith("/")) return;
+  const normalized = normalizeZipEntryPath(name);
+  if ("reason" in normalized) {
+    skipArchiveEntry(
+      state,
+      entry,
+      makeArchiveWarning({
+        id: "ARCHIVE_INVALID_PATH",
+        title: "Invalid ZIP entry path",
+        entryName: name,
+        reason: normalized.reason,
+        severity: "high",
+      }),
+    );
+    return;
+  }
+  const path = toExtensionRelativePath(normalized.path);
+  recordPathCollisions(state, name, path);
+  const sizeError = archiveSizeError(entry, state.totalSize);
+  if (sizeError !== undefined) {
+    skipArchiveEntry(
+      state,
+      entry,
+      makeArchiveWarning({
+        id: "ARCHIVE_SKIPPED_ENTRY",
+        title: "Skipped ZIP entry",
+        entryName: name,
+        reason: sizeError,
+        severity: "high",
+        normalizedPath: path,
+      }),
+    );
+    return;
+  }
+  const remainingBudget = MAX_TOTAL_SIZE - state.totalSize;
+  state.totalSize += entry.uncompressedSize;
   try {
-    const entries = await collectZipEntries(zipFile);
-
-    for (const entry of entries) {
-      const entryName = getZipEntryName(entry);
-
-      if (entryName.endsWith("/")) {
-        continue;
-      }
-
-      const normalizedEntry = normalizeZipEntryPath(entryName);
-      if ("reason" in normalizedEntry) {
-        artifacts.push({
-          originalPath: entryName,
-          size: 0,
-          compressedSize: entry.compressedSize,
-          uncompressedSize: entry.uncompressedSize,
-          skipped: true,
-          skipReason: normalizedEntry.reason,
-        });
-        archiveWarnings.push(
-          makeArchiveWarning(
-            "ARCHIVE_INVALID_PATH",
-            "Invalid ZIP entry path",
-            entryName,
-            normalizedEntry.reason,
-            "high",
-          ),
-        );
-        continue;
-      }
-
-      const relativePath = toExtensionRelativePath(normalizedEntry.path);
-      const portablePathKey = portablePathCollisionKey(relativePath);
-      const portablePathMatch = portablePathKeys.get(portablePathKey);
-      if (
-        portablePathMatch !== undefined &&
-        portablePathMatch !== "" &&
-        portablePathMatch !== relativePath
-      ) {
-        archiveWarnings.push(
-          makeArchiveWarning(
-            "ARCHIVE_PORTABLE_PATH_COLLISION",
-            "Portable filesystem path collision",
-            entryName,
-            `entry collides with "${portablePathMatch}" after Unicode/case normalization`,
-            "high",
-            relativePath,
-          ),
-        );
-      } else {
-        portablePathKeys.set(portablePathKey, relativePath);
-      }
-
-      if (entry.uncompressedSize > MAX_ENTRY_SIZE) {
-        const reason = `declared size ${entry.uncompressedSize} exceeds ${MAX_ENTRY_SIZE} byte limit`;
-        artifacts.push({
-          originalPath: entryName,
-          path: relativePath,
-          size: 0,
-          compressedSize: entry.compressedSize,
-          uncompressedSize: entry.uncompressedSize,
-          skipped: true,
-          skipReason: reason,
-        });
-        archiveWarnings.push(
-          makeArchiveWarning(
-            "ARCHIVE_SKIPPED_ENTRY",
-            "Skipped ZIP entry",
-            entryName,
-            reason,
-            "high",
-            relativePath,
-          ),
-        );
-        continue;
-      }
-
-      if (
-        entry.compressedSize > 0 &&
-        entry.uncompressedSize / entry.compressedSize > MAX_COMPRESSION_RATIO
-      ) {
-        const reason =
-          `compression ratio ${Math.round(entry.uncompressedSize / entry.compressedSize)}:1 ` +
-          `exceeds ${MAX_COMPRESSION_RATIO}:1 limit`;
-        artifacts.push({
-          originalPath: entryName,
-          path: relativePath,
-          size: 0,
-          compressedSize: entry.compressedSize,
-          uncompressedSize: entry.uncompressedSize,
-          skipped: true,
-          skipReason: reason,
-        });
-        archiveWarnings.push(
-          makeArchiveWarning(
-            "ARCHIVE_SKIPPED_ENTRY",
-            "Skipped ZIP entry",
-            entryName,
-            reason,
-            "high",
-            relativePath,
-          ),
-        );
-        continue;
-      }
-
-      if (totalExtractedSize + entry.uncompressedSize > MAX_TOTAL_SIZE) {
-        const reason = `total extracted size would exceed ${MAX_TOTAL_SIZE} byte limit`;
-        artifacts.push({
-          originalPath: entryName,
-          path: relativePath,
-          size: 0,
-          compressedSize: entry.compressedSize,
-          uncompressedSize: entry.uncompressedSize,
-          skipped: true,
-          skipReason: reason,
-        });
-        archiveWarnings.push(
-          makeArchiveWarning(
-            "ARCHIVE_SKIPPED_ENTRY",
-            "Skipped ZIP entry",
-            entryName,
-            reason,
-            "high",
-            relativePath,
-          ),
-        );
-        continue;
-      }
-
-      totalExtractedSize += entry.uncompressedSize;
-      let content: Buffer;
-      try {
-        content = await readZipEntry(entry, zipFile);
-      } catch (error) {
-        const reason = `failed to extract entry (${error instanceof Error ? error.message : String(error)})`;
-        artifacts.push({
-          originalPath: entryName,
-          path: relativePath,
-          size: 0,
-          compressedSize: entry.compressedSize,
-          uncompressedSize: entry.uncompressedSize,
-          skipped: true,
-          skipReason: reason,
-        });
-        archiveWarnings.push(
-          makeArchiveWarning(
-            "ARCHIVE_SKIPPED_ENTRY",
-            "Skipped ZIP entry",
-            entryName,
-            reason,
-            "high",
-            relativePath,
-          ),
-        );
-        continue;
-      }
-
-      const sha256 = computeSha256(content);
-      if (files.has(relativePath)) {
-        archiveWarnings.push(
-          makeArchiveWarning(
-            "ARCHIVE_DUPLICATE_PATH",
-            "Duplicate normalized ZIP path",
-            entryName,
-            "multiple ZIP entries normalize to the same extension path; the last entry is used",
-            "high",
-            relativePath,
-          ),
-        );
-      }
-
-      artifacts.push({
-        originalPath: entryName,
-        path: relativePath,
-        size: content.length,
-        compressedSize: entry.compressedSize,
-        uncompressedSize: entry.uncompressedSize,
-        sha256,
-        skipped: false,
-      });
-      files.set(relativePath, content);
-
-      if (relativePath === "package.json") {
-        manifest = JSON.parse(content.toString("utf8")) as VsixManifest;
-      }
-    }
-  } finally {
-    zipFile.close();
+    const stream = await openZipEntryStream(zip, entry);
+    const content = await readStream(
+      stream,
+      Math.min(entry.uncompressedSize, MAX_ENTRY_SIZE, remainingBudget),
+      name,
+    );
+    if (content.length !== entry.uncompressedSize)
+      throw new Error("uncompressed size does not match ZIP metadata");
+    state.files.set(path, content);
+    state.artifacts.push({
+      originalPath: name,
+      path,
+      size: content.length,
+      compressedSize: entry.compressedSize,
+      uncompressedSize: entry.uncompressedSize,
+      sha256: computeSha256(content),
+      skipped: false,
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    skipArchiveEntry(
+      state,
+      entry,
+      makeArchiveWarning({
+        id: "ARCHIVE_SKIPPED_ENTRY",
+        title: "Skipped ZIP entry",
+        entryName: name,
+        reason: `failed to extract entry (${reason})`,
+        severity: "high",
+        normalizedPath: path,
+      }),
+    );
   }
+}
 
-  manifest ??= findManifestWithNonStandardPrefix(files, artifacts, archiveWarnings);
-
-  if (!manifest) {
-    throw new Error("Invalid VSIX: missing package.json");
-  }
-
-  archiveWarnings.push(...findManifestReferenceWarnings(manifest, files, archiveWarnings));
-  const warnings = archiveWarnings.map((warning) => warning.message);
-
-  return {
-    manifest,
-    files,
-    basePath: vsixPath,
-    artifacts,
-    ...(archiveWarnings.length > 0 ? { archiveWarnings } : {}),
-    ...(warnings.length > 0 ? { warnings } : {}),
+/** Read a VSIX archive without executing its contents and report every skipped entry. */
+export async function extractVsix(vsixPath: string): Promise<VsixContents> {
+  const zip = await openZipFile(vsixPath);
+  const state: ArchiveContents = {
+    files: new Map(),
+    artifacts: [],
+    warnings: [],
+    paths: new Map(),
+    totalSize: 0,
   };
+  try {
+    for (const entry of await collectZipEntries(zip)) await readArchiveEntry(entry, zip, state);
+  } finally {
+    zip.close();
+  }
+  if (!state.files.has("package.json"))
+    normalizeNonStandardPrefix(state.files, state.artifacts, state.warnings);
+  return finishLoading(vsixPath, state.files, state.artifacts, state.warnings);
 }
 
 /**
@@ -454,12 +322,12 @@ export async function extractVsix(vsixPath: string): Promise<VsixContents> {
  * (e.g. "publisher.name-version/" instead of "extension/")
  * and re-normalize all paths.
  */
-function findManifestWithNonStandardPrefix(
+function normalizeNonStandardPrefix(
   files: Map<string, Buffer>,
   artifacts: ArtifactEntry[],
   archiveWarnings: ArchiveWarning[],
-): VsixManifest | undefined {
-  for (const [path, content] of files) {
+): void {
+  for (const path of files.keys()) {
     const match = path.match(/^([^/]+)\/package\.json$/);
     if (!match) {
       continue;
@@ -472,14 +340,16 @@ function findManifestWithNonStandardPrefix(
       const normalizedPath = p.startsWith(prefix) ? p.slice(prefix.length) : p;
       if (normalized.has(normalizedPath)) {
         archiveWarnings.push(
-          makeArchiveWarning(
-            "ARCHIVE_DUPLICATE_PATH",
-            "Duplicate normalized ZIP path",
-            p,
-            "multiple ZIP entries normalize to the same extension path after prefix normalization; the last entry is used",
-            "high",
-            normalizedPath,
-          ),
+          makeArchiveWarning({
+            id: "ARCHIVE_DUPLICATE_PATH",
+            title: "Duplicate normalized ZIP path",
+            entryName: p,
+            reason:
+              "multiple ZIP entries normalize to the same extension path " +
+              "after prefix normalization; the last entry is used",
+            severity: "high",
+            normalizedPath: normalizedPath,
+          }),
         );
       }
 
@@ -491,21 +361,27 @@ function findManifestWithNonStandardPrefix(
       files.set(p, c);
     }
 
-    for (const artifact of artifacts) {
-      if (artifact.path?.startsWith(prefix) === true) {
-        artifact.path = artifact.path.slice(prefix.length);
-      }
-    }
-    for (const warning of archiveWarnings) {
-      if (warning.normalizedPath?.startsWith(prefix) === true) {
-        warning.normalizedPath = warning.normalizedPath.slice(prefix.length);
-      }
-    }
+    normalizeArtifactPaths(prefix, artifacts, archiveWarnings);
 
-    return JSON.parse(content.toString("utf8")) as VsixManifest;
+    return;
   }
+}
 
-  return undefined;
+function normalizeArtifactPaths(
+  prefix: string,
+  artifacts: ArtifactEntry[],
+  archiveWarnings: ArchiveWarning[],
+): void {
+  for (const artifact of artifacts) {
+    if (artifact.path?.startsWith(prefix) === true) {
+      artifact.path = artifact.path.slice(prefix.length);
+    }
+  }
+  for (const warning of archiveWarnings) {
+    if (warning.normalizedPath?.startsWith(prefix) === true) {
+      warning.normalizedPath = warning.normalizedPath.slice(prefix.length);
+    }
+  }
 }
 
 function normalizeManifestReference(reference: string): string | null {
@@ -515,7 +391,7 @@ function normalizeManifestReference(reference: string): string | null {
   if ("reason" in normalized) {
     return null;
   }
-  return toExtensionRelativePath(normalized.path);
+  return normalized.path;
 }
 
 function collectManifestReferences(manifest: VsixManifest): Array<{ path: string; kind: string }> {
@@ -593,14 +469,14 @@ function findManifestReferenceWarnings(
   for (const ref of collectManifestReferences(manifest)) {
     if (ref.kind.endsWith(":invalid")) {
       warnings.push(
-        makeArchiveWarning(
-          "ARCHIVE_INVALID_MANIFEST_REFERENCE",
-          "Invalid manifest file reference",
-          ref.path,
-          `manifest ${ref.kind.slice(0, -8)} reference is not a safe relative path`,
-          "high",
-          ref.path,
-        ),
+        makeArchiveWarning({
+          id: "ARCHIVE_INVALID_MANIFEST_REFERENCE",
+          title: "Invalid manifest file reference",
+          entryName: ref.path,
+          reason: `manifest ${ref.kind.slice(0, -8)} reference is not a safe relative path`,
+          severity: "high",
+          normalizedPath: ref.path,
+        }),
       );
       continue;
     }
@@ -610,76 +486,140 @@ function findManifestReferenceWarnings(
       continue;
     }
 
-    const skippedResolution = resolution && "skipped" in resolution ? resolution : undefined;
-    const skipped = skippedResolution?.skipped;
-    const warningPath = skippedResolution?.path ?? ref.path;
-    warnings.push(
-      makeArchiveWarning(
-        skipped ? "ARCHIVE_REFERENCED_FILE_SKIPPED" : "ARCHIVE_REFERENCED_FILE_MISSING",
-        skipped ? "Manifest-referenced file was skipped" : "Manifest-referenced file is missing",
-        warningPath,
-        skipped
-          ? `manifest ${ref.kind} reference points to an entry skipped during extraction`
-          : `manifest ${ref.kind} reference does not exist in the archive`,
-        ref.kind === "main" || ref.kind === "browser" ? "critical" : "high",
-        warningPath,
-      ),
-    );
+    const skipped = resolution && "skipped" in resolution ? resolution : undefined;
+    warnings.push(unresolvedReferenceWarning(ref, skipped));
   }
 
   return warnings;
 }
 
-export async function loadDirectory(dirPath: string): Promise<VsixContents> {
-  const files = new Map<string, Buffer>();
-  const artifacts: ArtifactEntry[] = [];
+function unresolvedReferenceWarning(
+  ref: { path: string; kind: string },
+  skipped: { path: string; skipped: ArchiveWarning } | undefined,
+): ArchiveWarning {
+  const problem =
+    skipped === undefined
+      ? {
+          id: "ARCHIVE_REFERENCED_FILE_MISSING",
+          title: "Manifest-referenced file is missing",
+          path: ref.path,
+          reason: `manifest ${ref.kind} reference does not exist in the extension`,
+        }
+      : {
+          id: "ARCHIVE_REFERENCED_FILE_SKIPPED",
+          title: "Manifest-referenced file was skipped",
+          path: skipped.path,
+          reason: `manifest ${ref.kind} reference points to an entry skipped during extraction`,
+        };
+  return makeArchiveWarning({
+    id: problem.id,
+    title: problem.title,
+    entryName: problem.path,
+    reason: problem.reason,
+    severity: isCodeEntrypoint(ref.kind) ? "critical" : "high",
+    normalizedPath: problem.path,
+  });
+}
 
-  async function walkDir(dir: string): Promise<void> {
-    const entries = await readdir(dir, { withFileTypes: true });
-
-    for (const entry of entries) {
-      const fullPath = join(dir, entry.name);
-
-      if (entry.name === "node_modules" || entry.name === ".git") {
-        continue;
-      }
-
-      if (entry.isDirectory()) {
-        await walkDir(fullPath);
-      } else if (entry.isFile()) {
-        const relativePath = relative(dirPath, fullPath);
-        const content = await readFile(fullPath);
-        files.set(relativePath, content);
-        artifacts.push({
-          originalPath: relativePath,
-          path: relativePath,
-          size: content.length,
-          sha256: computeSha256(content),
-          skipped: false,
-        });
-      }
-    }
-  }
-
-  await walkDir(dirPath);
-
+function finishLoading(
+  basePath: string,
+  files: Map<string, Buffer>,
+  artifacts: ArtifactEntry[],
+  archiveWarnings: ArchiveWarning[],
+): VsixContents {
   const manifestBuffer = files.get("package.json");
-  if (!manifestBuffer) {
-    throw new Error("Invalid extension directory: missing package.json");
-  }
-
-  const manifest = JSON.parse(manifestBuffer.toString("utf8")) as VsixManifest;
-
+  if (!manifestBuffer) throw new Error(`Cannot load ${basePath}: missing package.json.`);
+  const manifest = parseManifest(manifestBuffer, `${basePath}/package.json`);
+  archiveWarnings.push(...findManifestReferenceWarnings(manifest, files, archiveWarnings));
   return {
     manifest,
     files,
-    basePath: dirPath,
+    basePath,
     artifacts,
+    ...(archiveWarnings.length > 0 ? { archiveWarnings } : {}),
   };
 }
 
+/** Read an installed or extracted extension with the archive size and entry-point checks. */
+export async function loadDirectory(dirPath: string): Promise<VsixContents> {
+  const files = new Map<string, Buffer>();
+  const artifacts: ArtifactEntry[] = [];
+  const warnings: ArchiveWarning[] = [];
+  let totalSize = 0;
+
+  async function walkDir(dir: string): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name === ".git") continue;
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walkDir(fullPath);
+        continue;
+      }
+      const filename = relative(dirPath, fullPath).split(sep).join("/");
+      const size = entry.isFile() ? (await stat(fullPath)).size : 0;
+      const reason = directorySkipReason(entry.isFile(), size, totalSize);
+      if (reason !== undefined) {
+        artifacts.push({
+          originalPath: filename,
+          path: filename,
+          size: 0,
+          skipped: true,
+          skipReason: reason,
+        });
+        warnings.push(
+          makeArchiveWarning({
+            id: "ARCHIVE_SKIPPED_ENTRY",
+            title: "Skipped directory entry",
+            entryName: filename,
+            reason: reason,
+            severity: "high",
+            normalizedPath: filename,
+          }),
+        );
+        continue;
+      }
+      totalSize += size;
+      const content = await readStream(createReadStream(fullPath), size, fullPath);
+      if (content.length !== size) {
+        throw new Error(
+          `Cannot load ${fullPath}: size changed while reading. Stop the writer and retry.`,
+        );
+      }
+      files.set(filename, content);
+      artifacts.push({
+        originalPath: filename,
+        path: filename,
+        size: content.length,
+        sha256: computeSha256(content),
+        skipped: false,
+      });
+    }
+  }
+  await walkDir(dirPath);
+  return finishLoading(dirPath, files, artifacts, warnings);
+}
+
+function directorySkipReason(isFile: boolean, size: number, totalSize: number): string | undefined {
+  if (!isFile) return "symbolic links and special files are not followed";
+  if (size > MAX_ENTRY_SIZE) return `declared size ${size} exceeds ${MAX_ENTRY_SIZE} byte limit`;
+  if (totalSize + size > MAX_TOTAL_SIZE) {
+    return `total extracted size would exceed ${MAX_TOTAL_SIZE} byte limit`;
+  }
+  return undefined;
+}
+
 export async function loadExtension(target: string): Promise<VsixContents> {
-  const stats = await stat(target);
+  let stats;
+  try {
+    stats = await stat(target);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Cannot inspect target ${target}: ${reason}. Check that the path exists and is readable.`,
+      { cause: error },
+    );
+  }
 
   if (stats.isDirectory()) {
     return loadDirectory(target);

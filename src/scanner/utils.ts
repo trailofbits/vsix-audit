@@ -2,7 +2,7 @@
  * Shared utility functions for scanner checks.
  */
 
-import type { VsixContents } from "./types.js";
+import type { VsixContents, VsixManifest } from "#internal/scanner/types.js";
 
 /**
  * Pre-compute line start offsets for binary search.
@@ -92,4 +92,11 @@ export function getStringContent(contents: VsixContents, filename: string, buffe
   const content = buffer.toString("utf8");
   contents.stringContents.set(filename, content);
   return content;
+}
+
+/** Identify extension packages, including research samples with no publisher metadata. */
+export function extensionId(manifest: VsixManifest): string {
+  return manifest.publisher === undefined
+    ? manifest.name
+    : `${manifest.publisher}.${manifest.name}`;
 }

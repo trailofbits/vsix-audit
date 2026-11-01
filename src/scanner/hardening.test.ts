@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateRawSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { scanExtension } from "./index.js";
-import type { ScanOptions } from "./types.js";
-import { MAX_ENTRY_SIZE } from "./vsix.js";
+import { scanExtension } from "#internal/scanner/index.js";
+import type { ScanOptions } from "#internal/scanner/types.js";
+import { MAX_ENTRY_SIZE } from "#internal/scanner/vsix.js";
 
 const SYNTHETIC_CORPUS_ROOT = join(import.meta.dirname, "..", "..", "test-corpus", "synthetic");
 
@@ -100,8 +100,8 @@ describe("production hardening regressions", () => {
       scanExtension("missing.vsix", {
         output: "json",
         severity: "typo",
-        network: false,
-        modules: ["package"],
+
+        modules: ["manifest", "execution", "deps", "intel"],
       } as unknown as ScanOptions),
     ).rejects.toThrow("Invalid severity");
   });
@@ -128,11 +128,10 @@ describe("production hardening regressions", () => {
       const result = await scanExtension(vsixPath, {
         output: "json",
         severity: "low",
-        network: false,
-        modules: ["package"],
+        modules: ["manifest", "execution", "deps", "intel"],
       });
 
-      expect(result.metadata.coverage?.degraded).toBe(true);
+      expect(result.metadata.coverage.degraded).toBe(true);
       expect(result.findings.some((f) => f.id === "ARCHIVE_SKIPPED_ENTRY")).toBe(true);
       const referenced = result.findings.find((f) => f.id === "ARCHIVE_REFERENCED_FILE_SKIPPED");
       expect(referenced).toBeDefined();
@@ -146,7 +145,6 @@ describe("production hardening regressions", () => {
     const result = await scanExtension(join(SYNTHETIC_CORPUS_ROOT, "ioc-dedupe"), {
       output: "json",
       severity: "low",
-      network: false,
       modules: ["ioc"],
     });
     const c2Findings = result.findings.filter((finding) => finding.id === "KNOWN_C2_DOMAIN");

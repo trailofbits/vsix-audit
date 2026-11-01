@@ -1,8 +1,16 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { brotliDecompressSync } from "node:zlib";
 import { describe, expect, it, vi } from "vitest";
+import { findLtrRangeOffsets } from "#internal/scanner/checks/bidi-ranges.js";
 import { checkObfuscation } from "#internal/scanner/checks/obfuscation.js";
 import type { Finding, VsixContents } from "#internal/scanner/types.js";
 
 const LRE = "\u202a";
+const KATEX_BYTES = brotliDecompressSync(
+  readFileSync(new URL("./fixtures/markdown-all-in-one-3.6.3-main.js.br", import.meta.url)),
+);
+const KATEX_SOURCE = KATEX_BYTES.toString("utf8");
 
 function directionalFindings(source: string, filename = "extension.js"): Finding[] {
   const contents: VsixContents = {
@@ -15,7 +23,7 @@ function directionalFindings(source: string, filename = "extension.js"): Finding
   );
 }
 
-const safePatterns = [
+const ranges = [
   `[${LRE}-\uffff]`,
   `[a-${LRE}]`,
   `[^${LRE}-\uffff]`,
@@ -24,260 +32,162 @@ const safePatterns = [
   `[\\u2020-${LRE}]`,
 ];
 
-describe("BIDI controls in resolved regex constructions", () => {
-  it.each([
-    `new RegExp("[a-${LRE}]");`,
-    `RegExp("[a-${LRE}]", "u");`,
-    `const endpoint = "${LRE}"; const pattern = "[a-" + endpoint + "]"; new RegExp(pattern);`,
-    `const fragment = ")|[a-${LRE}]"; const prefix = "(a"; new RegExp(prefix + fragment);`,
-    `const pattern = "[a-${LRE}]"; function build() { return new RegExp(pattern); }`,
-    `const pattern = "[a-${LRE}]"; function build(pattern) {} new RegExp(pattern);`,
-    `function build() { const pattern = "[a-${LRE}]"; return new RegExp(pattern); }`,
-    `const pattern = "[a-${LRE}]"; const mode = "v"; new RegExp(pattern, mode);`,
-    `const pattern = "[a-${LRE}]"; { const pattern = "x"; new RegExp(pattern); }` +
-      `new RegExp(pattern);`,
-  ])("accepts a complete statically resolved expression: %j", (source) => {
-    expect(directionalFindings(source)).toEqual([]);
+describe("hash-pinned KaTeX range data", () => {
+  it("verifies the fixture's independently recorded source hash and size", () => {
+    expect(Buffer.byteLength(KATEX_SOURCE)).toBe(1_533_214);
+    expect(createHash("sha256").update(KATEX_SOURCE).digest("hex")).toBe(
+      "9e351182a9d98bf1b3ba0b4bf5a08658e15147d4bd55596e8bf30b549145151b",
+    );
+  });
+
+  it("exempts only the known occurrence in the exact source", () => {
+    const occurrences = Array.from(KATEX_SOURCE.matchAll(/\u202a/g), (match) => match.index);
+    expect(occurrences).toEqual([383_378]);
+    expect(findLtrRangeOffsets(KATEX_BYTES, "dist/node/main.js")).toEqual(new Set(occurrences));
+    expect(directionalFindings(KATEX_SOURCE, "dist/node/main.js")).toEqual([]);
+  });
+
+  it("recognizes identical source under a different JavaScript filename", () => {
+    expect(findLtrRangeOffsets(KATEX_BYTES, "copy.js")).toEqual(new Set([383_378]));
   });
 
   it.each([
-    `const pattern = "[a-${LRE}]";`,
-    `let pattern = "[a-${LRE}]"; new RegExp(pattern);`,
-    `const pattern = "[a-${LRE}]"; new RegExp(pattern + unknown);`,
-    `const pattern = "[a-${LRE}]"; new RegExp(pattern, unknown);`,
-    `const pattern = "[a-${LRE}]"; new RegExp(pattern, "uv");`,
-    `const pattern = "[a-${LRE}]"; new RegExp(pattern, "gg");`,
-    `const pattern = "[a-${LRE}]"; function build(pattern) { return new RegExp(pattern); }`,
-    `const pattern = "[a-${LRE}]"; { const pattern = "x"; new RegExp(pattern); }`,
-    `const pattern = "[a-${LRE}]"; function build(RegExp) { return new RegExp(pattern); }`,
-    `const RegExp = custom; new RegExp("[a-${LRE}]");`,
-    `import RegExp from "custom"; new RegExp("[a-${LRE}]");`,
-    `const { RegExp } = custom; new RegExp("[a-${LRE}]");`,
-    `try {} catch (RegExp) { new RegExp("[a-${LRE}]"); }`,
-    `const build = function RegExp() { return new RegExp("[a-${LRE}]"); };`,
-    `const build = class RegExp { method() { return new RegExp("[a-${LRE}]"); } };`,
-    `const build = ({ RegExp }) => new RegExp("[a-${LRE}]");`,
-    `const build = (...RegExp) => new RegExp("[a-${LRE}]");`,
-    `for (const RegExp of custom) { new RegExp("[a-${LRE}]"); }`,
-    `function build() { new RegExp("[a-${LRE}]"); var RegExp; }`,
-    `function build() { { function RegExp() {} } new RegExp("[a-${LRE}]"); }`,
-    `RegExp = custom; new RegExp("[a-${LRE}]");`,
-    `globalThis.RegExp = custom; new RegExp("[a-${LRE}]");`,
-    `const pattern = "[a-${LRE}]" + pattern; new RegExp(pattern);`,
-    `const a = b; const b = a; new RegExp("[a-${LRE}]" + a);`,
-    `const pattern = "[a-${LRE}]"; new RegExp(...[pattern]);`,
-    `const pattern = "[a-${LRE}]"; new RegExp(pattern, ...["u"]);`,
-    `new RegExp("[a-${LRE}]", "v" + unknown);`,
-    `new RegExp("[a-${LRE}]" + "[z-a]");`,
-    `new RegExp("[a-${LRE}]" + "x".repeat(100_000));`,
-  ])("retains alerts without proof of a valid builtin construction: %j", (source) => {
-    expect(directionalFindings(source)).toHaveLength(1);
+    (source: string): string => "// changed\n" + source,
+    (source: string): string => source + "\n// changed",
+    (source: string): string => source.replace("var e,t,n,r", "var e,t,n,s"),
+  ])("retains the alert after any change to the pinned source", (change) => {
+    const source = change(KATEX_SOURCE);
+    expect(source).not.toBe(KATEX_SOURCE);
+    expect(directionalFindings(source, "dist/node/main.js")).toHaveLength(1);
   });
 
-  it("bounds expansion of repeated constant concatenations", () => {
-    const declarations = [`const p0 = "[a-${LRE}]";`];
-    for (let index = 1; index <= 30; index++) {
-      declarations.push(`const p${index} = p${index - 1} + p${index - 1};`);
-    }
-    expect(directionalFindings(declarations.join("") + "new RegExp(p30);")).toHaveLength(1);
+  it("rejects a forged filename and occurrence offset", () => {
+    const prefix = 'const pattern = "[a-';
+    const source = " ".repeat(383_378 - prefix.length) + prefix + LRE + ']";';
+    expect(source.indexOf(LRE)).toBe(383_378);
+    expect(directionalFindings(source, "dist/node/main.js")).toHaveLength(1);
   });
 
-  it("bounds the depth of constant aliases", () => {
-    const declarations = [`const p0 = "[a-${LRE}]";`];
-    for (let index = 1; index <= 100; index++)
-      declarations.push(`const p${index} = p${index - 1};`);
-    expect(directionalFindings(declarations.join("") + "new RegExp(p100);")).toHaveLength(1);
+  it("invalidates every source exception when more controls are appended", () => {
+    const source = KATEX_SOURCE + `\nconst hidden = "${LRE.repeat(6)}"; eval(hidden);`;
+    expect(findLtrRangeOffsets(Buffer.from(source), "dist/node/main.js")).toEqual(new Set());
+    expect(
+      directionalFindings(source).find((finding) => finding.id === "BIDI_OVERRIDE"),
+    ).toMatchObject({ severity: "critical", metadata: { matchCount: 7 } });
   });
 });
 
-describe("BIDI controls in regex data", () => {
-  it.each(safePatterns)("accepts an LRE range in a string literal: %j", (pattern) => {
-    const source = `const pattern = ${JSON.stringify(pattern)}; new RegExp(pattern);`;
-    expect(directionalFindings(source)).toEqual([]);
-  });
-
-  it.each(["js", "mjs", "cjs", "ts", "jsx", "tsx"])(
-    "accepts range data in %s source",
-    (extension) => {
-      const source = `const pattern = "[${LRE}-\uffff]"; new RegExp(pattern);`;
-      expect(directionalFindings(source, `extension.${extension}`)).toEqual([]);
-    },
-  );
-
-  it.each(["ts", "TS", "tsx", "TSX"])("parses type syntax in %s files", (extension) => {
-    const source = `const pattern: string = "[${LRE}-\uffff]"; new RegExp(pattern);`;
-    expect(directionalFindings(source, `extension.${extension}`)).toEqual([]);
-  });
-
-  it("accepts range data in a regex literal", () => {
-    expect(directionalFindings(`const pattern = /[${LRE}-\uffff]/u;`)).toEqual([]);
-  });
-
-  it("keeps the correct source position after astral characters and escapes", () => {
-    const source =
-      `const emoji = "💡"; const pattern = "\\n[${LRE}-\uffff]"; new RegExp(pattern);` +
-      `\n// ${LRE} alert`;
-    const findings = directionalFindings(source);
-    expect(findings).toHaveLength(1);
-    expect(findings[0]).toMatchObject({
-      severity: "critical",
-      location: { line: 2, column: 4 },
-      metadata: { matchCount: 1 },
-    });
-  });
-});
-
-describe("BIDI controls in declared regex modes", () => {
-  it.each([`[\\_-${LRE}]`, `[\\a-${LRE}]`, `[\\${LRE}-\uffff]`])(
-    "accepts a legacy range stored in a string: %j",
-    (pattern) => {
-      expect(() => new RegExp(pattern)).not.toThrow();
-      const source = `const pattern = ${JSON.stringify(pattern)}; new RegExp(pattern);`;
-      expect(directionalFindings(source)).toEqual([]);
-    },
-  );
-
-  it("keeps a legacy class escape followed by a literal hyphen reportable", () => {
-    const pattern = `[\\s-${LRE}]`;
-    expect(() => new RegExp(pattern)).not.toThrow();
-    expect(directionalFindings(`const pattern = ${JSON.stringify(pattern)};`)).toHaveLength(1);
+describe("regex literals", () => {
+  it.each(ranges)("accepts a literal range endpoint: %j", (pattern) => {
+    expect(directionalFindings(`const pattern = /${pattern}/u;`)).toEqual([]);
   });
 
   it.each([
     ["", `[\\_-${LRE}]`],
     ["", `[\\${LRE}-\uffff]`],
-    ["u", `[a-${LRE}]`],
     ["v", `[[a-${LRE}]]`],
+    ["v", `[[abc]z-${LRE}]`],
     ["v", `[[a-${LRE}]&&[\\s\\S]]`],
     ["v", `[\\q{ab}[a-${LRE}]]`],
-  ])("accepts an actual range endpoint in /%s mode: %j", (flags, pattern) => {
+  ])("uses the literal's declared /%s mode: %j", (flags, pattern) => {
     expect(() => new RegExp(pattern, flags)).not.toThrow();
     expect(directionalFindings(`const pattern = /${pattern}/${flags};`)).toEqual([]);
   });
 
-  it.each([`[a--${LRE}]`, `[${LRE}--a]`, `[\\q{a\\-${LRE}}]`])(
-    "retains alerts for Unicode set operands and string members: %j",
-    (pattern) => {
-      expect(() => new RegExp(pattern, "v")).not.toThrow();
-      expect(directionalFindings(`const pattern = /${pattern}/v;`)).toHaveLength(1);
+  it.each([
+    `const pattern = /[${LRE}]/u;`,
+    `const pattern = /[${LRE}\\-a]/u;`,
+    `const pattern = /[a--${LRE}]/v;`,
+    `const pattern = /[\\q{a\\-${LRE}}]/v;`,
+    `const pattern = /[z-a${LRE}]/u;`,
+  ])("retains controls outside valid range endpoints: %j", (source) => {
+    expect(directionalFindings(source)).toHaveLength(1);
+  });
+
+  it("does not depend on the global RegExp binding", () => {
+    expect(
+      directionalFindings(`globalThis.RegExp = consume; const pattern = /[a-${LRE}]/u;`),
+    ).toEqual([]);
+  });
+
+  it("retains a separate control after astral characters", () => {
+    const source = `const emoji = "💡"; const pattern = /[a-${LRE}]/u;\n// ${LRE}`;
+    expect(directionalFindings(source)).toMatchObject([
+      { location: { line: 2, column: 4 }, metadata: { matchCount: 1 } },
+    ]);
+  });
+});
+
+describe("other strings and source", () => {
+  it.each(ranges)("retains a constructor-string range: %j", (pattern) => {
+    expect(
+      directionalFindings(`const p = ${JSON.stringify(pattern)}; new RegExp(p);`),
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    "",
+    "globalThis.RegExp = consume;",
+    'globalThis["RegExp"] = consume;',
+    "let root = globalThis; root.RegExp = consume;",
+    "const [root] = [globalThis]; root.RegExp = consume;",
+    "const root = true ? globalThis : {}; root.RegExp = consume;",
+    "globalThis.globalThis.RegExp = consume;",
+    "function getRoot() { return globalThis; } getRoot().RegExp = consume;",
+    "with ({RegExp: consume}) {}",
+  ])("retains alerts regardless of constructor resolution: %j", (prefix) => {
+    const pattern = JSON.stringify(Array.from({ length: 6 }, () => `[a-${LRE}]`).join(""));
+    const source = `${prefix} RegExp(${pattern}); eval(payload);`;
+    expect(directionalFindings(source).map((finding) => finding.id)).toEqual(
+      expect.arrayContaining(["BIDI_OVERRIDE", "INVISIBLE_CODE_EXECUTION"]),
+    );
+  });
+
+  it.each(["js", "mjs", "cjs", "ts", "jsx", "tsx", "TS", "py", "json", "md", "txt"])(
+    "retains untrusted strings in %s files",
+    (extension) => {
+      expect(
+        directionalFindings(`const pattern = "[a-${LRE}]";`, `source.${extension}`),
+      ).toHaveLength(1);
     },
   );
 
-  it("retains alerts and reports a diagnostic when traversal exceeds its stack limit", () => {
+  it("retains controls in typed constructor expressions", () => {
+    const source =
+      `(globalThis as typeof globalThis).RegExp = consume;` +
+      `(RegExp as typeof RegExp)("[a-${LRE}]" as string);`;
+    expect(directionalFindings(source, "source.ts")).toHaveLength(1);
+  });
+
+  it.each([
+    `// [a-${LRE}]`,
+    `/* [${LRE}-\uffff] */`,
+    `const text = "message${LRE}hidden";`,
+    `const pattern = \`[a-${LRE}]\`;`,
+    `const pattern = /[a-${LRE}]/u; const = ;`,
+    `const pattern = /[a-${LRE}]/u; let duplicate; let duplicate;`,
+  ])("retains controls in comments, text, or invalid programs: %j", (source) => {
+    expect(directionalFindings(source)).toHaveLength(1);
+  });
+
+  it.each(["\u202b", "\u202c", "\u202d", "\u202e"])(
+    "retains other directional controls: %j",
+    (control) => {
+      expect(directionalFindings(`const pattern = /[${control}-\uffff]/u;`)).toHaveLength(1);
+    },
+  );
+
+  it("retains alerts and reports a traversal failure", () => {
     const warning = vi.spyOn(process, "emitWarning").mockImplementation(() => {});
     try {
       const expression = Array.from({ length: 20_000 }, () => "1").join("+");
-      const source = `const value = ${expression}; // ${LRE}`;
-      expect(directionalFindings(source)).toHaveLength(1);
+      expect(directionalFindings(`const value = ${expression}; // ${LRE}`)).toHaveLength(1);
       expect(warning).toHaveBeenCalledWith(
         expect.stringContaining('BIDI range analysis failed for "extension.js"'),
         { code: "BIDI_RANGE_ANALYSIS_FAILED" },
       );
     } finally {
       warning.mockRestore();
-    }
-  });
-});
-
-describe("BIDI controls in Unicode-set string fragments", () => {
-  it.each(["", ")|"])("accepts an outer v-mode range after prefix %j", (prefix) => {
-    const pattern = `[[abc]z-${LRE}]`;
-    expect(() => new RegExp(pattern, "v")).not.toThrow();
-    const source =
-      `const fragment = ${JSON.stringify(prefix + pattern)};` +
-      `new RegExp(${JSON.stringify(prefix === "" ? "" : "(a")} + fragment, "v");`;
-    expect(directionalFindings(source)).toEqual([]);
-  });
-
-  it.each([`[[abc]--[${LRE}]]`, `[\\q{a\\-${LRE}}]`])(
-    "retains a v-mode set operand or string member: %j",
-    (pattern) => {
-      expect(() => new RegExp(pattern, "v")).not.toThrow();
-      expect(directionalFindings(`const pattern = ${JSON.stringify(pattern)};`)).toHaveLength(1);
-    },
-  );
-});
-
-describe("BIDI controls outside range data", () => {
-  it.each([
-    `// [a-${LRE}]`,
-    `/* [${LRE}-\uffff] */`,
-    `const text = "message${LRE}hidden";`,
-    `const pattern = "[${LRE}]";`,
-    `const pattern = "[-${LRE}]";`,
-    `const pattern = "[^-${LRE}]";`,
-    `const pattern = "[${LRE}-]";`,
-    `const pattern = ${JSON.stringify(`[a\\-${LRE}]`)};`,
-    `const pattern = ${JSON.stringify(`\\[a-${LRE}]`)};`,
-    `const pattern = "[${LRE}-\uffff";`,
-    `const pattern = "[z-a${LRE}-\uffff]";`,
-    `const pattern = /[z-a${LRE}]/u;`,
-    `const pattern = "[${LRE}-\uffff]"; const = ;`,
-    `const pattern = "[${LRE}-\uffff]"; let duplicate; let duplicate;`,
-    `const pattern = \`[${LRE}-\uffff]\`;`,
-    `const pattern = "\\u202a[${LRE}-\uffff]";`,
-  ])("retains an alert outside an unambiguous parsed range: %j", (source) => {
-    expect(directionalFindings(source)).toHaveLength(1);
-  });
-
-  it.each(["py", "json", "md", "txt"])("retains alerts in %s files", (extension) => {
-    expect(directionalFindings(`"[${LRE}-\uffff]"`, `source.${extension}`)).toHaveLength(1);
-  });
-
-  it.each(["\u202b", "\u202c", "\u202d", "\u202e"])(
-    "retains other directional controls inside range data: %j",
-    (control) => {
-      expect(directionalFindings(`const pattern = "[${control}-\uffff]";`)).toHaveLength(1);
-    },
-  );
-
-  it.each([
-    `const pattern = ${JSON.stringify(`[${LRE}\\-a]`)};`,
-    `const pattern = /[${LRE}\\-a]/u;`,
-  ])("retains an LRE followed by an escaped hyphen: %j", (source) => {
-    expect(directionalFindings(source)).toHaveLength(1);
-  });
-
-  it("retains escaped hyphens near execution", () => {
-    const patterns = JSON.stringify(Array.from({ length: 6 }, () => `[${LRE}\\-a]`));
-    const source = `const patterns = ${patterns}; new Function(patterns.join(''));`;
-    expect(directionalFindings(source).map((finding) => finding.id)).toEqual(
-      expect.arrayContaining(["BIDI_OVERRIDE", "INVISIBLE_CODE_EXECUTION"]),
-    );
-  });
-
-  it("retains Trojan Source controls alongside safe range data", () => {
-    const source =
-      `const pattern = "[${LRE}-\uffff]"; new RegExp(pattern);` + "\n/* \u202e hidden \u202c */";
-    expect(directionalFindings(source)[0]).toMatchObject({
-      severity: "critical",
-      location: { line: 2 },
-      metadata: { matchCount: 2 },
-    });
-  });
-
-  it("keeps class-shaped ordinary strings near execution visible", () => {
-    const source =
-      `const patterns = ${JSON.stringify(Array.from({ length: 6 }, () => `[${LRE}-\uffff]`))};` +
-      "new Function(patterns.join(''));";
-    expect(directionalFindings(source).map((finding) => finding.id)).toEqual(
-      expect.arrayContaining(["BIDI_OVERRIDE", "INVISIBLE_CODE_EXECUTION"]),
-    );
-  });
-
-  it("keeps ordinary embeddings near execution visible", () => {
-    const source = `const data = "${LRE.repeat(6)}"; eval(data);`;
-    expect(directionalFindings(source).map((finding) => finding.id)).toEqual(
-      expect.arrayContaining(["BIDI_OVERRIDE", "INVISIBLE_CODE_EXECUTION"]),
-    );
-  });
-
-  it.each(["'", '"'])("handles generated range boundaries with %s quoting", (quote) => {
-    for (const endpoint of [0x21, 0x7f, 0xff, 0x2029, 0x202b, 0xd7ff, 0xffff]) {
-      const escape = `\\u${endpoint.toString(16).padStart(4, "0")}`;
-      const range = endpoint < 0x202a ? `${escape}-${LRE}` : `${LRE}-${escape}`;
-      const source = `const pattern = ${quote}[${range}]${quote}; RegExp(pattern);`;
-      expect(directionalFindings(source)).toEqual([]);
     }
   });
 });

@@ -4,6 +4,7 @@ import pc from "picocolors";
 import type {
   BatchScanResult,
   ModuleTimings,
+  Registry,
   ScanResult,
   Severity,
 } from "#internal/scanner/types.js";
@@ -37,7 +38,7 @@ interface SarifRun {
     };
   };
   results: SarifResult[];
-  properties?: { sourcePath: string };
+  properties?: { sourcePath?: string; registry?: Registry };
   invocations?: Array<{
     executionSuccessful: boolean;
     toolExecutionNotifications: Array<{ level: "error"; message: { text: string } }>;
@@ -78,7 +79,7 @@ function createSarifRun(toolVersion: string, rules: SarifRule[]): SarifRun {
   };
 }
 
-/** Encode findings as SARIF, retaining the source directory for installed scans. */
+/** Encode findings as SARIF, retaining installed paths and registry attribution. */
 export function toSarif(result: ScanResult, toolVersion: string): SarifReport {
   const seenRuleIds = new Set<string>();
   const rules: SarifRule[] = [];
@@ -93,8 +94,13 @@ export function toSarif(result: ScanResult, toolVersion: string): SarifReport {
   }
 
   const run = createSarifRun(toolVersion, rules);
-  const sourcePath = result.metadata.sourcePath;
-  if (sourcePath !== undefined) run.properties = { sourcePath };
+  const { sourcePath, registry } = result.metadata;
+  if (sourcePath !== undefined || registry !== undefined) {
+    run.properties = {
+      ...(sourcePath === undefined ? {} : { sourcePath }),
+      ...(registry === undefined ? {} : { registry }),
+    };
+  }
   run.results = result.findings.map((f) => ({
     ruleId: f.id,
     level: severityToSarifLevel(f.severity),
@@ -214,45 +220,57 @@ function printTimings(timings: ModuleTimings): void {
   console.log();
 }
 
+function printCheckInventory(inventory: ScanResult["inventory"]): void {
+  if (inventory.length === 0) return;
+  console.log(pc.cyan("Checks performed:"));
+  for (const check of inventory) {
+    if (check.enabled) {
+      console.log(`  ${pc.green("✓")} ${pc.bold(check.name.padEnd(14))}${check.description}`);
+    } else {
+      console.log(
+        `  ${pc.yellow("⚠")} ${pc.bold(check.name.padEnd(14))}` +
+          pc.dim(`Skipped (${check.skipReason})`),
+      );
+    }
+  }
+  console.log();
+}
+
+function printCoverageWarnings(coverage: ScanResult["metadata"]["coverage"]): void {
+  if (!coverage.degraded) return;
+  console.log(pc.yellow("Coverage degraded:"));
+  for (const warning of coverage.warnings.slice(0, 10)) {
+    console.log(`  ${pc.yellow("⚠")} ${warning}`);
+  }
+  if (coverage.warnings.length > 10) {
+    console.log(`  ${pc.dim(`... and ${coverage.warnings.length - 10} more`)}`);
+  }
+  console.log();
+}
+
+function printSource(result: ScanResult): void {
+  if (result.metadata.registry !== undefined) console.log(`Registry: ${result.metadata.registry}`);
+  if (result.metadata.sourcePath !== undefined) console.log(`Path: ${result.metadata.sourcePath}`);
+}
+
 export function printTextReport(result: ScanResult): void {
   console.log();
   console.log(pc.bold("vsix-audit scan results"));
   console.log(pc.dim("─".repeat(50)));
   console.log();
   console.log(`${pc.cyan("Extension:")} ${result.extension.name} v${result.extension.version}`);
-  console.log(`${pc.cyan("Publisher:")} ${result.extension.publisher}`);
+  console.log(`${pc.cyan("Publisher:")} ${result.extension.publisher ?? "(unknown)"}`);
+  printSource(result);
   console.log(`${pc.cyan("Scanned:")} ${result.metadata.scannedAt}`);
   console.log();
 
-  if (result.inventory.length > 0) {
-    console.log(pc.cyan("Checks performed:"));
-    for (const check of result.inventory) {
-      if (check.enabled) {
-        console.log(`  ${pc.green("✓")} ${pc.bold(check.name.padEnd(14))}${check.description}`);
-      } else {
-        console.log(
-          `  ${pc.yellow("⚠")} ${pc.bold(check.name.padEnd(14))}` +
-            pc.dim(`Skipped (${check.skipReason})`),
-        );
-      }
-    }
-    console.log();
-  }
+  printCheckInventory(result.inventory);
 
   if (result.metadata.timings) {
     printTimings(result.metadata.timings);
   }
 
-  if (result.metadata.coverage?.degraded === true) {
-    console.log(pc.yellow("Coverage degraded:"));
-    for (const warning of result.metadata.coverage.warnings.slice(0, 10)) {
-      console.log(`  ${pc.yellow("⚠")} ${warning}`);
-    }
-    if (result.metadata.coverage.warnings.length > 10) {
-      console.log(`  ${pc.dim(`... and ${result.metadata.coverage.warnings.length - 10} more`)}`);
-    }
-    console.log();
-  }
+  printCoverageWarnings(result.metadata.coverage);
 
   if (result.findings.length === 0) {
     console.log(pc.green("✓ No security issues found"));
@@ -282,7 +300,7 @@ function printBatchFindings(results: ScanResult[]): void {
     console.log();
     for (const r of withFindings) {
       console.log(pc.bold(`${r.extension.name} v${r.extension.version}`));
-      if (r.metadata.sourcePath !== undefined) console.log(`Path: ${r.metadata.sourcePath}`);
+      printSource(r);
       console.log(pc.dim("─".repeat(40)));
       for (const finding of r.findings) {
         const color = severityColor(finding.severity);
@@ -313,8 +331,7 @@ function printBatchTimings(results: ScanResult[]): void {
   for (const result of results) {
     if (!result.metadata.timings) continue;
     console.log(pc.bold(`${result.extension.name} v${result.extension.version}`));
-    if (result.metadata.sourcePath !== undefined)
-      console.log(`Path: ${result.metadata.sourcePath}`);
+    printSource(result);
     printTimings(result.metadata.timings);
   }
 }
@@ -322,12 +339,29 @@ function printBatchTimings(results: ScanResult[]): void {
 function printBatchCoverage(results: ScanResult[]): void {
   for (const result of results) {
     const coverage = result.metadata.coverage;
-    if (coverage?.degraded !== true) continue;
+    if (coverage.degraded !== true) continue;
     const source = result.metadata.sourcePath ?? result.extension.id;
-    console.log(pc.yellow(`Coverage degraded: ${source}`));
+    const registry = result.metadata.registry;
+    const label = registry === undefined ? source : `${registry}:${source}`;
+    console.log(pc.yellow(`Coverage degraded: ${label}`));
     for (const warning of coverage.warnings) console.log(`  ${warning}`);
     console.log();
   }
+}
+
+function printRegistryResults(results: ScanResult[]): void {
+  const rows = results.flatMap((result) => {
+    const registry = result.metadata.registry;
+    if (registry === undefined) return [];
+    return [
+      `${registry}: ${result.extension.id}@${result.extension.version} ` +
+        `(${result.findings.length} finding(s))`,
+    ];
+  });
+  if (rows.length === 0) return;
+  console.log(pc.cyan("Registry results:"));
+  for (const row of rows) console.log(`  ${row}`);
+  console.log();
 }
 
 /** Print batch findings and failures without hiding incomplete scanner coverage. */
@@ -342,11 +376,11 @@ export function printBatchSummary(batch: BatchScanResult): void {
   console.log(`Duration: ${(summary.scanDuration / 1000).toFixed(1)}s`);
   console.log();
   printBatchErrors(errors);
+  printRegistryResults(results);
   printBatchTimings(results);
   printBatchCoverage(results);
   const incomplete =
-    summary.failedFiles > 0 ||
-    results.some((result) => result.metadata.coverage?.degraded === true);
+    summary.failedFiles > 0 || results.some((result) => result.metadata.coverage.degraded === true);
   if (summary.totalFindings === 0) {
     const message = incomplete
       ? "No findings in completed checks. The scan is incomplete."
@@ -373,24 +407,6 @@ export function outputResult(result: ScanResult, format: string, toolVersion: st
     console.log(JSON.stringify(toSarif(result, toolVersion), null, 2));
   } else {
     printTextReport(result);
-  }
-}
-
-/**
- * Dispatch combined multi-result output.
- */
-export function outputResults(results: ScanResult[], format: string, toolVersion: string): void {
-  if (format === "json") {
-    console.log(JSON.stringify(results, null, 2));
-  } else if (format === "sarif") {
-    console.log(JSON.stringify(toSarifCombined(results, toolVersion), null, 2));
-  } else {
-    for (const result of results) {
-      const registry = (result.metadata as { registry?: string }).registry ?? "unknown";
-      console.log(pc.bold(`Registry: ${registry}`));
-      printTextReport(result);
-      console.log();
-    }
   }
 }
 

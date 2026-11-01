@@ -2,7 +2,7 @@ import { Option, type Command } from "commander";
 import { outputBatchResult } from "#internal/formatters.js";
 import {
   configureScanOptions,
-  hasCoverageExitFailure,
+  batchExitCode,
   parseJobs,
   parseScanOptions,
   type CliScanOptions,
@@ -38,12 +38,7 @@ async function scanInstalled(options: InstalledCliOptions, version: string): Pro
     { concurrency: options.jobs },
   );
   outputBatchResult(batch, scanOptions.output, version);
-  if (
-    batch.errors.length > 0 ||
-    batch.results.some((result) => hasCoverageExitFailure(result, scanOptions))
-  )
-    return 2;
-  return batch.summary.totalFindings > 0 ? 1 : 0;
+  return batchExitCode(batch, scanOptions);
 }
 
 /** Register local editor-store scanning with the standard scanner controls and reports. */
@@ -64,7 +59,6 @@ export function registerInstalledCommand(program: Command, version: string): voi
     .addOption(
       new Option("-j, --jobs <n>", "Number of parallel scans").argParser(parseJobs).default(4),
     );
-  command.exitOverride((error) => process.exit(error.exitCode === 0 ? 0 : 2));
   command.action(async (options: InstalledCliOptions) => {
     try {
       process.exitCode = await scanInstalled(options, version);

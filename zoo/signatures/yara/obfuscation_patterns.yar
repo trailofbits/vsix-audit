@@ -5,6 +5,7 @@
 
 rule SUSP_JS_Obfuscator_Hex_Vars_Jan25 {
   meta:
+    capabilities = "obfuscation"
     description = "Detects javascript-obfuscator tool signature with _0x prefixed hexadecimal variable names"
     severity    = "high"
     score       = 80
@@ -21,6 +22,7 @@ rule SUSP_JS_Obfuscator_Hex_Vars_Jan25 {
 
 rule SUSP_JS_FromCharCode_Chain_Jan25 {
   meta:
+    capabilities = "obfuscation"
     description = "Detects String.fromCharCode with many arguments used to hide string content from static analysis"
     severity    = "high"
     score       = 75
@@ -37,6 +39,7 @@ rule SUSP_JS_FromCharCode_Chain_Jan25 {
 
 rule SUSP_JS_Hex_Escape_Chain_Jan25 {
   meta:
+    capabilities = "obfuscation"
     description = "Detects 10+ consecutive hex escape sequences (\\xNN) indicating obfuscated string content"
     severity    = "medium"
     score       = 60
@@ -54,6 +57,7 @@ rule SUSP_JS_Hex_Escape_Chain_Jan25 {
 
 rule SUSP_JS_Decimal_Byte_Array_Jan25 {
   meta:
+    capabilities = "obfuscation"
     description = "Detects large array of 20+ decimal byte values likely containing encoded payload data"
     severity    = "medium"
     score       = 55
@@ -74,6 +78,7 @@ rule SUSP_JS_Decimal_Byte_Array_Jan25 {
 
 rule SUSP_JS_Bracket_Notation_Chain_Jan25 {
   meta:
+    capabilities = "obfuscation"
     description = "Detects long bracket notation property chains used to hide method calls from static analysis"
     severity    = "medium"
     score       = 65
@@ -90,6 +95,7 @@ rule SUSP_JS_Bracket_Notation_Chain_Jan25 {
 
 rule SUSP_JS_String_Array_Rotation_Jan25 {
   meta:
+    capabilities = "obfuscation"
     description = "Detects javascript-obfuscator string table pattern with large array and hex variable names"
     severity    = "medium"
     score       = 55
@@ -119,8 +125,10 @@ rule SUSP_JS_String_Array_Rotation_Jan25 {
 
 rule SUSP_JS_Obfuscation_Eval_Jan25 {
   meta:
-    description = "Detects obfuscation patterns like hex vars or fromCharCode combined with eval execution"
-    severity    = "critical"
+    evidence = "co-occurring references"
+    capabilities = "execution,obfuscation"
+    description = "Obfuscation and dynamic-code references co-occur. Data flow is unverified."
+    severity = "medium"
     score       = 95
     author      = "vsix-audit"
     date        = "2025-01-29"
@@ -141,6 +149,7 @@ rule SUSP_JS_Obfuscation_Eval_Jan25 {
 
 rule SUSP_JS_Packer_Dean_Edwards_Jan25 {
   meta:
+    capabilities = "execution,obfuscation"
     description = "Detects Dean Edwards style JavaScript packer using eval(function(p,a,c,k,e pattern"
     severity    = "high"
     score       = 85
@@ -159,6 +168,7 @@ rule SUSP_JS_Packer_Dean_Edwards_Jan25 {
 
 rule SUSP_JS_JJEncode_Jan25 {
   meta:
+    capabilities = "obfuscation"
     description = "Detects JJEncode JavaScript obfuscation using $=~[] and $$$ patterns to hide code"
     severity    = "high"
     score       = 90
@@ -177,6 +187,7 @@ rule SUSP_JS_JJEncode_Jan25 {
 
 rule SUSP_JS_AAEncode_Jan25 {
   meta:
+    capabilities = "obfuscation"
     description = "Detects AAEncode JavaScript obfuscation using emoticon-based encoding patterns"
     severity    = "high"
     score       = 85
@@ -193,6 +204,7 @@ rule SUSP_JS_AAEncode_Jan25 {
 
 rule SUSP_JS_JSFuck_Jan25 {
   meta:
+    capabilities = "obfuscation"
     description = "Detects JSFuck obfuscation encoding JavaScript using only []()!+ characters"
     severity    = "critical"
     score       = 95

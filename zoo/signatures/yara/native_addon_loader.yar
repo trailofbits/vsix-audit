@@ -13,6 +13,7 @@
 
 rule SUSP_NativeAddon_Platform_Loader_Feb26 {
   meta:
+    capabilities = "execution,fileAccess"
     description = "Detects platform-conditional loading of .node native addons, a pattern used by GlassWorm for Rust implant delivery"
     severity    = "high"
     score       = 85
@@ -49,6 +50,7 @@ rule SUSP_NativeAddon_Platform_Loader_Feb26 {
 
 rule SUSP_NativeAddon_Bundled_Binary_Feb26 {
   meta:
+    capabilities = "execution,fileAccess"
     description = "Detects custom-named .node file loading outside of node_modules, suggesting a bundled native binary"
     severity    = "medium"
     score       = 70

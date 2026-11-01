@@ -14,6 +14,7 @@
 
 rule C2_JS_Ethereum_Contract_C2_Feb26 {
   meta:
+    capabilities = "network"
     description = "Detects Ethereum contract queries combined with dynamic code execution (SleepyDuck C2 pattern)"
     severity    = "high"
     score       = 80

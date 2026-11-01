@@ -1,120 +1,16 @@
-/**
- * Bundler/minifier detection utilities.
- *
- * Bundled code (webpack, rollup, esbuild) naturally exhibits patterns that
- * look suspicious to security scanners:
- * - High entropy (minification removes whitespace, shortens names)
- * - Large string arrays (webpack string tables)
- * - new Function() (webpack module system)
- * - Dynamic requires (webpack's __webpack_require__)
- * - Zero-width chars (from bundled i18n libraries)
- *
- * This module helps detect bundled code so checks can adjust thresholds.
- */
-
-export interface BundlerInfo {
-  isBundled: boolean;
-  bundler: "webpack" | "rollup" | "esbuild" | "parcel" | "vite" | "unknown" | null;
-  isMinified: boolean;
-}
-
-/**
- * Detect if a file is bundled/minified code.
- */
-export function detectBundler(
-  content: string,
-  filename: string,
-  cache?: Map<string, BundlerInfo>,
-): BundlerInfo {
-  const cached = cache?.get(filename);
-  if (cached) return cached;
-
-  const result: BundlerInfo = {
-    isBundled: false,
-    bundler: null,
-    isMinified: false,
-  };
-
-  // Check filename patterns first
-  if (
-    filename.endsWith(".bundle.js") ||
-    filename.endsWith(".min.js") ||
-    filename.endsWith(".chunk.js") ||
-    /vendors[-~]/.test(filename) ||
-    /\d+\..*\.js$/.test(filename) // numeric chunk IDs like 540.extension.js
-  ) {
-    result.isBundled = true;
-  }
-
-  // Webpack signatures
-  if (
-    /__webpack_require__/.test(content) ||
-    /__webpack_modules__/.test(content) ||
-    /webpackChunk/.test(content) ||
-    /\/\*\*\*\/ "\d+":/.test(content) // webpack module IDs
-  ) {
-    result.isBundled = true;
-    result.bundler = "webpack";
-  }
-
-  // Rollup signatures
-  if (/\(function \(exports/.test(content) && /Object\.defineProperty\(exports,/.test(content)) {
-    result.isBundled = true;
-    result.bundler = "rollup";
-  }
-
-  // Esbuild signatures
-  if (
-    /__esm\s*=/.test(content) ||
-    /__export\s*=/.test(content) ||
-    /var __defProp\s*=/.test(content)
-  ) {
-    result.isBundled = true;
-    result.bundler = "esbuild";
-  }
-
-  // Parcel signatures
-  if (/parcelRequire/.test(content)) {
-    result.isBundled = true;
-    result.bundler = "parcel";
-  }
-
-  // Vite signatures (SSR imports, HMR API, Vite plugin markers)
-  if (
-    /__vite_ssr_import__/.test(content) ||
-    /__vite_ssr_dynamic_import__/.test(content) ||
-    /\bimport\.meta\.hot\b/.test(content)
-  ) {
-    result.isBundled = true;
-    result.bundler = "vite";
-  }
-
-  // Check for minification indicators
+/** Recognize generated content for entropy analysis without trusting its filename. */
+export function isBundledCode(content: string): boolean {
+  const markers = [
+    /__webpack_require__|__webpack_modules__|webpackChunk/,
+    /__esm\s*=|__export\s*=|var __defProp\s*=/,
+    /parcelRequire|__vite_ssr_import__|__vite_ssr_dynamic_import__/,
+    /\bimport\.meta\.hot\b|\/\/# sourceMappingURL=/,
+  ];
+  if (markers.some((marker) => marker.test(content))) return true;
+  if (/\(function \(exports/.test(content) && /Object\.defineProperty\(exports,/.test(content))
+    return true;
   const lines = content.split("\n");
-  if (lines.length > 0) {
-    // Very long lines indicate minification
-    const avgLineLength = content.length / Math.max(lines.length, 1);
-    const hasVeryLongLines = lines.some((line) => line.length > 1000);
-
-    if (hasVeryLongLines && avgLineLength > 200) {
-      result.isMinified = true;
-      if (!result.isBundled) {
-        result.isBundled = true;
-        result.bundler = "unknown";
-      }
-    }
-  }
-
-  // Source map reference is a strong signal of bundled code
-  if (/\/\/# sourceMappingURL=/.test(content)) {
-    if (!result.isBundled) {
-      result.isBundled = true;
-      result.bundler = "unknown";
-    }
-  }
-
-  cache?.set(filename, result);
-  return result;
+  return content.length / lines.length > 200 && lines.some((line) => line.length > 1000);
 }
 
 /**
