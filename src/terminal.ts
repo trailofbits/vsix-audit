@@ -12,7 +12,7 @@ export function terminalText(value: unknown): string {
   return String(value).replace(CONTROLS, escapedControl);
 }
 
-/** Serialize reports losslessly while escaping controls that JSON leaves literal. */
+/** Serialize JSON reports while escaping controls that JSON leaves literal. */
 export function reportJson(value: object): string {
   return JSON.stringify(value, null, 2).replace(
     /[\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g,
