@@ -60,11 +60,14 @@
     "commander": "15.0.0",
     "oxc-parser": "0.155.0",
     "picocolors": "1.1.1",
+    "sax": "1.6.1",
     "yauzl": "3.4.0"
   },
   "devDependencies": {
     "@types/node": "26.6.5",
+    "@types/sax": "1.2.7",
     "@types/yauzl": "3.4.0",
+    "fast-check": "4.10.2",
     "oxfmt": "0.74.0",
     "oxlint": "1.89.0",
     "oxlint-tsgolint": "7.0.2005",

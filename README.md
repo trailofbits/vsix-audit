@@ -14,7 +14,8 @@ VS Code extensions run with full trust and the same permissions as the editor it
 
 ## Detection Modules
 
-The scanner runs nine detection modules. Select individual checks with `--module`, for
+The scanner runs nine detection modules by default. Add `--check-repository` for source
+repository checks over GitHub's API. Select individual checks with `--module`, for
 example `--module manifest,execution,deps,intel` for package and execution analysis.
 
 ### Manifest, Execution, Dependency, And Intel Analysis (`package.ts`)
@@ -272,6 +273,30 @@ Displays: name, publisher, version, activation events, entry points, contributio
 | `--no-threat-intel`      | Disable threat-intelligence datasets while keeping generic detections            |
 | `--strict`               | Exit with an error if scan coverage is degraded                                  |
 | `--require-yara`         | Exit with an error if YARA scanning cannot run                                   |
+| `--check-repository`     | Check declared GitHub source repositories over the network                       |
+
+### Repository Checks
+
+```bash
+vsix-audit scan publisher.extension-name --check-repository
+vsix-audit scan ./extension.vsix --module repository
+```
+
+Repository checks read the root `package.json` repository field and the VSIX metadata
+properties `Microsoft.VisualStudio.Services.Links.Source` and
+`Microsoft.VisualStudio.Services.Links.GitHub`. They support GitHub web links, Git URLs,
+and npm's GitHub shorthand. Other hosts remain unverified. Default scans stay offline
+after any requested extension download.
+
+Missing links, inaccessible repositories or owners, and repositories with no commits
+produce low-severity findings. A repository may be private, and source disclosure is
+optional. These observations do not establish that an extension is malicious.
+
+Timeouts, rate limits, malformed metadata, and unsupported hosts produce coverage warnings.
+Use `--strict` to require a completed repository check. Set `GITHUB_TOKEN` to authenticate
+GitHub API requests; its permissions determine which private repositories can be checked.
+Requests have time and response-size limits, follow redirects within supported GitHub API
+endpoints, and share bounded lookups within a batch. Rate-limited batches stop sending requests.
 
 ### Coverage Degradation
 

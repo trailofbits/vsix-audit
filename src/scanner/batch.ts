@@ -1,6 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { scanExtension, validateScanOptions } from "#internal/scanner/index.js";
+import { createRepositoryCheck } from "#internal/scanner/checks/repository.js";
 import type {
   BatchScanResult,
   ScanOptions,
@@ -112,13 +113,17 @@ export async function scanPaths(
     );
   }
   validateScanOptions(options);
+  const repositoryCheck = createRepositoryCheck();
 
   let completed = 0;
   const resultsByIndex = new Map<number, ScanResult>();
   const errorsByIndex = new Map<number, { path: string; error: string }>();
 
   await runWithConcurrency(paths, concurrency, async (filePath, index) => {
-    const outcome = await scanExtension(filePath, options).then<ScanOutcome, ScanOutcome>(
+    const outcome = await scanExtension(filePath, options, repositoryCheck).then<
+      ScanOutcome,
+      ScanOutcome
+    >(
       (result) => ({ result }),
       (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }),
     );

@@ -18,6 +18,7 @@ export const MODULE_NAMES = [
   "ioc",
   "yara",
   "telemetry",
+  "repository",
 ] as const;
 export type ModuleName = (typeof MODULE_NAMES)[number];
 
@@ -39,6 +40,8 @@ export interface ScanOptions {
   strict?: boolean;
   requireYara?: boolean;
   intel?: IntelMode;
+  /** Verify declared source repositories over GitHub's API; disabled by default. */
+  checkRepository?: boolean;
 }
 
 export interface FindingMetadata {
