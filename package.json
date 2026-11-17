@@ -56,24 +56,24 @@
     "findings:collect": "npm run --silent build && node scripts/collect-findings.ts"
   },
   "dependencies": {
-    "@eslint-community/regexpp": "4.12.2",
+    "@eslint-community/regexpp": "4.12.3",
     "@streamparser/json": "0.0.26",
-    "commander": "15.0.0",
-    "oxc-parser": "0.155.0",
+    "commander": "15.1.0",
+    "oxc-parser": "0.158.0",
     "picocolors": "1.1.1",
     "sax": "1.6.1",
     "yauzl": "3.4.0"
   },
   "devDependencies": {
-    "@types/node": "26.6.5",
+    "@types/node": "26.6.6",
     "@types/sax": "1.2.7",
     "@types/yauzl": "3.4.0",
     "fast-check": "4.10.2",
-    "oxfmt": "0.74.0",
-    "oxlint": "1.89.0",
-    "oxlint-tsgolint": "7.0.2005",
+    "oxfmt": "0.78.0",
+    "oxlint": "1.93.0",
+    "oxlint-tsgolint": "7.0.2006",
     "typescript": "7.0.2",
-    "vitest": "5.0.5"
+    "vitest": "5.1.0"
   },
   "engines": {
     "node": ">=24"
